@@ -1,6 +1,7 @@
 # Local Home Assistant add-on. Home Assistant OS stays installed.
-# The image builds the released omdrop-owl tree (IBSS exclusive for iwlwifi).
-# It does not check out pull request 13, and it does not ship Intel firmware.
+# Built from the folder tools/stage-addon.sh assembles: the radio stack comes
+# from this repo (omdrop-owl/), not a clone, so helper edits ship with it.
+# It does not ship Intel firmware.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -31,24 +32,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-libarchive-c \
     && rm -rf /var/lib/apt/lists/*
 
-# Released main after the AUR publish. The iwlwifi line is exclusive IBSS.
-# Pull request 13 (USB MT7612U active-monitor) is not this commit.
-ARG OMDROP_OWL_COMMIT=8c38540267641ba2dcdf16b0ae115ac71f11be94
 ARG OMDROP_PLUGIN_COMMIT=b2f9a537b150c26402c5daad8125fb7e61c214ec
 
-RUN git clone https://github.com/t4t5/omdrop-owl.git /tmp/omdrop-owl \
-    && git -C /tmp/omdrop-owl checkout "$OMDROP_OWL_COMMIT" \
-    && awk ' \
-        $1 == "iwlwifi" && $2 == "tested" && $3 == "exclusive" { ok = 1 } \
-        $1 == "mt76x2u" || $7 == "active-monitor" { bad = 1 } \
-        END { if (!ok || bad) exit 1 } \
-      ' /tmp/omdrop-owl/userspace/owl-profiles \
-    && grep -q '00:25:00:ff:94:73' /tmp/omdrop-owl/userspace/omdrop-discoverable \
-    && /tmp/omdrop-owl/tools/build-owl.sh \
-    && /tmp/omdrop-owl/tools/stage.sh \
-    && mkdir -p /usr/lib/omdrop \
-    && cp -a /tmp/omdrop-owl/build/lib/. /usr/lib/omdrop/ \
-    && rm -rf /tmp/omdrop-owl /usr/lib/omdrop/__pycache__
+# OWL first, in its own layer: it is the slow compile, and it depends only on
+# pins and patches/. Scripts run through bash because a copy over the Samba
+# share loses their executable bit.
+COPY omdrop-owl/pins /src/omdrop-owl/pins
+COPY omdrop-owl/patches/ /src/omdrop-owl/patches/
+COPY omdrop-owl/tools/build-owl.sh /src/omdrop-owl/tools/build-owl.sh
+RUN bash /src/omdrop-owl/tools/build-owl.sh
 
 # contacts.py looks for the Apple root two directories above itself, in
 # share/certs. The receiver is /opt/omdrop-receiver/contacts.py, so the
@@ -62,6 +54,15 @@ RUN git clone https://github.com/brentkearney/omdrop-plugin.git /tmp/omdrop-plug
     && test -s /opt/share/certs/apple_root_ca.pem \
     && test -s /opt/omdrop-receiver/apple-ca/apple-aai-ca.pem \
     && rm -rf /tmp/omdrop-plugin
+
+# The helper and its profiles, with omdrop-awdl's radio-independent tools,
+# laid out as /usr/lib/omdrop.
+COPY omdrop-owl/tools/stage.sh /src/omdrop-owl/tools/stage.sh
+COPY omdrop-owl/userspace/ /src/omdrop-owl/userspace/
+RUN bash /src/omdrop-owl/tools/stage.sh \
+    && mkdir -p /usr/lib/omdrop \
+    && cp -a /src/omdrop-owl/build/lib/. /usr/lib/omdrop/ \
+    && rm -rf /src/omdrop-owl/build /usr/lib/omdrop/__pycache__
 
 COPY owldrop/ /src/owldrop/
 RUN cmake -S /src/owldrop -B /tmp/owldrop-build -DCMAKE_BUILD_TYPE=Release \

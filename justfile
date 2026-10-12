@@ -4,19 +4,15 @@
 default:
     @just --list
 
-# Build OWL and assemble build/lib, laid out like /usr/lib/omdrop
-build:
-    tools/build-owl.sh
-    tools/stage.sh
+# Run the helper's exclusive-mode tests (command doubles, no radio)
+test:
+    python -m unittest tests.test_exclusive
 
-# Build and install the pacman package from this checkout
-install:
-    makepkg -si
+# Assemble the Home Assistant add-on into build/addon/owldrop, and copy it to DEST if given
+stage-addon DEST="":
+    tools/stage-addon.sh {{DEST}}
 
-# Build the AUR's PKGBUILD against this checkout, as CI does for pull requests
-test-aur:
-    tools/test-aur-pkgbuild.sh
-
-# Test this computer's card against build/lib and write a report (README, "Adding your card")
-test *ARGS: build
-    sudo tools/test-card.sh --lib build/lib {{ARGS}}
+# Build owldrop.exe and owldrop-bridge into owldrop/build
+owldrop:
+    cmake -S owldrop -B owldrop/build
+    cmake --build owldrop/build --config Release

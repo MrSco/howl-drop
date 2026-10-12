@@ -1,16 +1,7 @@
 # Fetched at a pinned commit by tools/stage.sh; never committed (GPL-2.0-only).
 /upstream/
-# The assembled runtime directory.
+# The assembled runtime directory and the staged add-on.
 /build/
-# makepkg: its git clones (SRCDEST defaults to here), work trees and packages.
-/owl/
-/googletest/
-/radiotap/
-/omdrop-awdl/
-/src/
-/pkg/
-/*.pkg.tar.*
-/*.deb
 __pycache__
-
-owl-test-*
+# Prebuilt binaries: build them from owldrop/.
+*.exe
