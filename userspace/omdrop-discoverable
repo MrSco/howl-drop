@@ -401,7 +401,7 @@ supervise() {
 }
 
 cmd_start() {
-  local secs=${1:-} sta drv phy gw ap freqs chan stamac monmac mt76 copies _
+  local secs=${1:-} sta drv phy gw ap freqs chan stamac monmac mt76 copies heard _
   local owl_extra=() strategy=intersect
   [[ "$secs" =~ ^[0-9]+$ ]] || die "usage: omdrop-discoverable start <seconds>" 2
   need_root
@@ -498,6 +498,10 @@ cmd_start() {
     # sent this many times in the peer's visit. $CONF/unicast-copies, 1-5.
     copies=$(knob unicast-copies)
     [[ "$copies" =~ ^[1-5]$ ]] && owl_extra+=(-U "$copies")
+    # owl -H (patches/owl-10-fixed-radio-heard.patch): a peer heard within
+    # this many TU is on our channel now. $CONF/heard-window, 1-64.
+    heard=$(knob heard-window)
+    [[ "$heard" =~ ^[0-9]+$ ]] && [ "$heard" -ge 1 ] && [ "$heard" -le 64 ] && owl_extra+=(-H "$heard")
   fi
 
   # mt76_pm: runtime PM off for the window, restored by stop.

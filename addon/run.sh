@@ -985,6 +985,17 @@ case "$COPIES" in
     *) COPIES=3 ;;
 esac
 echo "$COPIES" > /etc/omdrop/unicast-copies
+# The phone is on our channel when we hear it, and that is when replies to
+# it are made. 0.2.7 held them for the slot OWL's clock gave the phone, and
+# five copies of each mDNS answer then went unheard: OWL sends a reply
+# within this many TU of hearing the phone (owl -H). 0 turns it off.
+HEARD=$(option heard_window_tu)
+case "$HEARD" in
+    ""|*[!0-9]*) HEARD=16 ;;
+esac
+[ "$HEARD" -le 64 ] || HEARD=64
+echo "$HEARD" > /etc/omdrop/heard-window
+say "Replies to the phone go out within ${HEARD} TU of hearing it (0: only in the slot OWL's clock gives it)."
 say "Each unicast frame to the phone goes out ${COPIES} time(s) per visit to our channel."
 say "Starting the released exclusive window (until this add-on stops)."
 if ! "$DISCOVERABLE" start 0; then
