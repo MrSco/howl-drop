@@ -345,6 +345,7 @@ cmd_stop() {
   # The supervisor calls `stop expired` itself; don't kill the caller.
   [ -n "$sup" ] && [ "$sup" != "$$" ] && [ "$sup" != "${PPID:-}" ] && kill "$sup" 2>/dev/null
   pkill -f -- "$LIB/awdl-airdrop-adv.py" 2>/dev/null
+  pkill -f -- "$LIB/owl-mdns-respond.py" 2>/dev/null
   alive "$(pid_of owl)" "$OWL_BIN" && kill "$(pid_of owl)" 2>/dev/null
   pkill -f "^$OWL_BIN " 2>/dev/null
   ip link set "$MON" down 2>/dev/null
@@ -371,7 +372,7 @@ cmd_stop() {
     sleep 1
     nmcli -w 20 device connect "$sta" >/dev/null 2>&1 || iw dev "$sta" disconnect 2>/dev/null
   fi
-  rm -f "$RUN/supervisor.pid" "$RUN/owl.pid" "$RUN/until"
+  rm -f "$RUN/supervisor.pid" "$RUN/owl.pid" "$RUN/mdns.pid" "$RUN/until"
   printf '%s' "$why" > "$RUN/reason"
   log "stopped ($why)"
   return 0
@@ -416,6 +417,7 @@ cmd_start() {
   fi
   : > "$RUN/log"
   : > "$RUN/announce.log"
+  : > "$RUN/mdns.log"
   # A station the last stop couldn't turn back still holds the cell, and
   # exclusive_up would take its state for the original. Not one a caller
   # converted and joined on purpose ($CONF/keep-cell, joined_cell_freq).
@@ -540,6 +542,12 @@ cmd_start() {
     sleep 0.05
   done
 
+  # Answer the phone's mDNS queries the moment they arrive, while it is still
+  # on our channel; the announcements alone land only by chance in exclusive
+  # mode (owl-mdns-respond.py).
+  setsid python3 "$LIB/owl-mdns-respond.py" --iface "$IF" --port 8771 --flags "$ADV_FLAGS" \
+    >> "$RUN/mdns.log" 2>&1 < /dev/null 9>&- &
+  echo $! > "$RUN/mdns.pid"
   setsid "$SELF" __supervise > /dev/null 2>&1 < /dev/null 9>&- &
   echo $! > "$RUN/supervisor.pid"
   log "discoverable for ${secs}s (0 = until stopped)"

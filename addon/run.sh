@@ -754,8 +754,8 @@ kernel_radio_log() {
 # A /Discover answered 200 with no tile means the answer did not reach the
 # phone in time; rtt, rto and retrans say whether that is loss on the air.
 watch_radio() {
-    local owl=/run/omdrop-owl/owl.log ann=/run/omdrop-owl/announce.log
-    local seen=0 total tick=0 peers tcp last_tcp= fault=
+    local owl=/run/omdrop-owl/owl.log ann=/run/omdrop-owl/announce.log mdns=/run/omdrop-owl/mdns.log
+    local seen=0 total tick=0 peers tcp last_tcp= fault= mseen=0 mtotal
     say "OWL's first lines:"
     head -n 15 "$owl" 2>/dev/null | sed 's/^/OWL: /'
     seen=$(wc -l < "$owl" 2>/dev/null || echo 0)
@@ -778,6 +778,15 @@ watch_radio() {
         fi
         last_tcp=$tcp
         [ $((tick % 5)) -eq 0 ] || continue
+        # The responder's lines: "responding on", then one per answered query.
+        # A phone with the share sheet open queries for _airdrop._tcp; no
+        # "answered" line means no query reached us.
+        mtotal=$(wc -l < "$mdns" 2>/dev/null || echo 0)
+        [ "$mtotal" -lt "$mseen" ] && mseen=0
+        if [ "$mtotal" -gt "$mseen" ]; then
+            sed -n "$((mseen + 1)),${mtotal}p" "$mdns" | tail -n 5 | sed 's/^/mDNS: /'
+            mseen=$mtotal
+        fi
         total=$(wc -l < "$owl" 2>/dev/null || echo 0)
         [ "$total" -lt "$seen" ] && seen=0
         if [ "$total" -gt "$seen" ]; then
