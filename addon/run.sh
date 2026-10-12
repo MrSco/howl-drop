@@ -17,6 +17,7 @@ IFACE=
 BLE_PID=
 SERVE_PID=
 BRIDGE_PID=
+WATCH_PID=
 RADIO=0
 
 say() { printf '%s\n' "$*"; }
@@ -706,8 +707,79 @@ EOF
     return 0
 }
 
+# OWL -F sends each unicast frame once, without retries, and the phone is on
+# channel 6 for a slot or two in sixteen, so segments are lost and only TCP
+# resends them: after 200 ms at least, doubling each time. On 2026-10-12
+# that stretched /Discover's TLS handshake to 1-4 s, the phone hung up, and
+# no tile appeared. A 20 ms floor on awdl0's route alone resends within the
+# phone's next visit. Deleted and added by device, because a replace can
+# match another interface's fe80::/64 (the Ethernet uplink's).
+fast_awdl_retransmit() {
+    local metric
+    metric=$(ip -6 route show dev awdl0 2>/dev/null \
+        | awk '$1 == "fe80::/64" { for (i = 1; i < NF; i++) if ($i == "metric") print $(i + 1); exit }')
+    if [ -z "$metric" ]; then
+        say "awdl0 has no fe80::/64 route, so TCP on it keeps the 200 ms retransmit floor."
+        return 0
+    fi
+    if ip -6 route del fe80::/64 dev awdl0 metric "$metric" 2>/dev/null \
+        && ip -6 route add fe80::/64 dev awdl0 metric "$metric" rto_min 20ms quickack 1 2>/dev/null; then
+        say "TCP on awdl0 resends after 20 ms instead of 200 ms: $(ip -6 route show dev awdl0 | awk '$1 == "fe80::/64"')"
+    else
+        ip -6 route add fe80::/64 dev awdl0 metric "$metric" 2>/dev/null || true
+        say "Could not set rto_min on awdl0's route, so TCP on it keeps the 200 ms floor."
+    fi
+}
+
+# OWL's and the announcer's logs stay in /run/omdrop-owl inside this
+# container, so bring what matters into the add-on log: OWL's peer events
+# and errors every 5 s, TCP state of AirDrop connections every second, and a
+# summary every 30 s. No "add peer" means the radio never heard the iPhone.
+# A /Discover answered 200 with no tile means the answer did not reach the
+# phone in time; rtt, rto and retrans say whether that is loss on the air.
+watch_radio() {
+    local owl=/run/omdrop-owl/owl.log ann=/run/omdrop-owl/announce.log
+    local seen=0 total tick=0 peers tcp last_tcp=
+    say "OWL's first lines:"
+    head -n 15 "$owl" 2>/dev/null | sed 's/^/OWL: /'
+    seen=$(wc -l < "$owl" 2>/dev/null || echo 0)
+    say "Interfaces on this phy:"
+    iw dev 2>/dev/null | grep -E 'Interface|type|channel|addr' | sed 's/^[[:space:]]*/  /'
+    while [ -f /tmp/owldrop-running ]; do
+        sleep 1
+        tick=$((tick + 1))
+        # Discover connections last a second or few, so this is per tick.
+        # Printed only when it changes: a socket left in FIN_WAIT would
+        # otherwise repeat for minutes.
+        tcp=$(ss -tinH '( sport = :8771 )' 2>/dev/null \
+            | awk 'NR % 2 == 1 { state = $1; peer = $5; next }
+                   { line = ""
+                     for (i = 1; i <= NF; i++)
+                         if ($i ~ /^(rtt|rto|retrans|unacked|lost|bytes_sent|bytes_retrans|bytes_acked):/) line = line " " $i
+                     print "TCP " state " " peer ":" line }')
+        if [ -n "$tcp" ] && [ "$tcp" != "$last_tcp" ]; then
+            printf '%s %s\n' "$(date +%H:%M:%S)" "$tcp"
+        fi
+        last_tcp=$tcp
+        [ $((tick % 5)) -eq 0 ] || continue
+        total=$(wc -l < "$owl" 2>/dev/null || echo 0)
+        [ "$total" -lt "$seen" ] && seen=0
+        if [ "$total" -gt "$seen" ]; then
+            sed -n "$((seen + 1)),${total}p" "$owl" \
+                | grep -iE 'peer|error|fail|warn|fatal|refus' | head -n 20 | sed 's/^/OWL: /'
+            seen=$total
+        fi
+        if [ $((tick % 30)) -eq 0 ]; then
+            peers=$(grep -c 'add peer' "$owl" 2>/dev/null)
+            say "Radio check: ${peers:-0} peer adds in OWL's log so far ($total lines). Helper: $("$DISCOVERABLE" status 2>/dev/null)."
+            tail -n 2 "$ann" 2>/dev/null | sed 's/^/Announce: /'
+        fi
+    done
+}
+
 stop_stack() {
     rm -f /tmp/owldrop-running
+    if [ -n "$WATCH_PID" ]; then kill "$WATCH_PID" 2>/dev/null || true; fi
     if [ -n "$BRIDGE_PID" ]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
     if [ -n "$SERVE_PID" ]; then kill "$SERVE_PID" 2>/dev/null || true; fi
     if [ -n "$BLE_PID" ]; then kill "$BLE_PID" 2>/dev/null || true; fi
@@ -879,6 +951,7 @@ if ! ensure_identity || ! ensure_awdl_ipv6; then
     stop_stack
     exit 1
 fi
+fast_awdl_retransmit
 say "AirDrop receiver on awdl0, saving into ${INBOX}."
 python3 "$RECEIVER" --iface awdl0 --port 8771 --name "$PC_NAME" --model MacBookPro18,3 \
     --outdir "$INBOX" --keys "${OWLDROP_KEYS_DIR:-/data/omdrop}" &
@@ -906,6 +979,8 @@ if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
 fi
 
 say "Window is up. Stop this add-on to leave the cell and return ${IFACE} to a station."
+watch_radio &
+WATCH_PID=$!
 wait "$BRIDGE_PID" "$SERVE_PID" || true
 stop_stack
 exit 0

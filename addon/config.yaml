@@ -1,5 +1,5 @@
 name: OwlDrop
-version: "0.2.0"
+version: "0.2.1"
 slug: owldrop
 description: AirDrop on the NUC's Intel Wireless-AC 8260, forwarded over Ethernet to owldrop.exe
 url: https://github.com/MrSco/howl-drop

@@ -42,3 +42,15 @@ Before the join, the add-on marks the interface unmanaged and stops the host `wp
 The receiver will not create its certificate while it is root. The first start writes a self-signed pair into the add-on data and reuses it after that. `awdl0` needs a link-local address that is not still tentative. The log line `awdl0 IPv6 address is <addr> and it is ready.` is that step. A tentative address is added again without duplicate-address detection. The image also installs the plugin's Apple root at `/opt/share/certs/apple_root_ca.pem`, which is the path the receiver checks. The log line `The AirDrop receiver is listening on awdl0 port 8771.` means that bind succeeded.
 
 Files the phone sends land in the add-on data folder `incoming`, then go to `Downloads\OwlDrop` on the PC. A UTF-8 file in `incoming/text` becomes the PC clipboard.
+
+## After the window is up
+
+Before the receiver starts, `awdl0`'s route gets a 20 ms TCP retransmit floor instead of 200 ms (`TCP on awdl0 resends after 20 ms`). OWL sends each unicast frame once and the phone visits channel 6 only briefly, so lost segments are normal there; the default floor stretched the `/Discover` TLS handshake to seconds and the phone hung up before the answer arrived.
+
+Then the log follows the radio, because OWL's and the announcer's own logs stay inside the container:
+
+- `OWL: ... add peer <mac>` means OWL synced with a phone. None at all means the radio never heard it.
+- `<time> TCP <state> [<phone>]:<port>: rto:… rtt:… retrans:…` is an AirDrop connection, printed when it changes. High `rto`, `retrans` or `bytes_retrans` is loss on the air.
+- `Radio check:` every 30 s, with the peer count, the helper's status, and the announcer's last lines.
+
+A `POST /Discover ... 200` with no tile on the phone, and `retrans` on that connection, means the answer did not reach the phone in time.
