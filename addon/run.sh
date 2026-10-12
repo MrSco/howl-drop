@@ -747,6 +747,61 @@ kernel_radio_log() {
     fi
 }
 
+# The receiver's connections from /proc/net/tcp6, one per line: state (hex),
+# peer address, peer port, tx:rx queue, retransmits. Local port 8771 is 2243
+# in hex; the listening socket (0A) is left out. Addresses there are four
+# 32-bit words in host (little-endian) order. mawk (Debian's awk) has no
+# strtonum, hence hex().
+tcp6_8771() {
+    awk '
+        function hex(s,   i, n) { n = 0; s = toupper(s)
+            for (i = 1; i <= length(s); i++) n = n * 16 + index("0123456789ABCDEF", substr(s, i, 1)) - 1
+            return n }
+        function ip6(h,   i, w, out) { out = ""
+            for (i = 0; i < 4; i++) { w = substr(h, i * 8 + 1, 8)
+                out = out substr(w, 7, 2) substr(w, 5, 2) ":" substr(w, 3, 2) substr(w, 1, 2) (i < 3 ? ":" : "") }
+            return tolower(out) }
+        $2 ~ /:2243$/ && $4 != "0A" {
+            split($3, rem, ":")
+            print $4, ip6(rem[1]), hex(rem[2]), $5, hex($7) }' /proc/net/tcp6 2>/dev/null
+}
+
+# Our SYN-ACK to an address on awdl0 leaves only once the kernel knows that
+# address's MAC. OWL enters each AWDL peer's EUI-64 link-local as a permanent
+# neighbour; a phone connecting from any other address needs neighbour
+# discovery, a multicast exchange that seldom meets the phone on channel 6,
+# and until it does the SYN-ACK waits and the connection stays half-open.
+# With one AWDL peer, that peer's MAC is the only one the address can have.
+NEIGH_FIXED=" "
+neighbor_for() {  # IPV6 (as tcp6_8771 prints it)
+    local addr=$1 entry state macs mac
+    case "$NEIGH_FIXED" in *" $addr "*) return 0 ;; esac
+    entry=$(ip -6 neigh show "$addr" dev awdl0 2>/dev/null)
+    state=$(printf '%s\n' "$entry" | awk 'NF { print $NF; exit }')
+    case "$state" in
+        PERMANENT|REACHABLE|STALE|DELAY|PROBE)
+            say "Half-open connection from ${addr}: its neighbour entry is ${entry}. The SYN-ACK has a MAC to go to."
+            NEIGH_FIXED="$NEIGH_FIXED$addr "
+            return 0 ;;
+    esac
+    macs=$(ip -6 neigh show dev awdl0 nud permanent 2>/dev/null \
+        | awk '{ for (i = 1; i < NF; i++) if ($i == "lladdr") print $(i + 1) }' | sort -u)
+    say "Half-open connection from ${addr}, which has no usable neighbour entry (${state:-none}). awdl0 neighbours:"
+    ip -6 neigh show dev awdl0 2>/dev/null | sed 's/^/  /'
+    if [ "$(printf '%s\n' "$macs" | grep -c .)" -ne 1 ]; then
+        say "OWL has not entered exactly one peer MAC, so ${addr} is left to neighbour discovery."
+        NEIGH_FIXED="$NEIGH_FIXED$addr "
+        return 0
+    fi
+    mac=$macs
+    if ip -6 neigh replace "$addr" lladdr "$mac" dev awdl0 nud permanent 2>/dev/null; then
+        say "Entered ${addr} as ${mac}, the phone's AWDL MAC, so the SYN-ACK can leave."
+    else
+        say "Could not enter ${addr} as ${mac}."
+    fi
+    NEIGH_FIXED="$NEIGH_FIXED$addr "
+}
+
 # OWL's and the announcer's logs stay in /run/omdrop-owl inside this
 # container, so bring what matters into the add-on log: OWL's peer events
 # and errors every 5 s, TCP state of AirDrop connections every second, and a
@@ -777,17 +832,19 @@ watch_radio() {
         # Without ss, the kernel's table still has state, queues and the
         # retransmit count (local port 8771 is 2243 in hex).
         # mawk (Debian's awk) has no strtonum, hence hex().
-        [ -n "$tcp" ] || tcp=$(awk '
-            function hex(s,   i, n) { n = 0; s = toupper(s)
-                for (i = 1; i <= length(s); i++) n = n * 16 + index("0123456789ABCDEF", substr(s, i, 1)) - 1
-                return n }
-            $2 ~ /:2243$/ && $4 != "0A" {
-                printf "TCP state %s, peer port %d, tx:rx queue %s, retransmits %d\n",
-                    $4, hex(substr($3, length($3) - 3)), $5, hex($7) }' /proc/net/tcp6 2>/dev/null)
+        [ -n "$tcp" ] || tcp=$(tcp6_8771 | awk '{
+                printf "TCP state %s, peer [%s]:%d, tx:rx queue %s, retransmits %d\n", $1, $2, $3, $4, $5 }')
         if [ -n "$tcp" ] && [ "$tcp" != "$last_tcp" ]; then
             printf '%s %s\n' "$(date +%H:%M:%S)" "$tcp"
         fi
         last_tcp=$tcp
+        # A connection stuck half-open (03, SYN_RECV) while others from the
+        # phone complete: 0.2.9's /Ask SYN-ACK was retried for 30 s while a
+        # /Discover beside it finished in 50 ms.
+        # Fed by process substitution, not a pipe, so NEIGH_FIXED survives.
+        while read -r peer6; do
+            neighbor_for "$peer6"
+        done < <(tcp6_8771 | awk '$1 == "03" { print $2 }' | sort -u)
         [ $((tick % 5)) -eq 0 ] || continue
         # The responder's lines: "responding on", then one per answered query.
         # A phone with the share sheet open queries for _airdrop._tcp; no
