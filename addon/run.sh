@@ -708,27 +708,28 @@ EOF
 }
 
 # OWL -F sends each unicast frame once, without retries, and the phone is on
-# channel 6 for a slot or two in sixteen, so segments are lost and only TCP
+# channel 6 for one slot in sixteen (its sequence on 2026-10-12: 44,44,149,
+# 0,0,0,0,44,6,44,149,44,0,0,0,44), so segments are lost and only TCP
 # resends them: after 200 ms at least, doubling each time. On 2026-10-12
 # that stretched /Discover's TLS handshake to 1-4 s, the phone hung up, and
 # no tile appeared. A 20 ms floor on awdl0's route alone resends within the
-# phone's next visit. Deleted and added by device, because a replace can
-# match another interface's fe80::/64 (the Ethernet uplink's).
+# phone's next visit. It is a second fe80::/64 route on awdl0, preferred
+# by its lower metric: nothing is deleted or replaced, so the kernel's own
+# route and every other interface's (the Ethernet uplink's) stay as they are.
+# 0.2.1's delete-and-add was refused and hid why, so errors are printed.
 fast_awdl_retransmit() {
-    local metric
-    metric=$(ip -6 route show dev awdl0 2>/dev/null \
-        | awk '$1 == "fe80::/64" { for (i = 1; i < NF; i++) if ($i == "metric") print $(i + 1); exit }')
-    if [ -z "$metric" ]; then
-        say "awdl0 has no fe80::/64 route, so TCP on it keeps the 200 ms retransmit floor."
-        return 0
-    fi
-    if ip -6 route del fe80::/64 dev awdl0 metric "$metric" 2>/dev/null \
-        && ip -6 route add fe80::/64 dev awdl0 metric "$metric" rto_min 20ms quickack 1 2>/dev/null; then
-        say "TCP on awdl0 resends after 20 ms instead of 200 ms: $(ip -6 route show dev awdl0 | awk '$1 == "fe80::/64"')"
-    else
-        ip -6 route add fe80::/64 dev awdl0 metric "$metric" 2>/dev/null || true
-        say "Could not set rto_min on awdl0's route, so TCP on it keeps the 200 ms floor."
-    fi
+    local err opts
+    for opts in "rto_min 20ms quickack 1" "rto_min 20ms"; do
+        # shellcheck disable=SC2086
+        if err=$(ip -6 route add fe80::/64 dev awdl0 metric 128 $opts 2>&1); then
+            say "TCP on awdl0 resends after 20 ms instead of 200 ms ($opts)."
+            ip -6 route show dev awdl0 2>/dev/null | sed 's/^/  awdl0 route: /'
+            return 0
+        fi
+        say "ip -6 route add fe80::/64 dev awdl0 metric 128 ${opts}: ${err}"
+    done
+    say "TCP on awdl0 keeps the 200 ms retransmit floor. Routes on awdl0:"
+    ip -6 route show dev awdl0 2>&1 | sed 's/^/  /'
 }
 
 # OWL's and the announcer's logs stay in /run/omdrop-owl inside this
