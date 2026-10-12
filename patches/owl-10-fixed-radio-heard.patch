@@ -1,3 +1,23 @@
+diff --git a/daemon/core.c b/daemon/core.c
+index ebfe931..88acc13 100644
+--- a/daemon/core.c
++++ b/daemon/core.c
+@@ -64,6 +64,15 @@ static void ev_timer_rearm(struct ev_loop *loop, ev_timer *timer, double in) {
+ void wlan_device_ready(struct ev_loop *loop, ev_io *handle, int revents) {
+ 	struct daemon_state *state = handle->data;
+ 	int cnt = pcap_dispatch(state->io.wlan_handle, 1, &awdl_receive_frame, handle->data);
++	/* -F -H: a frame just heard may be from the peer a queued unicast frame
++	 * waits for, and the gate is open for it now. Without this the waiting
++	 * frame is looked at again only when its timer fires at the end of the
++	 * slot, up to 64 TU later, and the peer has gone (8260, 2026-10-12: a
++	 * SYN-ACK behind a closing connection's resend, retried for 40 s).
++	 * awdl_send_unicast checks the gate itself, so this is only a nudge. */
++	if (cnt > 0 && state->next && state->awdl_state.channel.fixed_radio
++	    && state->awdl_state.channel.heard_window_us)
++		awdl_send_unicast(loop, &state->ev_state.tx_timer, 0);
+ 	if (cnt > 0)
+ 		ev_feed_event(loop, handle, revents);
+ }
 diff --git a/daemon/owl.c b/daemon/owl.c
 index 69e437f..4012b48 100644
 --- a/daemon/owl.c
