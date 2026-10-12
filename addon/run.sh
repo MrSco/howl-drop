@@ -798,6 +798,14 @@ watch_radio() {
                 say "OWL cannot send any more. Interfaces now:"
                 iw dev 2>/dev/null | grep -E 'Interface|type|channel' | sed 's/^[[:space:]]*/  /'
                 kernel_radio_log
+                # On channel 44 the 8260's firmware stopped answering (-5 on
+                # every command) and iwlwifi removed and re-probed the card,
+                # taking every interface with it (2026-10-12). Nothing
+                # recovers a window from that, so end it plainly.
+                if [ ! -d /sys/class/net/mon0 ]; then
+                    say "The card was reset under this window (mon0 is gone). On channel 44 that is the 8260's firmware failing; set channels to 6. Stopping."
+                    kill -TERM $$
+                fi
             fi
             seen=$total
         fi

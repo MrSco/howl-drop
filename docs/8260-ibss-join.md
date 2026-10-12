@@ -81,3 +81,14 @@ to tell a firmware crash from anything else.
 
 On channel 6 the phone's sequence was `44,44,149,0,0,0,0,44,6,44,149,44,0,0,0,44`:
 one slot in sixteen. Every exchange with it waits for that slot.
+
+## 0.2.3: the firmware fails on channel 44
+
+The same run with the kernel log printed. About 13 s after the join every
+firmware command returned -5 (`Failed to send MAC_CONTEXT_CMD (action:3): -5`,
+`PHY ctxt cmd error. ret=-5`), and iwlwifi's reprobe work removed the card
+(`iwl_trans_reprobe_wk` → `iwl_pcie_gen1_2_remove` → `ieee80211_unregister_hw`)
+and probed it again as a new phy, renaming its `wlan0` to `wlp3s0`. That is
+what took mon0 away. `iwlwifi-8000C-36.ucode` is the last firmware this card
+gets, so channel 44 is out on the 8260; channel 6 is the only AirDrop channel
+it holds.

@@ -29,7 +29,7 @@ On the Windows PC, start `owldrop.exe` and leave it open. Allow UDP 47631 and TC
 
 Set `pc_host` to the PC's Ethernet address only when the beacon does not reach the NUC. Set `pc_name` only when you want to force the sheet name. The name can be at most 63 characters.
 
-`channels` is the AirDrop channels to try for the IBSS cell, in order: any of `6`, `44`, `149`, separated by spaces. Leave it at `6`. On this 8260, 0.1.12 and 0.1.13 unlocked 5 GHz and joined channel 44; the log said `Joined IBSS` and the iPhone never listed the PC. On channel 6 (0.1.11) the tile appeared. `44 149 6` brings back the 5 GHz attempt, with the regulatory-domain and scan unlock below, for experiments.
+`channels` is the AirDrop channels to try for the IBSS cell, in order: any of `6`, `44`, `149`, separated by spaces. Leave it at `6`. On this 8260, 0.1.12 and 0.1.13 unlocked 5 GHz and joined channel 44; the log said `Joined IBSS` and the iPhone never listed the PC. On channel 6 (0.1.11) the tile appeared. Do not use 44: on 0.2.3 the cell joined there, OWL rejected the phone's frames, and about 13 s in the 8260's firmware stopped answering and iwlwifi removed and re-probed the card (kernel log in `docs/8260-ibss-join.md`). The add-on now stops itself when that happens.
 
 Boot is manual. Start the add-on when you want the window. Stopping it runs `omdrop-discoverable stop`, which leaves the IBSS cell and returns the station interface to a station.
 
@@ -50,7 +50,7 @@ Before the receiver starts, `awdl0`'s route gets a 20 ms TCP retransmit floor in
 Then the log follows the radio, because OWL's and the announcer's own logs stay inside the container:
 
 - `OWL: ... add peer <mac>` means OWL synced with a phone. None at all means the radio never heard it.
-- `<time> TCP <state> [<phone>]:<port>: rto:… rtt:… retrans:…` is an AirDrop connection, printed when it changes. High `rto`, `retrans` or `bytes_retrans` is loss on the air.
+- `<time> TCP <state> [<phone>]:<port>: rto:â€¦ rtt:â€¦ retrans:â€¦` is an AirDrop connection, printed when it changes. High `rto`, `retrans` or `bytes_retrans` is loss on the air.
 - `Radio check:` every 30 s, with the peer count, the helper's status, and the announcer's last lines.
 
 A `POST /Discover ... 200` with no tile on the phone, and `retrans` on that connection, means the answer did not reach the phone in time.
