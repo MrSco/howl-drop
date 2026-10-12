@@ -1,0 +1,209 @@
+#include "node.hpp"
+
+#include <chrono>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <thread>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
+namespace {
+
+int g_failed = 0;
+
+void check(bool cond, int line, const char* text) {
+    if (!cond) {
+        std::cerr << "FAIL " << line << " " << text << '\n';
+        ++g_failed;
+    }
+}
+
+#define CHECK(cond) check(static_cast<bool>(cond), __LINE__, #cond)
+
+std::filesystem::path temp_root() {
+#ifdef _WIN32
+    const int pid = 0;
+#else
+    const int pid = static_cast<int>(::getpid());
+#endif
+    return std::filesystem::temp_directory_path() / ("owldrop-test-" + std::to_string(pid));
+}
+
+void test_protocol() {
+    owldrop::Message message;
+    message.type = owldrop::MsgType::Hello;
+    message.fields.set("name", "Office");
+    message.fields.set("id", std::string(32, 'a'));
+    message.fields.set("port", "47632");
+    std::string error;
+    auto bytes = owldrop::encode_head(message, error);
+    CHECK(bytes.has_value());
+    auto parsed = owldrop::parse_datagram(bytes->data(), bytes->size(), error);
+    CHECK(parsed.has_value());
+    CHECK(parsed->fields.get("name") == "Office");
+    CHECK(parsed->fields.get("port") == "47632");
+    CHECK(parsed->body_size == 0);
+
+    message.type = owldrop::MsgType::File;
+    message.body_size = 100000;
+    message.fields.set("file", "blob.bin");
+    bytes = owldrop::encode_head(message, error);
+    CHECK(bytes.has_value());
+    owldrop::MsgType type{};
+    std::uint16_t header_len = 0;
+    std::uint64_t body_size = 0;
+    CHECK(owldrop::parse_prefix(bytes->data(), type, header_len, body_size, error));
+    CHECK(type == owldrop::MsgType::File);
+    CHECK(body_size == 100000);
+}
+
+void test_sanitize() {
+    CHECK(owldrop::sanitize_filename("..\\..\\evil.txt") == "evil.txt");
+    CHECK(owldrop::sanitize_filename("a/b.txt") == "b.txt");
+    CHECK(owldrop::sanitize_filename("CON.txt") == "_CON.txt");
+    CHECK(owldrop::sanitize_filename("   ") == "file");
+}
+
+bool wait_for_peer(owldrop::Node& node, const std::string& name) {
+    for (int i = 0; i < 100; ++i) {
+        for (const auto& peer : node.peers()) {
+            if (peer.name == name) return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return false;
+}
+
+bool wait_for_text(owldrop::MemoryClipboard& clipboard, const std::string& text) {
+    for (int i = 0; i < 150; ++i) {
+        const auto read = clipboard.read();
+        if (read.status == owldrop::ClipRead::Status::Text && read.text == text) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return false;
+}
+
+void test_lan() {
+    const auto root = temp_root();
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "a");
+    std::filesystem::create_directories(root / "b");
+
+    owldrop::MemoryClipboard clip_a;
+    owldrop::MemoryClipboard clip_b;
+    owldrop::Node::Config a_cfg;
+    a_cfg.name = "pc-a";
+    a_cfg.id = std::string(32, 'a');
+    a_cfg.discovery_port = 41231;
+    a_cfg.transfer_port = 41232;
+    a_cfg.control_port = 41233;
+    a_cfg.inbox = root / "a";
+    a_cfg.lan_broadcast = false;
+    a_cfg.beacon_interval = std::chrono::milliseconds(50);
+    a_cfg.peer_ttl = std::chrono::seconds(2);
+    a_cfg.log = false;
+    a_cfg.beacon_targets.push_back({"127.0.0.1", 41241});
+
+    owldrop::Node::Config b_cfg = a_cfg;
+    b_cfg.name = "pc-b";
+    b_cfg.id = std::string(32, 'b');
+    b_cfg.discovery_port = 41241;
+    b_cfg.transfer_port = 41242;
+    b_cfg.control_port = 41243;
+    b_cfg.inbox = root / "b";
+    b_cfg.beacon_targets = {{"127.0.0.1", 41231}};
+
+    owldrop::Node node_a(a_cfg, clip_a);
+    owldrop::Node node_b(b_cfg, clip_b);
+    node_a.start();
+    node_b.start();
+    CHECK(wait_for_peer(node_a, "pc-b"));
+    CHECK(wait_for_peer(node_b, "pc-a"));
+
+    const auto source = root / "blob.bin";
+    {
+        std::ofstream out(source, std::ios::binary);
+        for (int i = 0; i < 100000; ++i) out.put(static_cast<char>(i % 251));
+    }
+    const auto missing = node_a.send_file("nobody", source);
+    CHECK(!missing.ok);
+    const auto sent = node_a.send_file("pc-b", source);
+    if (!sent.ok) std::cerr << "send: " << sent.message << '\n';
+    CHECK(sent.ok);
+    const auto saved = root / "b" / "blob.bin";
+    CHECK(std::filesystem::is_regular_file(saved));
+    CHECK(std::filesystem::file_size(saved) == 100000);
+    {
+        std::ifstream in(saved, std::ios::binary);
+        bool match = true;
+        for (int i = 0; i < 100000; ++i) {
+            const int byte = in.get();
+            if (byte != (i % 251)) {
+                match = false;
+                break;
+            }
+        }
+        CHECK(match);
+    }
+
+    {
+        owldrop::Socket socket = owldrop::Socket::tcp_v4();
+        std::uint32_t addr = 0;
+        std::string error;
+        CHECK(owldrop::ipv4_from_string("127.0.0.1", addr));
+        CHECK(socket.valid());
+        CHECK(socket.connect_v4(addr, 41242, 2000, error));
+        owldrop::Message message;
+        message.type = owldrop::MsgType::File;
+        const std::string body = "hello";
+        message.body_size = body.size();
+        message.fields.set("file", "..\\..\\evil.txt");
+        message.fields.set("from", std::string(32, 'a'));
+        CHECK(owldrop::write_head(socket, message, nullptr, error));
+        CHECK(socket.send_full(reinterpret_cast<const std::uint8_t*>(body.data()), body.size(), nullptr));
+        owldrop::Message ack;
+        CHECK(owldrop::read_head(socket, ack, nullptr, error));
+        CHECK(ack.fields.get("result") == "ok");
+        CHECK(ack.fields.get("file") == "evil.txt");
+        const auto evil = root / "b" / "evil.txt";
+        CHECK(std::filesystem::is_regular_file(evil));
+        std::ifstream in(evil, std::ios::binary);
+        std::string got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(got == "hello");
+        CHECK(!std::filesystem::exists(root / "evil.txt"));
+    }
+
+    CHECK(clip_a.set_text("hello from A"));
+    CHECK(wait_for_text(clip_b, "hello from A"));
+
+    node_a.stop();
+    node_b.stop();
+    std::filesystem::remove_all(root);
+}
+
+}  // namespace
+
+int main() {
+    if (!owldrop::startup_network()) {
+        std::cerr << "network startup failed\n";
+        return 1;
+    }
+    try {
+        test_protocol();
+        test_sanitize();
+        test_lan();
+    } catch (const std::exception& ex) {
+        std::cerr << "exception " << ex.what() << '\n';
+        return 1;
+    }
+    owldrop::shutdown_network();
+    if (g_failed) {
+        std::cerr << g_failed << " checks failed\n";
+        return 1;
+    }
+    std::cout << "owldrop-test passed\n";
+    return 0;
+}

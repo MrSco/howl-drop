@@ -1,0 +1,4 @@
+# Everything here runs on Linux (the add-on image, the radio helper), so text
+# stays LF even in a Windows checkout with core.autocrlf on.
+* text=auto eol=lf
+*.exe binary
