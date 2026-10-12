@@ -124,15 +124,36 @@ mt76_dir() { echo "/sys/kernel/debug/ieee80211/$(basename "$(readlink -f "/sys/c
 # ad-hoc cell can start there: the AX201 refuses every 5 GHz one (EINVAL on
 # 149 under a GB regdomain, where 44 is "No IR" until it has an AP there), so
 # exclusive_up tries them in this order.
+# $CONF/exclusive-channels (e.g. "6", or "44 149 6") replaces that order. The
+# 8260 is why: once 5 GHz is unlocked it reports a cell joined on 44, and an
+# iPhone never lists it there, where on 6 it does.
 tx_channels() {  # PHY
-  local ok c
+  local ok c order
   ok=$(iw phy "$1" channels 2>/dev/null | awk '
     /^[[:space:]]*\* [0-9]+ MHz/ { if (f && ok) print f; f = $2; ok = !/disabled/; next }
     /No IR|Radar detection/ { ok = 0 }
     END { if (f && ok) print f }')
-  for c in 5220 5745 2437; do
+  order=$(head -1 "$CONF/exclusive-channels" 2>/dev/null)
+  [ -n "${order//[[:space:]]/}" ] || order="44 149 6"
+  for c in $order; do
+    case "$c" in 6) c=2437 ;; 44) c=5220 ;; 149) c=5745 ;; *) continue ;; esac
     grep -qx "$c" <<< "$ok" && echo "$c"
   done
+}
+
+# The frequency a cell already joined on one of FREQS, if there is one:
+# $CONF/keep-cell set to 1 means something else (the Home Assistant add-on,
+# which has to fight wpa_supplicant for the radio first) started it, and
+# taking it down to join again only finds the interface down (ENETDOWN).
+joined_cell_freq() {  # STA FREQ...
+  local sta=$1 dev f
+  shift
+  [ "$(knob keep-cell)" = 1 ] || return 1
+  for dev in "$IBSS" "$sta"; do
+    f=$(iw dev "$dev" link 2>/dev/null | awk '/^Joined IBSS/ {j = 1} j && /freq:/ {print int($2); exit}')
+    [ -n "$f" ] && [[ " $* " == *" $f "* ]] && { echo "$f"; return 0; }
+  done
+  return 1
 }
 
 # Take the station off the air and put an ad-hoc vif in its place. AWDL's
@@ -159,6 +180,7 @@ exclusive_up() {  # STA PHY FREQ...
   local sta=$1 phy=$2 f cell=$IBSS
   shift 2
   echo "$sta" > "$RUN/exclusive"
+  joined_cell_freq "$sta" "$@" && return 0
   # Only a converted station needs it, but it has to be read while connected.
   nmcli -g GENERAL.CON-UUID device show "$sta" > "$RUN/connection" 2>/dev/null
   nmcli device set "$sta" managed no >/dev/null 2>&1
@@ -176,6 +198,13 @@ exclusive_up() {  # STA PHY FREQ...
   # network too and send plain IPv6 on AWDL's BSSID.
   sysctl -qw "net.ipv6.conf.$cell.disable_ipv6=1" 2>/dev/null
   ip link set "$cell" up || return 1
+  # iwlwifi can report the link down for a moment after `up` returns, and a
+  # join then fails with ENETDOWN.
+  for _ in $(seq 50); do
+    [ $(( $(cat "/sys/class/net/$cell/flags" 2>/dev/null || echo 0) & 1 )) -eq 1 ] && break
+    ip link set "$cell" up 2>/dev/null
+    sleep 0.05
+  done
   for f in "$@"; do
     iw dev "$cell" ibss join omdrop "$f" HT20 fixed-freq "$AWDL_BSSID" beacon-interval 10000 >&2 || continue
     # mac80211 scans the channel once before it starts the cell.
@@ -388,8 +417,10 @@ cmd_start() {
   : > "$RUN/log"
   : > "$RUN/announce.log"
   # A station the last stop couldn't turn back still holds the cell, and
-  # exclusive_up would take its state for the original.
-  if [ -e "$RUN/converted" ]; then
+  # exclusive_up would take its state for the original. Not one a caller
+  # converted and joined on purpose ($CONF/keep-cell, joined_cell_freq).
+  if [ -e "$RUN/converted" ] \
+    && ! { [ "$(knob keep-cell)" = 1 ] && iw dev "$(cat "$RUN/exclusive" 2>/dev/null)" link 2>/dev/null | grep -q '^Joined IBSS'; }; then
     cmd_stop recovered >/dev/null
     [ -e "$RUN/converted" ] && die "Wi-Fi ($(cat "$RUN/exclusive")) is still in ad-hoc mode from the last window and couldn't be switched back. Restarting the computer fixes it." 4
   fi

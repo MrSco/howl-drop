@@ -1,24 +1,32 @@
 """Exercise exclusive mode with command doubles, never the real radio."""
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 
+# Through PATH: Windows itself looks in System32 first, which is WSL's bash,
+# and WSL drops this environment.
+BASH = shutil.which('bash') or 'bash'
 SOURCE = (Path(__file__).resolve().parents[1] / 'userspace/omdrop-discoverable').read_text()
-FUNCTIONS = SOURCE[SOURCE.index('exclusive_up()'):SOURCE.index('# --------------------------------------------------------------------- status')]
+FUNCTIONS = SOURCE[SOURCE.index('tx_channels()'):SOURCE.index('# --------------------------------------------------------------------- status')]
 STATION = SOURCE[SOURCE.index('station_iface()'):SOURCE.index('\ndriver_of()')]
 
 class ExclusiveTests(unittest.TestCase):
-    def run_case(self, extra='', fallback=True, join=True):
+    def run_case(self, extra='', fallback=True, join=True, conf=None):
         with tempfile.TemporaryDirectory() as tmp:
-            env = dict(os.environ, RUN=tmp, FALLBACK=str(int(fallback)), JOIN=str(int(join)))
+            conf_dir = Path(tmp) / 'conf'
+            conf_dir.mkdir()
+            for name, value in (conf or {}).items():
+                (conf_dir / name).write_text(value + '\n', newline='\n')
+            env = dict(os.environ, RUN=tmp, CONF=conf_dir.as_posix(), FALLBACK=str(int(fallback)), JOIN=str(int(join)))
             script = r'''
 set -uo pipefail
 IBSS=awdlibss0
 AWDL_BSSID=00:25:00:ff:94:73
 log() { echo "log $*" >> "$RUN/commands"; }
-knob() { :; }
+knob() { head -1 "$CONF/$1" 2>/dev/null | tr -d '[:space:]' || true; }
 nmcli() {
   echo "nmcli $*" >> "$RUN/commands"
   [[ "$*" != '-g GENERAL.CON-UUID device show wlan0' ]] || echo 12345678-1234-1234-1234-123456789abc
@@ -40,9 +48,11 @@ iw() {
   if [[ "$*" == *' link' ]]; then echo 'Joined IBSS 00:25:00:ff:94:73'; fi
 }
 ''' + FUNCTIONS + STATION + '\n' + extra + '\ntouch "$RUN/commands"; cat "$RUN/commands"\n'
-            result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True, timeout=10)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            return result.stdout
+            # As bytes over stdin: on Windows, bash -c's argument loses its
+            # quoting, and text mode would turn every newline into CRLF.
+            result = subprocess.run([BASH, '-s'], input=script.encode(), env=env, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            return result.stdout.decode()
 
     def test_separate_ibss_path_leaves_station_to_networkmanager(self):
         out = self.run_case('exclusive_up wlan0 phy0 2437 || exit 10\nexclusive_down', fallback=False)
@@ -130,6 +140,45 @@ exclusive_down || exit 11
 ''')
         self.assertNotIn('connection up uuid', out)
         self.assertIn('nmcli device set wlan0 managed yes', out)
+
+    CHANNELS = r'''
+iw() {
+  if [[ "$*" == 'phy phy0 channels' ]]; then
+    printf '\t* %s\n' '2437 MHz [6]' '5220 MHz [44]' '5745 MHz [149]'
+  fi
+}
+tx_channels phy0 | tr '\n' ' '
+'''
+
+    def test_channels_default_to_5ghz_first(self):
+        self.assertEqual(self.run_case(self.CHANNELS).split(), ['5220', '5745', '2437'])
+
+    def test_exclusive_channels_knob_sets_the_order(self):
+        out = self.run_case(self.CHANNELS, conf={'exclusive-channels': '6'})
+        self.assertEqual(out.split(), ['2437'])
+        out = self.run_case(self.CHANNELS, conf={'exclusive-channels': '149 6'})
+        self.assertEqual(out.split(), ['5745', '2437'])
+
+    JOINED_ON = r'''
+iw() {
+  echo "iw $*" >> "$RUN/commands"
+  if [[ "$*" == 'dev wlan0 link' ]]; then printf '%%s\n' 'Joined IBSS 00:25:00:ff:94:73 (on wlan0)' '	freq: %s'; fi
+}
+'''
+
+    def test_keep_cell_reuses_a_cell_already_joined(self):
+        out = self.run_case(self.JOINED_ON % 2437 + '[[ $(exclusive_up wlan0 phy0 2437) == 2437 ]] || exit 10',
+                            conf={'keep-cell': '1'})
+        self.assertNotIn('ibss join', out)
+        self.assertNotIn('ip link set wlan0 down', out)
+
+    def test_keep_cell_ignores_a_cell_on_another_channel(self):
+        out = self.run_case(self.JOINED_ON % 5220 + 'exclusive_up wlan0 phy0 2437 >/dev/null', conf={'keep-cell': '1'})
+        self.assertIn('ibss join omdrop 2437 HT20', out)
+
+    def test_without_keep_cell_a_joined_cell_is_joined_again(self):
+        out = self.run_case(self.JOINED_ON % 2437 + 'exclusive_up wlan0 phy0 2437 >/dev/null')
+        self.assertIn('ibss join omdrop 2437 HT20', out)
 
 if __name__ == '__main__':
     unittest.main()

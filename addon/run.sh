@@ -385,7 +385,30 @@ freq_name() {
     esac
 }
 
-# Released order: channel 44, channel 149, then channel 6. A frequency the
+# The channels option ("6" by default) as frequencies, in its order. On this
+# 8260 a cell on 44 reports Joined IBSS and the iPhone never lists it; on 6
+# the tile appears. 5 GHz stays available for experiments ("44 149 6").
+want_freqs() {
+    local c out=
+    for c in $1; do
+        case "$c" in
+            6) out="$out 2437" ;;
+            44) out="$out 5220" ;;
+            149) out="$out 5745" ;;
+            *) say "Ignoring channel ${c}: AirDrop uses only 6, 44 and 149." >&2 ;;
+        esac
+    done
+    printf '%s\n' "${out# }"
+}
+
+wants_5ghz() {
+    case " $WANT_FREQS " in
+        *" 5220 "*|*" 5745 "*) return 0 ;;
+    esac
+    return 1
+}
+
+# The wanted frequencies, in the channels option's order. A frequency the
 # phy marks disabled, No IR, or radar is not offered. An empty result means
 # the list could not be read; it does not mean 5 GHz is usable.
 allowed_airdrop_freqs() {
@@ -406,7 +429,7 @@ allowed_airdrop_freqs() {
         END { if (f && ok) print f }
     ')
     [ -n "$ok" ] || return 0
-    for c in 5220 5745 2437; do
+    for c in $WANT_FREQS; do
         printf '%s\n' "$ok" | grep -qx "$c" && printf '%s\n' "$c"
     done
 }
@@ -547,22 +570,19 @@ join_released() {
     silence_cell_ipv6 "$dev"
     iw dev "$dev" ibss leave 2>/dev/null || true
     allowed=$(allowed_airdrop_freqs "$phy")
-    if ! five_ghz_open "$allowed"; then
+    if wants_5ghz && ! five_ghz_open "$allowed"; then
         say "5 GHz is still closed after the interface was brought up. Scanning on ${dev}."
         scan_for_5ghz "$dev" || true
         allowed=$(allowed_airdrop_freqs "$phy")
         report_5ghz "$allowed" "after the cell scan"
     fi
     if [ -z "$allowed" ]; then
-        say "The channel list could not be read. Trying channel 6."
+        say "No wanted channel is usable, or the channel list could not be read. Trying channel 6."
         allowed=2437
     fi
-    if ! printf '%s\n' "$allowed" | grep -qx 5220; then
-        say "5220 MHz (channel 44) will not be tried."
-    fi
-    if ! printf '%s\n' "$allowed" | grep -qx 5745; then
-        say "5745 MHz (channel 149) will not be tried."
-    fi
+    for freq in $WANT_FREQS; do
+        printf '%s\n' "$allowed" | grep -qx "$freq" || say "$(freq_name "$freq") will not be tried."
+    done
     JOINED_FREQ=
     for freq in $allowed; do
         try_join_freq "$dev" "$freq" && return 0
@@ -686,59 +706,6 @@ EOF
     return 0
 }
 
-# Keep a cell this script already joined. exclusive_up would take the
-# interface down and join again, which is the ENETDOWN failure.
-keep_joined_cell() {
-    python3 - "$DISCOVERABLE" <<'PY' || true
-import pathlib, sys
-path = pathlib.Path(sys.argv[1])
-text = path.read_text()
-marker = "A cell already joined by the add-on"
-if marker in text:
-    sys.exit(0)
-anchor = '  echo "$sta" > "$RUN/exclusive"\n'
-insert = anchor + '''  # A cell already joined by the add-on (channel 6, interface up) stays up.
-  # Tearing it down here put the join on a down interface (ENETDOWN).
-  if iw dev "$IBSS" link 2>/dev/null | grep -q '^Joined IBSS'; then
-    iw dev "$IBSS" link | awk '/freq:/ {print int($2); exit}'
-    return 0
-  fi
-  if iw dev "$sta" link 2>/dev/null | grep -q '^Joined IBSS'; then
-    iw dev "$sta" link | awk '/freq:/ {print int($2); exit}'
-    return 0
-  fi
-'''
-if anchor not in text:
-    sys.exit(0)
-text = text.replace(anchor, insert, 1)
-recover = '''  if [ -e "$RUN/converted" ]; then
-    cmd_stop recovered >/dev/null
-    [ -e "$RUN/converted" ] && die "Wi-Fi ($(cat "$RUN/exclusive")) is still in ad-hoc mode from the last window and couldn\'t be switched back. Restarting the computer fixes it." 4
-  fi
-'''
-keep = '''  if [ -e "$RUN/converted" ]; then
-    if ! iw dev "$(cat "$RUN/exclusive" 2>/dev/null)" link 2>/dev/null | grep -q '^Joined IBSS'; then
-      cmd_stop recovered >/dev/null
-      [ -e "$RUN/converted" ] && die "Wi-Fi ($(cat "$RUN/exclusive")) is still in ad-hoc mode from the last window and couldn\'t be switched back. Restarting the computer fixes it." 4
-    fi
-  fi
-'''
-if recover in text:
-    text = text.replace(recover, keep, 1)
-up = '  ip link set "$cell" up || return 1\n'
-wait = up + '''  local uptry
-  for uptry in $(seq 50); do
-    [ $(( $(cat "/sys/class/net/$cell/flags" 2>/dev/null || echo 0) & 1 )) -eq 1 ] && break
-    ip link set "$cell" up 2>/dev/null || true
-    sleep 0.05
-  done
-'''
-if up in text:
-    text = text.replace(up, wait, 1)
-path.write_text(text)
-PY
-}
-
 stop_stack() {
     rm -f /tmp/owldrop-running
     if [ -n "$BRIDGE_PID" ]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
@@ -760,9 +727,8 @@ say "Home Assistant OS stays installed. This add-on does not load iwlwifi and do
 say ""
 say "Wi-Fi on this NUC is the Intel Wireless-AC 8260. Ethernet on the I219-LM stays the uplink."
 say "The radio profile is the released omdrop-owl iwlwifi line: exclusive mode, IBSS, BSSID ${BSSID}."
-say "This window tries 5220 MHz (channel 44) and 5745 MHz (channel 149) first, then 2437 MHz (channel 6). Each join is HT20, fixed frequency, BSSID ${BSSID}, beacon interval 10000 TU."
-say "A current iPhone spends most of its AirDrop time on channels 44 and 149 and only glances at channel 6. A cell left on channel 6 is why the tile appears and the send then dies in the handshake."
-say "The Intel cards this profile was tested on refuse a 5 GHz cell. This 8260 is not an AX201 or an AX211, and that 5 GHz join has no report on iwlwifi-8000C-36.ucode. If 44 and 149 are refused, the window joins channel 6 and says so."
+say "Each join is HT20, fixed frequency, BSSID ${BSSID}, beacon interval 10000 TU, on the channels option in order (default 6)."
+say "On this 8260 a cell on channel 44 reports Joined IBSS and the iPhone never lists it. On channel 6 the tile appears, which is the released iwlwifi profile's channel too."
 say "Until a phone finishes a transfer, ${INBOX} stays empty and owldrop.exe has nothing to receive."
 say "Pull request 13 and a USB Wi-Fi stick are not used."
 say ""
@@ -803,6 +769,13 @@ fi
 
 PC_HOST=$(option pc_host)
 PC_NAME=$(option pc_name)
+CHANNELS=$(option channels)
+WANT_FREQS=$(want_freqs "${CHANNELS:-6}")
+if [ -z "$WANT_FREQS" ]; then
+    say "The channels option has none of 6, 44 or 149. Using channel 6."
+    WANT_FREQS=2437
+fi
+say "Channels to try, in order: $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g')."
 if [ -z "$PC_NAME" ]; then
     say "Listening for owldrop.exe on UDP 47631."
     if [ -n "$PC_HOST" ]; then
@@ -834,7 +807,9 @@ if type_is_ibss "$TYPE"; then
 fi
 iw dev mon0 del 2>/dev/null || true
 
-allow_5ghz "$IFACE"
+if wants_5ghz; then
+    allow_5ghz "$IFACE"
+fi
 
 say "Marking ${IFACE} unmanaged so the supervisor leaves it out of the uplink."
 nmcli device disconnect "$IFACE" >/dev/null 2>&1 || true
@@ -859,7 +834,15 @@ if ! join_released "$CELL"; then
 fi
 say "Joined IBSS on $(freq_name "${JOINED_FREQ:-unknown}"), HT20, BSSID ${BSSID}."
 
-keep_joined_cell
+# The helper keeps this cell instead of taking it down to join again
+# (ENETDOWN), and pins OWL to the channel it is on.
+rm -f /etc/omdrop/exclusive-channels
+case "$JOINED_FREQ" in
+    2437) echo 6 > /etc/omdrop/exclusive-channels ;;
+    5220) echo 44 > /etc/omdrop/exclusive-channels ;;
+    5745) echo 149 > /etc/omdrop/exclusive-channels ;;
+esac
+echo 1 > /etc/omdrop/keep-cell
 say "Starting the released exclusive window (until this add-on stops)."
 if ! "$DISCOVERABLE" start 0; then
     say "The IBSS cell was joined, and the released window did not finish starting."
