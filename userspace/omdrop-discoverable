@@ -401,7 +401,7 @@ supervise() {
 }
 
 cmd_start() {
-  local secs=${1:-} sta drv phy gw ap freqs chan stamac monmac mt76 _
+  local secs=${1:-} sta drv phy gw ap freqs chan stamac monmac mt76 copies _
   local owl_extra=() strategy=intersect
   [[ "$secs" =~ ^[0-9]+$ ]] || die "usage: omdrop-discoverable start <seconds>" 2
   need_root
@@ -494,6 +494,10 @@ cmd_start() {
   if [ "$PROF_MODE" = exclusive ]; then
     owl_extra+=(-F -E)
     strategy=pin
+    # owl -U (patches/owl-09-fixed-radio-copies.patch): each unicast frame
+    # sent this many times in the peer's visit. $CONF/unicast-copies, 1-5.
+    copies=$(knob unicast-copies)
+    [[ "$copies" =~ ^[1-5]$ ]] && owl_extra+=(-U "$copies")
   fi
 
   # mt76_pm: runtime PM off for the window, restored by stop.

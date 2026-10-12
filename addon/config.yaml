@@ -1,5 +1,5 @@
 name: OwlDrop
-version: "0.2.5"
+version: "0.2.6"
 slug: owldrop
 description: AirDrop on the NUC's Intel Wireless-AC 8260, forwarded over Ethernet to owldrop.exe
 url: https://github.com/MrSco/howl-drop
@@ -22,8 +22,10 @@ options:
   pc_host: ""
   pc_name: ""
   channels: "6"
+  unicast_copies: 3
 schema:
   pc_host: str
   pc_name: str
   channels: "str?"
+  unicast_copies: "int(1,5)?"
 panel_icon: "mdi:wifi"

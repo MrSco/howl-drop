@@ -767,12 +767,23 @@ watch_radio() {
         # Discover connections last a second or few, so this is per tick.
         # Printed only when it changes: a socket left in FIN_WAIT would
         # otherwise repeat for minutes.
+        # A socket is one line, plus an indented detail line when the kernel
+        # has socket diagnostics (0.2.5 printed nothing: it assumed one).
         tcp=$(ss -tinH '( sport = :8771 )' 2>/dev/null \
-            | awk 'NR % 2 == 1 { state = $1; peer = $5; next }
-                   { line = ""
-                     for (i = 1; i <= NF; i++)
-                         if ($i ~ /^(rtt|rto|retrans|unacked|lost|bytes_sent|bytes_retrans|bytes_acked):/) line = line " " $i
-                     print "TCP " state " " peer ":" line }')
+            | awk '/^[^ \t]/ { if (rec) print rec; rec = "TCP " $1 " " $5 ":"; next }
+                   { for (i = 1; i <= NF; i++)
+                         if ($i ~ /^(rtt|rto|retrans|unacked|lost|bytes_sent|bytes_retrans|bytes_acked):/) rec = rec " " $i }
+                   END { if (rec) print rec }')
+        # Without ss, the kernel's table still has state, queues and the
+        # retransmit count (local port 8771 is 2243 in hex).
+        # mawk (Debian's awk) has no strtonum, hence hex().
+        [ -n "$tcp" ] || tcp=$(awk '
+            function hex(s,   i, n) { n = 0; s = toupper(s)
+                for (i = 1; i <= length(s); i++) n = n * 16 + index("0123456789ABCDEF", substr(s, i, 1)) - 1
+                return n }
+            $2 ~ /:2243$/ && $4 != "0A" {
+                printf "TCP state %s, peer port %d, tx:rx queue %s, retransmits %d\n",
+                    $4, hex(substr($3, length($3) - 3)), $5, hex($7) }' /proc/net/tcp6 2>/dev/null)
         if [ -n "$tcp" ] && [ "$tcp" != "$last_tcp" ]; then
             printf '%s %s\n' "$(date +%H:%M:%S)" "$tcp"
         fi
@@ -964,6 +975,17 @@ case "$JOINED_FREQ" in
     5745) echo 149 > /etc/omdrop/exclusive-channels ;;
 esac
 echo 1 > /etc/omdrop/keep-cell
+# OWL sends unicast once, unacknowledged, and the phone is on channel 6 one
+# slot in sixteen: 0.2.5's /Discover TLS handshake took 2.1 s and the phone
+# hung up before the answer. Each frame now goes out this many times while
+# the phone is there (owl -U).
+COPIES=$(option unicast_copies)
+case "$COPIES" in
+    [1-5]) ;;
+    *) COPIES=3 ;;
+esac
+echo "$COPIES" > /etc/omdrop/unicast-copies
+say "Each unicast frame to the phone goes out ${COPIES} time(s) per visit to our channel."
 say "Starting the released exclusive window (until this add-on stops)."
 if ! "$DISCOVERABLE" start 0; then
     say "The IBSS cell was joined, and the released window did not finish starting."

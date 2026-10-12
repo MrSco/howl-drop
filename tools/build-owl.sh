@@ -22,6 +22,10 @@
 #   owl-08-amsdu-bound.patch  refuse an A-MSDU with more subframes than the
 #                           receive array has slots, instead of writing past
 #                           it (tests/owl_amsdu.c)
+#   owl-09-fixed-radio-copies.patch  -U N: with -F, each unicast data frame
+#                           is injected N times while the peer is on our
+#                           channel (default 1), for a peer that visits it
+#                           one slot in sixteen
 # Applied in name order: each is a diff against the tree with the previous ones.
 set -eu
 
@@ -51,7 +55,7 @@ cmake -S "$DIR" -B "$DIR/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSIO
 cmake --build "$DIR/build" --target owl -j"$(nproc)" >/dev/null
 
 BIN=$DIR/build/daemon/owl
-case "$("$BIN" -S intersect -R 12 -m 02:00:00:00:00:01 -F -E -h 2>&1 || true)" in
-  *"invalid option"*|*"-R takes"*|*"-m takes"*) echo "$BIN lacks -S, -R, -m, -F or -E; did the patches apply?"; exit 1 ;;
+case "$("$BIN" -S intersect -R 12 -m 02:00:00:00:00:01 -F -E -U 2 -h 2>&1 || true)" in
+  *"invalid option"*|*"-R takes"*|*"-m takes"*|*"-U takes"*) echo "$BIN lacks -S, -R, -m, -F, -E or -U; did the patches apply?"; exit 1 ;;
 esac
 echo "built $BIN: owl@${OWL_COMMIT:0:7} + $(ls "$ROOT"/patches/owl-*.patch | wc -l) patches"

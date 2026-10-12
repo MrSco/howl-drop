@@ -31,6 +31,8 @@ Set `pc_host` to the PC's Ethernet address only when the beacon does not reach t
 
 `channels` is the AirDrop channels to try for the IBSS cell, in order: any of `6`, `44`, `149`, separated by spaces. Leave it at `6`. On this 8260, 0.1.12 and 0.1.13 unlocked 5 GHz and joined channel 44; the log said `Joined IBSS` and the iPhone never listed the PC. On channel 6 (0.1.11) the tile appeared. Do not use 44: on 0.2.3 the cell joined there, OWL rejected the phone's frames, and about 13 s in the 8260's firmware stopped answering and iwlwifi removed and re-probed the card (kernel log in `docs/8260-ibss-join.md`). The add-on now stops itself when that happens.
 
+`unicast_copies` (1–5, default 3) is how many times OWL sends each packet to the phone while the phone is on channel 6 (`owl -U`, `patches/owl-09-fixed-radio-copies.patch`). OWL sends unicast without waiting for an acknowledgement, and an iPhone on 5 GHz Wi-Fi visits channel 6 one slot in sixteen, so a lost packet otherwise waits a whole schedule period. 1 is the original behaviour.
+
 Boot is manual. Start the add-on when you want the window. Stopping it runs `omdrop-discoverable stop`, which leaves the IBSS cell and returns the station interface to a station.
 
 ## What the log says first
