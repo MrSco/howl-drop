@@ -65,3 +65,19 @@ A driver patch is not what adds this join. iwlmvm already accepts the three AWDL
 HT20, `fixed-freq`, BSSID `00:25:00:ff:94:73`, and beacon interval 10000 stay. 0.1.11 runs that join at 5220 MHz and then 5745 MHz before 2437 MHz, which is the order the released exclusive profile already uses. A frequency the phy marks disabled, No IR, or radar is skipped. 2437 MHz remains the fallback when 5 GHz does not come up. The beacon interval is not shortened.
 
 0.1.11 on this NUC skipped 5220 and 5745 because the phy marked them disabled or No IR, then joined 2437. 0.1.12 read the regulatory domain as 00, self-managed, then reported a 5 GHz channel usable and skipped both the country change and the scan. The join still found 5220 and 5745 closed. 0.1.13 sets country 00 to US, does not treat an unreadable channel list as usable, and scans again after the IBSS interface is up. The join arguments stay the same.
+
+## 0.2.2 on channel 44, with OWL's log visible
+
+With the regulatory unlock, the cell joined 5220 MHz and OWL ran pinned to
+44, where the iPhone (on 5 GHz home Wi-Fi) spends most of its slots. OWL
+read the phone's channel sequence from one frame, then rejected the rest:
+`awdl_action: unexpected bytes (2) at end of frame` and `unhandled frame
+(-1)`, dozens a second. It never logged `add peer`. On channel 6 the same
+phone's frames parse and the peer is added within a second. About 12 s in,
+injection failed with `Network is down`, then `No such device or address`:
+mon0 no longer existed, and nothing in the add-on or helper deletes it
+mid-window. 0.2.3 prints the host kernel's iwlwifi lines when that happens,
+to tell a firmware crash from anything else.
+
+On channel 6 the phone's sequence was `44,44,149,0,0,0,0,44,6,44,149,44,0,0,0,44`:
+one slot in sixteen. Every exchange with it waits for that slot.

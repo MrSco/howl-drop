@@ -732,6 +732,21 @@ fast_awdl_retransmit() {
     ip -6 route show dev awdl0 2>&1 | sed 's/^/  /'
 }
 
+# The host kernel's last radio lines: a firmware crash (Microcode SW error)
+# or a failed restart is what takes mon0 away mid-window. dmesg needs
+# CAP_SYSLOG or SYS_ADMIN; the host's mount namespace is the fallback.
+kernel_radio_log() {
+    local pattern='iwlwifi|iwlmvm|ieee80211|mac80211|cfg80211|wlp|mon0|awdl'
+    local out
+    out=$(dmesg 2>/dev/null | grep -iE "$pattern" | tail -n 30)
+    [ -n "$out" ] || out=$(nsenter -t 1 -m -- dmesg 2>/dev/null | grep -iE "$pattern" | tail -n 30)
+    if [ -n "$out" ]; then
+        printf '%s\n' "$out" | sed 's/^/kernel: /'
+    else
+        say "The host kernel log is not readable from this container."
+    fi
+}
+
 # OWL's and the announcer's logs stay in /run/omdrop-owl inside this
 # container, so bring what matters into the add-on log: OWL's peer events
 # and errors every 5 s, TCP state of AirDrop connections every second, and a
@@ -740,7 +755,7 @@ fast_awdl_retransmit() {
 # phone in time; rtt, rto and retrans say whether that is loss on the air.
 watch_radio() {
     local owl=/run/omdrop-owl/owl.log ann=/run/omdrop-owl/announce.log
-    local seen=0 total tick=0 peers tcp last_tcp=
+    local seen=0 total tick=0 peers tcp last_tcp= fault=
     say "OWL's first lines:"
     head -n 15 "$owl" 2>/dev/null | sed 's/^/OWL: /'
     seen=$(wc -l < "$owl" 2>/dev/null || echo 0)
@@ -766,8 +781,24 @@ watch_radio() {
         total=$(wc -l < "$owl" 2>/dev/null || echo 0)
         [ "$total" -lt "$seen" ] && seen=0
         if [ "$total" -gt "$seen" ]; then
+            # A run of one message (the 8260 on channel 44 logged
+            # "unhandled frame" dozens of times a second) is one line and a
+            # count, timestamp aside.
             sed -n "$((seen + 1)),${total}p" "$owl" \
-                | grep -iE 'peer|error|fail|warn|fatal|refus' | head -n 20 | sed 's/^/OWL: /'
+                | grep -iE 'peer|error|fail|warn|fatal|refus' \
+                | awk '{ t = $1; $1 = ""; msg = $0 }
+                       msg == last { n++; next }
+                       { if (n) print "OWL: (" n " more of that)"; print "OWL: " t msg; last = msg; n = 0 }
+                       END { if (n) print "OWL: (" n " more of that)" }' \
+                | head -n 20
+            # Injection failing with "No such device" means mon0 is gone,
+            # which nothing here deletes mid-window: the driver did.
+            if [ -z "$fault" ] && sed -n "$((seen + 1)),${total}p" "$owl" | grep -q 'unable to inject'; then
+                fault=1
+                say "OWL cannot send any more. Interfaces now:"
+                iw dev 2>/dev/null | grep -E 'Interface|type|channel' | sed 's/^[[:space:]]*/  /'
+                kernel_radio_log
+            fi
             seen=$total
         fi
         if [ $((tick % 30)) -eq 0 ]; then
@@ -801,7 +832,7 @@ say ""
 say "Wi-Fi on this NUC is the Intel Wireless-AC 8260. Ethernet on the I219-LM stays the uplink."
 say "The radio profile is the released omdrop-owl iwlwifi line: exclusive mode, IBSS, BSSID ${BSSID}."
 say "Each join is HT20, fixed frequency, BSSID ${BSSID}, beacon interval 10000 TU, on the channels option in order (default 6)."
-say "On this 8260 a cell on channel 44 reports Joined IBSS and the iPhone never lists it. On channel 6 the tile appears, which is the released iwlwifi profile's channel too."
+say "On this 8260, channel 44 joins but OWL rejects the phone's frames there (2 stray bytes each) and mon0 disappears within seconds (2026-10-12). Channel 6 works, but an iPhone on 5 GHz Wi-Fi visits it one slot in sixteen."
 say "Until a phone finishes a transfer, ${INBOX} stays empty and owldrop.exe has nothing to receive."
 say "Pull request 13 and a USB Wi-Fi stick are not used."
 say ""
