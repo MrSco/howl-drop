@@ -104,6 +104,30 @@ find_radio() {
     return 1
 }
 
+# The MT7612U USB stick (mt76x2u), run as pull request 13's active monitor.
+# The 8260 is soldered to this NUC, so a USB radio is how it gets one that
+# can transmit on 44 and 149, where an iPhone on 5 GHz Wi-Fi mostly is.
+find_usb_radio() {
+    local d name
+    for d in /sys/class/net/*; do
+        [ -d "$d/phy80211" ] || continue
+        name=$(basename "$d")
+        case "$name" in
+            awdl0|mon0|awdlibss0) continue ;;
+        esac
+        [ "$(driver_of "$name")" = mt76x2u ] || continue
+        printf '%s\n' "$name"
+        return 0
+    done
+    return 1
+}
+
+usb_id_of() {
+    local dev
+    dev=$(readlink -f "/sys/class/net/$1/device" 2>/dev/null) || return 0
+    printf '%s:%s' "$(cat "$dev/../idVendor" 2>/dev/null)" "$(cat "$dev/../idProduct" 2>/dev/null)"
+}
+
 list_ifaces() {
     local d name
     for d in /sys/class/net/*; do
@@ -915,13 +939,8 @@ join_host_netns
 say "OwlDrop add-on"
 say "Home Assistant OS stays installed. This add-on does not load iwlwifi and does not replace the firmware blob."
 say ""
-say "Wi-Fi on this NUC is the Intel Wireless-AC 8260. Ethernet on the I219-LM stays the uplink."
-say "The radio profile is the released omdrop-owl iwlwifi line: exclusive mode, IBSS, BSSID ${BSSID}."
-say "Each join is HT20, fixed frequency, BSSID ${BSSID}, beacon interval 10000 TU, on the channels option in order (default 6)."
-say "On this 8260, channel 44 joins but OWL rejects the phone's frames there (2 stray bytes each) and mon0 disappears within seconds (2026-10-12). Channel 6 works, but an iPhone on 5 GHz Wi-Fi visits it one slot in sixteen."
-say "An iPhone on a 2.4 GHz network is on that network's channel about 5 slots in 16: set channels to that channel (1-13) to meet it there."
+say "Ethernet stays the uplink. The AirDrop radio is a MediaTek MT7612U USB stick when one is plugged in (radio option auto or usb), else the NUC's Intel Wireless-AC 8260."
 say "Until a phone finishes a transfer, ${INBOX} stays empty and owldrop.exe has nothing to receive."
-say "Pull request 13 and a USB Wi-Fi stick are not used."
 say ""
 
 if ! dbus_host; then
@@ -929,9 +948,20 @@ if ! dbus_host; then
     exit 1
 fi
 
-IFACE=$(find_radio || true)
+RADIO_OPT=$(option radio)
+case "${RADIO_OPT:-auto}" in
+    usb) IFACE=$(find_usb_radio || true) ;;
+    intel) IFACE=$(find_radio || true) ;;
+    *) IFACE=$(find_usb_radio || find_radio || true) ;;
+esac
+if [ -z "$IFACE" ] && [ "${RADIO_OPT:-auto}" = usb ]; then
+    say "radio is usb, and no MT7612U (mt76x2u) interface is visible. Plug the stick in, or set radio to auto."
+    say "Interfaces here:"
+    list_ifaces
+    exit 1
+fi
 if [ -z "$IFACE" ]; then
-    say "No Intel iwlwifi PCI interface is visible in this network namespace."
+    say "No MT7612U USB stick and no Intel iwlwifi PCI interface is visible in this network namespace."
     say "Interfaces here:"
     list_ifaces
     self_ns=$(readlink /proc/self/ns/net 2>/dev/null || true)
@@ -947,23 +977,39 @@ if [ -z "$IFACE" ]; then
 fi
 
 DRV=$(driver_of "$IFACE")
-PCI=$(pci_of "$IFACE")
 FW=$(firmware_of "$IFACE")
-say "Interface ${IFACE}: driver ${DRV:-unknown}, PCI ${PCI:-unknown}, firmware ${FW:-unread}."
-say "The host names this radio. wlp2s0 is typical for the 8260. The name wlan0 is not required."
-say "The firmware file a current Home Assistant OS image already has for this card is iwlwifi-8000C-36.ucode."
-
-if [ "$DRV" != iwlwifi ]; then
-    say "${IFACE} is ${DRV:-missing}, so this window will not start. The released profile this add-on runs is the iwlwifi exclusive profile."
-    exit 1
-fi
+case "$DRV" in
+    mt76x2u)
+        RADIO_KIND=usb
+        say "Interface ${IFACE}: driver mt76x2u, USB $(usb_id_of "$IFACE"), firmware ${FW:-unread}."
+        say "The radio profile is pull request 13's mt76x2u line: exclusive mode, an active monitor that ACKs the phone itself, with ${IFACE} as a passive monitor for the window. No IBSS cell."
+        if ! iw phy "$(phy_of "$IFACE")" info 2>/dev/null | grep -q 'Device supports active monitor'; then
+            say "This driver does not offer active monitor on ${IFACE}, so the window cannot start."
+            exit 1
+        fi
+        ;;
+    iwlwifi)
+        RADIO_KIND=intel
+        say "Interface ${IFACE}: driver iwlwifi, PCI $(pci_of "$IFACE"), firmware ${FW:-unread}."
+        say "The radio profile is the released omdrop-owl iwlwifi line: exclusive mode, IBSS, BSSID ${BSSID}, HT20, fixed frequency, beacon interval 10000 TU."
+        say "On this 8260, channel 44 joins but OWL rejects the phone's frames there (2 stray bytes each) and the firmware resets the card within seconds (2026-10-12). Channel 6 works, but an iPhone on 5 GHz Wi-Fi visits it one slot in sixteen."
+        ;;
+    *)
+        say "${IFACE} is ${DRV:-missing}, so this window will not start. This add-on runs the iwlwifi (IBSS) and mt76x2u (active monitor) profiles."
+        exit 1
+        ;;
+esac
 
 PC_HOST=$(option pc_host)
 PC_NAME=$(option pc_name)
 CHANNELS=$(option channels)
-WANT_FREQS=$(want_freqs "${CHANNELS:-6}")
+# Empty: the 8260 holds only 6; the stick goes where the phone mostly is.
+if [ -z "${CHANNELS// /}" ]; then
+    if [ "$RADIO_KIND" = usb ]; then CHANNELS="44 149 6"; else CHANNELS=6; fi
+fi
+WANT_FREQS=$(want_freqs "$CHANNELS")
 if [ -z "$WANT_FREQS" ]; then
-    say "The channels option has none of 6, 44 or 149. Using channel 6."
+    say "The channels option has no channel this add-on can use. Using channel 6."
     WANT_FREQS=2437
 fi
 say "Channels to try, in order: $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g')."
@@ -990,7 +1036,7 @@ mkdir -p /etc/omdrop "$INBOX/text" /data/omdrop/keys /run/omdrop-owl || {
 printf '%s\n' "$IFACE" > /etc/omdrop/infra-iface
 
 TYPE=$(iface_type "$IFACE")
-if type_is_ibss "$TYPE"; then
+if [ "$RADIO_KIND" = intel ] && type_is_ibss "$TYPE"; then
     say "${IFACE} is still an IBSS cell from an earlier window. Switching it back to a station before the profile runs."
     ip link set "$IFACE" down || true
     iw dev "$IFACE" set type managed || true
@@ -1009,31 +1055,44 @@ say "A NetworkManager restart clears that runtime flag. The flag is set again th
 say "Stopping host wpa_supplicant from holding ${IFACE}."
 release_supplicant
 
-if ! prepare_cell || ! ready_cell; then
-    "$DISCOVERABLE" stop >/dev/null 2>&1 || true
-    nmcli device set "$IFACE" managed yes >/dev/null 2>&1 || true
-    exit 1
-fi
-if ! join_released "$CELL"; then
-    if ! iw dev "$CELL" link 2>/dev/null | grep -q '^Joined IBSS'; then
-        explain_join_failure "$CELL"
+rm -f /etc/omdrop/exclusive-channels /etc/omdrop/keep-cell
+if [ "$RADIO_KIND" = intel ]; then
+    if ! prepare_cell || ! ready_cell; then
         "$DISCOVERABLE" stop >/dev/null 2>&1 || true
         nmcli device set "$IFACE" managed yes >/dev/null 2>&1 || true
         exit 1
     fi
-    JOINED_FREQ=$(cell_joined_freq "$CELL")
+    if ! join_released "$CELL"; then
+        if ! iw dev "$CELL" link 2>/dev/null | grep -q '^Joined IBSS'; then
+            explain_join_failure "$CELL"
+            "$DISCOVERABLE" stop >/dev/null 2>&1 || true
+            nmcli device set "$IFACE" managed yes >/dev/null 2>&1 || true
+            exit 1
+        fi
+        JOINED_FREQ=$(cell_joined_freq "$CELL")
+    fi
+    say "Joined IBSS on $(freq_name "${JOINED_FREQ:-unknown}"), HT20, BSSID ${BSSID}."
+    # The helper keeps this cell instead of taking it down to join again
+    # (ENETDOWN), and pins OWL to the channel it is on.
+    case "$JOINED_FREQ" in
+        5220) echo 44 > /etc/omdrop/exclusive-channels ;;
+        5745) echo 149 > /etc/omdrop/exclusive-channels ;;
+        24[1-7][27]) echo $(( (JOINED_FREQ - 2407) / 5 )) > /etc/omdrop/exclusive-channels ;;
+    esac
+    echo 1 > /etc/omdrop/keep-cell
+else
+    # The helper makes the active monitor itself and tunes it to the first of
+    # these the stick may transmit on (exclusive_monitor_up).
+    for f in $WANT_FREQS; do
+        case "$f" in
+            5220) printf '44 ' ;;
+            5745) printf '149 ' ;;
+            *) printf '%s ' $(( (f - 2407) / 5 )) ;;
+        esac
+    done > /etc/omdrop/exclusive-channels
+    echo >> /etc/omdrop/exclusive-channels
+    say "The helper will tune the active monitor to the first of: $(cat /etc/omdrop/exclusive-channels)that the stick may transmit on."
 fi
-say "Joined IBSS on $(freq_name "${JOINED_FREQ:-unknown}"), HT20, BSSID ${BSSID}."
-
-# The helper keeps this cell instead of taking it down to join again
-# (ENETDOWN), and pins OWL to the channel it is on.
-rm -f /etc/omdrop/exclusive-channels
-case "$JOINED_FREQ" in
-    5220) echo 44 > /etc/omdrop/exclusive-channels ;;
-    5745) echo 149 > /etc/omdrop/exclusive-channels ;;
-    24[1-7][27]) echo $(( (JOINED_FREQ - 2407) / 5 )) > /etc/omdrop/exclusive-channels ;;
-esac
-echo 1 > /etc/omdrop/keep-cell
 # OWL sends unicast once, unacknowledged, and the phone is on channel 6 one
 # slot in sixteen: 0.2.5's /Discover TLS handshake took 2.1 s and the phone
 # hung up before the answer. Each frame now goes out this many times while
@@ -1058,7 +1117,7 @@ say "Replies to the phone go out within ${HEARD} TU of hearing it (0: only in th
 say "Each unicast frame to the phone goes out ${COPIES} time(s) per visit to our channel."
 say "Starting the released exclusive window (until this add-on stops)."
 if ! "$DISCOVERABLE" start 0; then
-    say "The IBSS cell was joined, and the released window did not finish starting."
+    say "The released window did not finish starting (radio ${RADIO_KIND})."
     stop_stack
     exit 1
 fi
@@ -1066,7 +1125,10 @@ RADIO=1
 
 CHAN=$(awk '/ on ch/ { chan=$0 } END { print chan }' /run/omdrop-owl/log 2>/dev/null || true)
 say "Radio log: ${CHAN:-the helper wrote no channel line}"
-if iw dev awdlibss0 link 2>/dev/null | grep -q 'Joined IBSS'; then
+if [ "$RADIO_KIND" = usb ]; then
+    say "Active monitor:"
+    iw dev mon0 info 2>/dev/null | grep -E 'type|channel|addr' | sed 's/^[[:space:]]*/  /'
+elif iw dev awdlibss0 link 2>/dev/null | grep -q 'Joined IBSS'; then
     iw dev awdlibss0 link
 elif iw dev "$IFACE" link 2>/dev/null | grep -q 'Joined IBSS'; then
     say "The station itself is the cell."

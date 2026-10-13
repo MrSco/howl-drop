@@ -56,11 +56,18 @@ file.
 
 ## Status
 
-- **Sheet:** the add-on runs the IBSS cell on channel 6 (the `channels`
-  option). Versions 0.1.12–0.1.13 unlocked 5 GHz and joined channel 44,
-  where the log reported a joined cell and the iPhone never listed OCCORPC.
-  On channel 6 (0.1.11) the tile appeared.
-- **Transfer:** on channel 6 the send then died in the handshake (0.1.11).
-  That is the next thing to chase once the tile is back.
-- The 8260's firmware (`iwlwifi-8000C-36.ucode`) is closed and final; the
-  upstream `iwlwifi` profile was tested on AX201, AX211 and BE, not the 8260.
+- **NUC's Intel 8260 (soldered):** discovery works. OCCORPC shows on the
+  sheet after mDNS answers to the phone's queries (sent unicast as well, so
+  OWL holds them for the phone), packet copies (`owl -U`) and replies sent
+  while the phone is still on our channel (`owl -H`). Tapping the tile never
+  finishes: the /Ask connection's SYN-ACK is never acknowledged. Channel 44
+  makes the firmware reset the card; an iPhone on 5 GHz Wi-Fi is on channel 6
+  one 64 TU slot in sixteen, and on a 2.4 GHz network's channel about as
+  rarely when idle. Details in [docs/8260-ibss-join.md](docs/8260-ibss-join.md).
+- **Next radio:** a MediaTek MT7612U USB stick (Alfa AWUS036ACM), run as
+  t4t5/omdrop-owl pull request 13's active monitor, ported into
+  `userspace/omdrop-discoverable` (`exclusive_backend` in `owl-profiles`).
+  It can transmit on 44 and 149, where the phone mostly is. The add-on picks
+  it when plugged in (`radio: auto`). Untested here yet.
+- Upstream (a063387) reports the Intel AX200 working in exclusive mode; the
+  NUC6i7KYK can't take one (no Wi-Fi M.2 slot).
