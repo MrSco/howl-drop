@@ -80,8 +80,10 @@ need_root() { [ "$(id -u)" = 0 ] || die "must run as root (through pkexec)" 2; }
 # The Wi-Fi station: $CONF/infra-iface, else the first managed interface.
 station_iface() {
   local forced d name
-  # A station turned into the cell (exclusive_up) isn't managed until stop.
+  # A station turned into the cell (exclusive_up) isn't managed until stop,
+  # and in an active-monitor window it is a passive monitor until then.
   [ -e "$RUN/converted" ] && { cat "$RUN/exclusive"; return; }
+  [ -e "$RUN/exclusive-monitor" ] && { cat "$RUN/exclusive"; return; }
   forced=$(knob infra-iface)
   [ -n "$forced" ] && { echo "$forced"; return; }
   for d in /sys/class/net/*/phy80211; do
@@ -96,7 +98,9 @@ station_iface() {
 driver_of() { basename "$(readlink -f "/sys/class/net/$1/device/driver")" 2>/dev/null; }
 
 # This driver's line in owl-profiles, else the "*" line: sets PROF_STATUS,
-# PROF_MODE, PROF_MONMAC, PROF_RECONNECT and PROF_PM (see owl-profiles).
+# PROF_MODE, PROF_MONMAC, PROF_RECONNECT, PROF_PM and PROF_BACKEND (see
+# owl-profiles). A line from before the exclusive_backend field has notes
+# there, so anything but active-monitor reads as ibss.
 # $CONF/owl-profiles, when present, is read first: it's where to try settings
 # for a new card without editing the packaged table.
 load_profile() {  # DRIVER
@@ -107,7 +111,8 @@ load_profile() {  # DRIVER
   line=$(awk -v d="$1" '!/^#/ && NF >= 6 && $1 == d {print; exit}' "${tables[@]}")
   [ -n "$line" ] || line=$(awk '!/^#/ && NF >= 6 && $1 == "*" {print; exit}' "${tables[@]}")
   [ -n "$line" ] || return 1
-  read -r _ PROF_STATUS PROF_MODE PROF_MONMAC PROF_RECONNECT PROF_PM _ <<< "$line"
+  read -r _ PROF_STATUS PROF_MODE PROF_MONMAC PROF_RECONNECT PROF_PM PROF_BACKEND _ <<< "$line"
+  [ "$PROF_BACKEND" = active-monitor ] || PROF_BACKEND=ibss
 }
 
 untested_hint() {
@@ -157,6 +162,39 @@ joined_cell_freq() {  # STA FREQ...
   return 1
 }
 
+supports_active_monitor() {  # PHY
+  iw phy "$1" info 2>/dev/null | grep -q 'Device supports active monitor'
+}
+
+# exclusive_backend=active-monitor (t4t5/omdrop-owl pull request 13, MT7612U):
+# an active monitor ACKs the phone's unicast on its own MAC, so no ad-hoc
+# cell is needed. Channel requests on that interface alone report success
+# without tuning the hardware (kernel 7.2), so the station becomes a passive
+# monitor first, which gives mac80211 a channel context the active one then
+# tunes. Its type is kept in $RUN/exclusive-station-type for stop, and
+# $RUN/exclusive-monitor tells start that mon0 already exists.
+# Prints the frequency it tuned to.
+exclusive_monitor_up() {  # STA PHY FREQ...
+  local sta=$1 phy=$2 f type
+  shift 2
+  : > "$RUN/exclusive-monitor"
+  iw dev "$MON" del 2>/dev/null
+  type=$(iw dev "$sta" info 2>/dev/null | awk '/^[[:space:]]*type / {print $2; exit}')
+  [ -n "$type" ] || return 1
+  echo "$type" > "$RUN/exclusive-station-type"
+  iw dev "$sta" set type monitor || return 1
+  iw dev "$sta" set monitor none || return 1
+  ip link set "$sta" up || return 1
+  iw phy "$phy" interface add "$MON" type monitor flags active || return 1
+  nmcli device set "$MON" managed no >/dev/null 2>&1
+  ip link set "$MON" address "$(cat "/sys/class/net/$sta/address")" || return 1
+  ip link set "$MON" up || return 1
+  for f in "$@"; do
+    iw dev "$MON" set freq "$f" HT20 >&2 && { echo "$f"; return 0; }
+  done
+  return 1
+}
+
 # Take the station off the air and put an ad-hoc vif in its place. AWDL's
 # frames are IBSS frames with a fixed BSSID, so joining that "IBSS" gives the
 # firmware an address to ACK for and a BSSID filter that passes AWDL, and
@@ -181,6 +219,12 @@ exclusive_up() {  # STA PHY FREQ...
   local sta=$1 phy=$2 f cell=$IBSS
   shift 2
   echo "$sta" > "$RUN/exclusive"
+  if [ "${PROF_BACKEND:-ibss}" = active-monitor ]; then
+    nmcli device set "$sta" managed no >/dev/null 2>&1
+    ip link set "$sta" down
+    exclusive_monitor_up "$sta" "$phy" "$@"
+    return
+  fi
   joined_cell_freq "$sta" "$@" && return 0
   # Only a converted station needs it, but it has to be read while connected.
   nmcli -g GENERAL.CON-UUID device show "$sta" > "$RUN/connection" 2>/dev/null
@@ -229,6 +273,13 @@ exclusive_down() {
   iw dev "$IBSS" del 2>/dev/null
   sta=$(cat "$RUN/exclusive" 2>/dev/null)
   [ -n "$sta" ] || return 0
+  # An active-monitor window made the station a passive monitor.
+  if [ -r "$RUN/exclusive-station-type" ]; then
+    ip link set "$sta" down 2>/dev/null
+    iw dev "$sta" set type "$(cat "$RUN/exclusive-station-type")" || return 1
+    rm -f "$RUN/exclusive-station-type"
+  fi
+  rm -f "$RUN/exclusive-monitor"
   if [ -e "$RUN/converted" ]; then
     converted=yes
     ipv6=$(cat "$RUN/converted")
@@ -427,6 +478,12 @@ cmd_start() {
     cmd_stop recovered >/dev/null
     [ -e "$RUN/converted" ] && die "Wi-Fi ($(cat "$RUN/exclusive")) is still in ad-hoc mode from the last window and couldn't be switched back. Restarting the computer fixes it." 4
   fi
+  # Likewise a station left a passive monitor by an interrupted active-monitor
+  # window: give it its type back before taking a new snapshot of it.
+  if [ -e "$RUN/exclusive-station-type" ]; then
+    cmd_stop recovered >/dev/null
+    [ -e "$RUN/exclusive-station-type" ] && die "Wi-Fi ($(cat "$RUN/exclusive")) is still a monitor from the last window and couldn't be switched back. Restarting the computer fixes it." 4
+  fi
   rm -f "$RUN/reason"
 
   sta=$(station_iface)
@@ -438,6 +495,10 @@ cmd_start() {
   fi
   [ "$PROF_MODE" = shared ] || [ "$PROF_MODE" = exclusive ] || die "this Wi-Fi card's profile asks for \"$PROF_MODE\" mode, which omdrop-owl doesn't implement yet" 4
   phy=$(basename "$(readlink -f "/sys/class/net/$sta/phy80211")")
+  if [ "$PROF_MODE" = exclusive ] && [ "$PROF_BACKEND" = active-monitor ]; then
+    [ "$PROF_MONMAC" = station ] || die "exclusive_backend=active-monitor needs mon_mac=station" 4
+    supports_active_monitor "$phy" || die "this Wi-Fi card's profile asks for an active monitor, which its driver doesn't offer" 4
+  fi
   if [ "$PROF_MODE" = exclusive ]; then
     gw=none
     freqs=$(tx_channels "$phy")
@@ -445,7 +506,7 @@ cmd_start() {
     # From here a failure has to give Wi-Fi back, which is cmd_stop's job.
     if ! ap=$(exclusive_up "$sta" "$phy" $freqs); then
       cmd_stop start-failed >/dev/null
-      die "could not start the ad-hoc interface $IBSS on any of AirDrop's channels" 4
+      die "could not start the $PROF_BACKEND window on any of AirDrop's channels" 4
     fi
   else
     # Wi-Fi takes a few seconds after a driver reload to associate and get an
@@ -472,27 +533,31 @@ cmd_start() {
   [ -n "$chan" ] || die "your Wi-Fi network is on ${ap:-an unknown} MHz, but AirDrop can only share channel 6, 44 or 149 with it. Moving the router to one of those makes this work." 3
   stamac=$(cat "/sys/class/net/$sta/address")
   echo "$sta" > "$RUN/station"
-  echo "$drv $PROF_MODE $PROF_MONMAC $PROF_RECONNECT $PROF_PM" > "$RUN/profile"
-  log "station $sta ($stamac, $drv) on ch$chan, gateway $gw; profile: mode=$PROF_MODE mon_mac=$PROF_MONMAC reconnect=$PROF_RECONNECT mt76_pm=$PROF_PM"
+  echo "$drv $PROF_MODE $PROF_MONMAC $PROF_RECONNECT $PROF_PM $PROF_BACKEND" > "$RUN/profile"
+  log "station $sta ($stamac, $drv) on ch$chan, gateway $gw; profile: mode=$PROF_MODE mon_mac=$PROF_MONMAC reconnect=$PROF_RECONNECT mt76_pm=$PROF_PM exclusive_backend=$PROF_BACKEND"
 
-  iw dev "$MON" del 2>/dev/null
-  if ! iw phy "$phy" interface add "$MON" type monitor; then
-    cmd_stop start-failed >/dev/null
-    die "could not create the monitor interface $MON" 4
-  fi
-  # mon_mac: the station's MAC on the monitor interface, or one of its own
-  # (locally administered, derived from the station's) with OWL told the
-  # station's through -m.
-  if [ "$PROF_MONMAC" = own ]; then
-    monmac="02:${stamac#*:}"
-    owl_extra=(-m "$stamac")
-  else
-    monmac=$stamac
-  fi
-  ip link set "$MON" address "$monmac"
-  if ! ip link set "$MON" up; then
-    cmd_stop start-failed >/dev/null
-    die "could not bring $MON up" 4
+  # An active-monitor window already has its mon0, on the station's MAC
+  # (exclusive_monitor_up).
+  if [ ! -e "$RUN/exclusive-monitor" ]; then
+    iw dev "$MON" del 2>/dev/null
+    if ! iw phy "$phy" interface add "$MON" type monitor; then
+      cmd_stop start-failed >/dev/null
+      die "could not create the monitor interface $MON" 4
+    fi
+    # mon_mac: the station's MAC on the monitor interface, or one of its own
+    # (locally administered, derived from the station's) with OWL told the
+    # station's through -m.
+    if [ "$PROF_MONMAC" = own ]; then
+      monmac="02:${stamac#*:}"
+      owl_extra=(-m "$stamac")
+    else
+      monmac=$stamac
+    fi
+    ip link set "$MON" address "$monmac"
+    if ! ip link set "$MON" up; then
+      cmd_stop start-failed >/dev/null
+      die "could not bring $MON up" 4
+    fi
   fi
   # owl -F, -E: patches/owl-03-fixed-radio.patch, owl-04-election-metric.patch.
   # -S pin advertises our one channel in all sixteen slots, which with -F is

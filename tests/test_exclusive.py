@@ -24,6 +24,7 @@ class ExclusiveTests(unittest.TestCase):
             script = r'''
 set -uo pipefail
 IBSS=awdlibss0
+MON=mon0
 AWDL_BSSID=00:25:00:ff:94:73
 log() { echo "log $*" >> "$RUN/commands"; }
 knob() { head -1 "$CONF/$1" 2>/dev/null | tr -d '[:space:]' || true; }
@@ -164,6 +165,46 @@ tx_channels phy0 | tr '\n' ' '
         self.assertEqual(self.run_case(script, conf={'exclusive-channels': '5'}).split(), ['2432'])
         self.assertEqual(self.run_case(script, conf={'exclusive-channels': '5 6'}).split(), ['2432', '2437'])
         self.assertEqual(self.run_case(script, conf={'exclusive-channels': '14 5'}).split(), ['2432'])
+
+    ACTIVE_MONITOR = r'''
+PROF_BACKEND=active-monitor
+iw_original=$(declare -f iw)
+eval "${iw_original/iw ()/mock_iw ()}"
+iw() { if [[ "$*" == 'dev wlan0 info' ]]; then printf '\ttype managed\n'; fi; mock_iw "$@"; }
+'''
+
+    def test_active_monitor_window_makes_station_passive_and_restores_it(self):
+        out = self.run_case(self.ACTIVE_MONITOR + '''
+[[ $(exclusive_up wlan0 phy0 5220 2437) == 5220 ]] || exit 10
+[[ -e "$RUN/exclusive-monitor" && $(cat "$RUN/exclusive-station-type") == managed ]] || exit 11
+[[ $(station_iface) == wlan0 ]] || exit 12
+exclusive_down || exit 13
+[[ ! -e "$RUN/exclusive-monitor" && ! -e "$RUN/exclusive-station-type" && ! -e "$RUN/exclusive" ]] || exit 14
+''')
+        for line in ('nmcli device set wlan0 managed no', 'iw dev wlan0 set type monitor',
+                     'iw dev wlan0 set monitor none', 'iw phy phy0 interface add mon0 type monitor flags active',
+                     'ip link set mon0 address 02:00:00:00:00:01', 'iw dev mon0 set freq 5220 HT20',
+                     'iw dev wlan0 set type managed', 'nmcli device set wlan0 managed yes'):
+            self.assertIn(line, out)
+        self.assertNotIn('ibss join', out)
+        self.assertNotIn('type ibss', out)
+        self.assertNotIn('set freq 2437', out)
+
+    def test_active_monitor_falls_to_the_next_frequency(self):
+        out = self.run_case(self.ACTIVE_MONITOR + '''
+iw() { if [[ "$*" == 'dev mon0 set freq 5220 HT20' ]]; then echo "iw $*" >> "$RUN/commands"; return 1; fi
+       if [[ "$*" == 'dev wlan0 info' ]]; then printf '\ttype managed\n'; fi; mock_iw "$@"; }
+[[ $(exclusive_up wlan0 phy0 5220 2437) == 2437 ]] || exit 10
+''')
+        self.assertIn('iw dev mon0 set freq 2437 HT20', out)
+
+    def test_failed_monitor_restore_keeps_state_for_next_try(self):
+        self.run_case(self.ACTIVE_MONITOR + '''
+exclusive_up wlan0 phy0 5220 >/dev/null || exit 10
+iw() { echo "iw $*" >> "$RUN/commands"; [[ "$*" != 'dev wlan0 set type managed' ]]; }
+exclusive_down && exit 11
+[[ -e "$RUN/exclusive" && -e "$RUN/exclusive-station-type" ]] || exit 12
+''')
 
     JOINED_ON = r'''
 iw() {
