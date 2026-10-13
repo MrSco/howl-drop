@@ -30,6 +30,9 @@
 #                           taken to be on our channel now, so a reply to it
 #                           leaves at once rather than in the slot our clock
 #                           gives the peer (default off)
+#   owl-11-any-24ghz-channel.patch  -c 1..13: any 2.4 GHz channel, for an
+#                           iPhone on a 2.4 GHz network, which spends that
+#                           network's channel in its sequence
 # Applied in name order: each is a diff against the tree with the previous ones.
 set -eu
 

@@ -136,7 +136,8 @@ tx_channels() {  # PHY
   order=$(head -1 "$CONF/exclusive-channels" 2>/dev/null)
   [ -n "${order//[[:space:]]/}" ] || order="44 149 6"
   for c in $order; do
-    case "$c" in 6) c=2437 ;; 44) c=5220 ;; 149) c=5745 ;; *) continue ;; esac
+    # 1-13: any 2.4 GHz channel (owl-11), for a phone on a 2.4 GHz network.
+    case "$c" in 44) c=5220 ;; 149) c=5745 ;; [1-9]|1[0-3]) c=$((2407 + 5 * c)) ;; *) continue ;; esac
     grep -qx "$c" <<< "$ok" && echo "$c"
   done
 }
@@ -458,10 +459,17 @@ cmd_start() {
     [ -n "$gw" ] || die "Wi-Fi isn't connected (or isn't passing traffic), and AirDrop shares its channel. Connect to Wi-Fi and try again." 3
     ap=$(iw dev "$sta" link | awk '/freq:/ {print int($2)}')
   fi
+  chan=
   case "$ap" in
     2437) chan=6 ;; 5220) chan=44 ;; 5745) chan=149 ;;
-    *) die "your Wi-Fi network is on ${ap:-an unknown} MHz, but AirDrop can only share channel 6, 44 or 149 with it. Moving the router to one of those makes this work." 3 ;;
   esac
+  # An exclusive cell may sit on any 2.4 GHz channel ($CONF/exclusive-channels):
+  # an iPhone on a 2.4 GHz network lists that network's channel in its
+  # sequence, 5 slots of 16 against one on 6 (channel 5, 2026-10-12).
+  if [ -z "$chan" ] && [ "$PROF_MODE" = exclusive ] && [ "${ap:-0}" -ge 2412 ] && [ "$ap" -le 2472 ]; then
+    chan=$(( (ap - 2407) / 5 ))
+  fi
+  [ -n "$chan" ] || die "your Wi-Fi network is on ${ap:-an unknown} MHz, but AirDrop can only share channel 6, 44 or 149 with it. Moving the router to one of those makes this work." 3
   stamac=$(cat "/sys/class/net/$sta/address")
   echo "$sta" > "$RUN/station"
   echo "$drv $PROF_MODE $PROF_MONMAC $PROF_RECONNECT $PROF_PM" > "$RUN/profile"

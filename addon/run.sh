@@ -381,7 +381,7 @@ freq_name() {
     case "$1" in
         5220) printf '%s\n' "5220 MHz (channel 44)" ;;
         5745) printf '%s\n' "5745 MHz (channel 149)" ;;
-        2437) printf '%s\n' "2437 MHz (channel 6)" ;;
+        24[1-7][27]) printf '%s\n' "$1 MHz (channel $(( ($1 - 2407) / 5 )))" ;;
         *) printf '%s\n' "$1 MHz" ;;
     esac
 }
@@ -393,10 +393,11 @@ want_freqs() {
     local c out=
     for c in $1; do
         case "$c" in
-            6) out="$out 2437" ;;
             44) out="$out 5220" ;;
             149) out="$out 5745" ;;
-            *) say "Ignoring channel ${c}: AirDrop uses only 6, 44 and 149." >&2 ;;
+            # Any 2.4 GHz channel (owl-11): the phone's own 2.4 GHz network's.
+            [1-9]|1[0-3]) out="$out $((2407 + 5 * c))" ;;
+            *) say "Ignoring channel ${c}: use 1-13 (2.4 GHz), 44 or 149." >&2 ;;
         esac
     done
     printf '%s\n' "${out# }"
@@ -918,6 +919,7 @@ say "Wi-Fi on this NUC is the Intel Wireless-AC 8260. Ethernet on the I219-LM st
 say "The radio profile is the released omdrop-owl iwlwifi line: exclusive mode, IBSS, BSSID ${BSSID}."
 say "Each join is HT20, fixed frequency, BSSID ${BSSID}, beacon interval 10000 TU, on the channels option in order (default 6)."
 say "On this 8260, channel 44 joins but OWL rejects the phone's frames there (2 stray bytes each) and mon0 disappears within seconds (2026-10-12). Channel 6 works, but an iPhone on 5 GHz Wi-Fi visits it one slot in sixteen."
+say "An iPhone on a 2.4 GHz network is on that network's channel about 5 slots in 16: set channels to that channel (1-13) to meet it there."
 say "Until a phone finishes a transfer, ${INBOX} stays empty and owldrop.exe has nothing to receive."
 say "Pull request 13 and a USB Wi-Fi stick are not used."
 say ""
@@ -1027,9 +1029,9 @@ say "Joined IBSS on $(freq_name "${JOINED_FREQ:-unknown}"), HT20, BSSID ${BSSID}
 # (ENETDOWN), and pins OWL to the channel it is on.
 rm -f /etc/omdrop/exclusive-channels
 case "$JOINED_FREQ" in
-    2437) echo 6 > /etc/omdrop/exclusive-channels ;;
     5220) echo 44 > /etc/omdrop/exclusive-channels ;;
     5745) echo 149 > /etc/omdrop/exclusive-channels ;;
+    24[1-7][27]) echo $(( (JOINED_FREQ - 2407) / 5 )) > /etc/omdrop/exclusive-channels ;;
 esac
 echo 1 > /etc/omdrop/keep-cell
 # OWL sends unicast once, unacknowledged, and the phone is on channel 6 one
