@@ -24,10 +24,48 @@ jobs:
       - name: Unit tests
         run: tools/run-tests.sh
 
-  # The add-on repository Home Assistant installs from: the assembled add-on
-  # on the ha-addon branch, once the tests pass on main.
-  publish-addon:
+  # The prebuilt image Home Assistant pulls, one per architecture, each built
+  # on a native runner. A version is built once: an image already in the
+  # registry for this version is left as it is, so bump the version in
+  # addon/config.yaml to release a change.
+  images:
     needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage the add-on
+        run: tools/stage-addon.sh
+      - name: Log in to ghcr.io
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push, unless this version exists
+        run: |
+          version=$(awk -F'"' '/^version:/ {print $2}' addon/config.yaml)
+          image=ghcr.io/mrsco/howldrop-${{ matrix.arch }}
+          if docker manifest inspect "$image:$version" >/dev/null 2>&1; then
+            echo "$image:$version is already published"
+            exit 0
+          fi
+          docker build build/addon/howldrop \
+            --build-arg BUILD_ARCH=${{ matrix.arch }} --build-arg BUILD_VERSION="$version" \
+            -t "$image:$version" -t "$image:latest"
+          docker push "$image:$version"
+          docker push "$image:latest"
+
+  # The add-on repository Home Assistant installs from: the assembled add-on
+  # on the ha-addon branch, pointing at the images, once both are pushed.
+  publish-addon:
+    needs: images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -38,4 +76,4 @@ jobs:
       - name: Stage the add-on
         run: tools/stage-addon.sh
       - name: Commit it to ha-addon
-        run: tools/publish-addon.sh
+        run: tools/publish-addon.sh --image 'ghcr.io/mrsco/howldrop-{arch}'

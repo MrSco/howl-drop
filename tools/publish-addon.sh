@@ -9,14 +9,26 @@
 # holds the assembled folder instead. CI runs this after the tests pass on
 # main. Each run adds one commit when the add-on changed, none otherwise.
 #
-#   tools/publish-addon.sh [--no-push]
+#   tools/publish-addon.sh [--no-push] [--image NAME]
+#
+# --image adds `image: NAME` to the published config.yaml, so Home Assistant
+# pulls the prebuilt image (NAME with {arch}) instead of building it. Only the
+# branch gets it: the local add-on keeps building from source.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BRANCH=ha-addon
 STAGED=$ROOT/build/addon/howldrop
 PUSH=1
-[ "${1:-}" = --no-push ] && PUSH=0
+IMAGE=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-push) PUSH=0 ;;
+    --image) IMAGE=$2; shift ;;
+    *) echo "unknown argument $1"; exit 2 ;;
+  esac
+  shift
+done
 
 [ -f "$STAGED/config.yaml" ] || { echo "nothing staged at $STAGED; run tools/stage-addon.sh first"; exit 1; }
 version=$(awk -F'"' '/^version:/ {print $2}' "$STAGED/config.yaml")
@@ -33,6 +45,9 @@ fi
 # The branch is generated: replace everything but .git.
 find "$WORK" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
 cp -r "$STAGED" "$WORK/howldrop"
+if [ -n "$IMAGE" ]; then
+  sed -i "/^version:/a image: \"$IMAGE\"" "$WORK/howldrop/config.yaml"
+fi
 cp "$ROOT/tools/ha-repository.yaml" "$WORK/repository.yaml"
 cat > "$WORK/README.md" <<EOF
 # HowlDrop add-on repository

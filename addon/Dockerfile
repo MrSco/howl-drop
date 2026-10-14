@@ -1,8 +1,20 @@
-# Local Home Assistant add-on. Home Assistant OS stays installed.
+# The HowlDrop add-on. Home Assistant OS stays installed.
 # Built from the folder tools/stage-addon.sh assembles: the radio stack comes
 # from this repo (omdrop-owl/), not a clone, so helper edits ship with it.
 # It ships no Wi-Fi driver or firmware: the host kernel drives the card.
+# CI builds it for each release as ghcr.io/mrsco/howldrop-{amd64,aarch64};
+# a local add-on builds it on the Home Assistant machine.
 FROM debian:bookworm-slim
+
+# Set by Supervisor for a local build, and by CI.
+ARG BUILD_ARCH=amd64
+ARG BUILD_VERSION=dev
+LABEL io.hass.type="addon" \
+      io.hass.name="HowlDrop" \
+      io.hass.arch="${BUILD_ARCH}" \
+      io.hass.version="${BUILD_VERSION}" \
+      org.opencontainers.image.source="https://github.com/MrSco/howl-drop" \
+      org.opencontainers.image.description="AirDrop from iPhones to Home Assistant OS"
 
 ENV DEBIAN_FRONTEND=noninteractive
 

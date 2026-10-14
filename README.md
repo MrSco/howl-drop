@@ -35,7 +35,10 @@ turn Protection mode off, and start it. Requirements and options:
 
 The `ha-addon` branch is the add-on assembled from `main` by CI
 (`tools/publish-addon.sh`), since Home Assistant builds an add-on only from its
-own folder.
+own folder. It points Home Assistant at prebuilt images,
+`ghcr.io/mrsco/howldrop-amd64` and `-aarch64`, which CI builds for each new
+version in `addon/config.yaml` before it updates the branch: bump the version
+to release a change.
 
 This is a fork of [t4t5/omdrop-owl](https://github.com/t4t5/omdrop-owl), the
 Linux radio backend for [omdrop](https://github.com/netmojo-systems/omdrop-plugin),
