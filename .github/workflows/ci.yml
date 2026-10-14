@@ -19,6 +19,23 @@ jobs:
           shellcheck --severity=warning \
             userspace/omdrop-discoverable \
             tools/build-owl.sh tools/stage.sh tools/run-tests.sh tools/stage-addon.sh \
+            tools/publish-addon.sh addon/run.sh \
             tests/helpers.bash
       - name: Unit tests
         run: tools/run-tests.sh
+
+  # The add-on repository Home Assistant installs from: the assembled add-on
+  # on the ha-addon branch, once the tests pass on main.
+  publish-addon:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency: ha-addon
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage the add-on
+        run: tools/stage-addon.sh
+      - name: Commit it to ha-addon
+        run: tools/publish-addon.sh

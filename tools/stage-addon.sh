@@ -5,6 +5,9 @@
 #
 #   tools/stage-addon.sh [DEST]
 #
+# tools/publish-addon.sh commits this folder to the ha-addon branch, the
+# add-on repository Home Assistant installs from.
+#
 # DEST, when given, is where the folder is copied as well: Home Assistant's add-on
 # share, e.g. //homeassistant/addons/howldrop from Git Bash on Windows
 # (Samba share add-on), or /addons/howldrop from the SSH add-on. Its generated
@@ -22,6 +25,7 @@ DEST=${1:-}
 rm -rf "$OUT"
 mkdir -p "$OUT/omdrop-owl/tools" "$OUT/howldrop"
 cp "$ROOT"/addon/config.yaml "$ROOT"/addon/Dockerfile "$ROOT"/addon/run.sh "$ROOT"/addon/deliver.py "$ROOT"/addon/senders.py "$ROOT"/addon/patch_receiver.py "$ROOT"/addon/README.md "$ROOT"/addon/icon.png "$ROOT"/addon/logo.png "$OUT/"
+cp -r "$ROOT/addon/translations" "$OUT/"
 cp -r "$ROOT/pins" "$ROOT/patches" "$ROOT/userspace" "$OUT/omdrop-owl/"
 cp "$ROOT/tools/build-owl.sh" "$ROOT/tools/stage.sh" "$OUT/omdrop-owl/tools/"
 cp -r "$ROOT/howldrop/CMakeLists.txt" "$ROOT/howldrop/src" "$ROOT/howldrop/tests" "$OUT/howldrop/"

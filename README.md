@@ -24,7 +24,18 @@ one that is the uplink can run shared mode. A USB MediaTek MT7612U (Alfa
 AWUS036ACM) is the tested choice: it follows the iPhone onto 5 GHz, where
 transfers run. See [docs/hardware-notes.md](docs/hardware-notes.md).
 
-Install and options: [addon/README.md](addon/README.md).
+## Install
+
+[![Add the repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FMrSco%2Fhowl-drop%23ha-addon)
+
+Or in Home Assistant: Settings, Add-ons, Add-on store, menu, Repositories,
+and add `https://github.com/MrSco/howl-drop#ha-addon`. Then install HowlDrop,
+turn Protection mode off, and start it. Requirements and options:
+[addon/README.md](addon/README.md).
+
+The `ha-addon` branch is the add-on assembled from `main` by CI
+(`tools/publish-addon.sh`), since Home Assistant builds an add-on only from its
+own folder.
 
 This is a fork of [t4t5/omdrop-owl](https://github.com/t4t5/omdrop-owl), the
 Linux radio backend for [omdrop](https://github.com/netmojo-systems/omdrop-plugin),
@@ -57,7 +68,9 @@ tools/stage-addon.sh //homeassistant/addons/howldrop
 ```
 
 In Home Assistant: Add-on store, menu, Check for updates, update HowlDrop,
-start it, and read its log.
+start it, and read its log. That's the local add-on (`local_howldrop`), for
+trying a change before it's pushed; pushing to `main` publishes it to the
+`ha-addon` branch once CI passes.
 
 The optional `howldrop.exe` builds with CMake, Ninja and a MinGW-w64 g++
 (Strawberry Perl ships all three):

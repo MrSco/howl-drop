@@ -39,25 +39,28 @@ kernel already drives, and loads no driver or firmware of its own.
 
 ## Install
 
-Supervisor builds a local add-on from its own folder, so `tools/stage-addon.sh`
-assembles a self-contained one at `build/addon/howldrop/` (this folder, plus
-the radio stack and the `howldrop-bridge` source).
-
-1. Install the **Samba share** add-on (or another way onto `/addons`).
-2. From the repo root: `tools/stage-addon.sh //homeassistant/addons/howldrop`
-   (use your Home Assistant's name or address), or run it with no argument and
-   copy `build/addon/howldrop/` to `/addons/howldrop/` yourself.
-3. Settings, Add-ons, Add-on store, menu, **Check for updates**. HowlDrop
-   appears under Local add-ons. Install it.
-4. Turn **Protection mode off**. The add-on needs the host network, the host
+1. Settings, Add-ons, Add-on store, menu (⋮), **Repositories**, and add
+   `https://github.com/MrSco/howl-drop#ha-addon`.
+2. Install **HowlDrop** from the store. The first install compiles OWL on
+   your machine, which takes several minutes.
+3. Turn **Protection mode off**. The add-on needs the host network, the host
    PID namespace, `NET_ADMIN`, `NET_RAW`, `SYS_ADMIN`, `/dev/net/tun`, the
    host D-Bus and AppArmor off, which Supervisor refuses while protection mode
    is on. Leave full access off: it is not needed.
-5. Start it, and open the share sheet on the phone.
+4. Start it, and open the share sheet on the phone.
 
-To deploy a change, bump `version` in `config.yaml` and stage again; without
-a new version Supervisor keeps the old image. Boot is manual: start the
-add-on when you want AirDrop. Stopping it gives the card back.
+Updates show up in the store like any add-on's. Boot is manual: start the
+add-on when you want AirDrop, or set it to start on boot. Stopping it gives
+the card back.
+
+### Developing it as a local add-on
+
+`tools/stage-addon.sh` assembles the add-on at `build/addon/howldrop/` (this
+folder, plus the radio stack and the `howldrop-bridge` source), and with a
+destination copies it there: `tools/stage-addon.sh
+//homeassistant/addons/howldrop` over the **Samba share** add-on. It then
+appears under Local add-ons. Bump `version` in `config.yaml` for every change,
+or Supervisor keeps the old image.
 
 ## Options
 
