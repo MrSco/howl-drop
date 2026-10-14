@@ -1,9 +1,14 @@
 # HowlDrop add-on
 
-AirDrop from an iPhone to Home Assistant OS. While the add-on runs, a name
-appears on the iPhone's share sheet; files and text sent to it land in
-`/share/howldrop`, which the Samba share add-on shows to every PC on the
-network. A PC running `howldrop.exe` also gets each one.
+AirDrop from an iPhone to Home Assistant OS. While the add-on runs,
+**HowlDrop** appears on the iPhone's share sheet; files and text sent to it
+land in `/share/howldrop`, which the Samba share add-on shows to every PC on
+the network as `\\homeassistant\share\howldrop`.
+
+That is the recommended way to use it, and the default: nothing to install
+on any PC. `howldrop.exe` is optional, for a Windows PC that should also get
+each file in its Downloads and shared text on its clipboard
+(`forward_to_pc`).
 
 Home Assistant OS stays as it is: the add-on uses a Wi-Fi card the host
 kernel already drives, and loads no driver or firmware of its own.
@@ -57,8 +62,9 @@ add-on when you want AirDrop. Stopping it gives the card back.
 
 Every option can stay at its default.
 
-`pc_name` is the name on the share sheet, at most 63 characters. Empty: the
-name a running `howldrop.exe` announces in the first 10 s, else `HowlDrop`.
+`pc_name` (default `HowlDrop`) is the name on the share sheet, at most 63
+characters. Empty with `forward_to_pc` on: the name a running `howldrop.exe`
+announces in the first 10 s, so the sheet shows that PC's name.
 
 `save_folder` (default `/share/howldrop`) is where files land, and shared
 text as UTF-8 files in `text/` under it.
@@ -87,9 +93,10 @@ checked again on every redirect (nothing on your LAN), up to `fetch_max_mb`
 (default 100), 30 s timeout. `Deliver:` lines say what was fetched or why
 not.
 
-`forward_to_pc` (default on) also sends each new file to `howldrop.exe` when a
-PC runs it: the file goes to that PC's `Downloads\HowlDrop` and text to its
-clipboard. Files stay in `save_folder` either way. Allow UDP 47631 and TCP
+`forward_to_pc` (default off; optional) also sends each new file to
+`howldrop.exe` when a PC runs it: the file goes to that PC's
+`Downloads\HowlDrop` and text to its clipboard. Files stay in `save_folder`
+either way. Build `howldrop.exe` with `tools\build-howldrop.ps1`. Allow UDP 47631 and TCP
 47632 from the LAN on that PC. Set `pc_host` to the PC's address only when
 its beacon does not reach Home Assistant.
 

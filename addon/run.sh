@@ -1256,25 +1256,27 @@ case "$CAPTURE" in
     True|true|1|yes) CAPTURE=true ;;
     *) CAPTURE=false ;;
 esac
+# Off unless asked for: the share folder is the way to use this, and a PC
+# running howldrop.exe is an extra.
 FORWARD=$(option forward_to_pc)
 case "$FORWARD" in
-    False|false|0|no) FORWARD=false ;;
-    *) FORWARD=true ;;
+    True|true|1|yes) FORWARD=true ;;
+    *) FORWARD=false ;;
 esac
-# The sheet name: pc_name, else the name a running howldrop.exe announces,
-# else HowlDrop. No PC is not a reason to stop: the files still land in
-# save_folder.
+# The sheet name: pc_name (HowlDrop by default). Left empty with
+# forward_to_pc on, it is the name a running howldrop.exe announces, so the
+# sheet shows that PC; otherwise HowlDrop.
 PC_BEACON=
-if [ -z "$PC_NAME" ]; then
+if [ -z "$PC_NAME" ] && [ "$FORWARD" = true ]; then
     say "Listening for howldrop.exe on UDP 47631 for up to 10 s, for the share-sheet name."
     if PC_BEACON=$("$BRIDGE" name --timeout 10 2>/dev/null) && [ -n "$PC_BEACON" ]; then
         PC_NAME=$PC_BEACON
     else
         PC_BEACON=
-        PC_NAME=HowlDrop
         say "No howldrop.exe answered. The sheet shows HowlDrop; set pc_name to choose the name."
     fi
 fi
+PC_NAME=${PC_NAME:-HowlDrop}
 if [ "${#PC_NAME}" -gt 63 ]; then
     say "The PC name is longer than 63 characters. The AirDrop sheet uses the first 63."
     PC_NAME=${PC_NAME:0:63}
@@ -1453,7 +1455,7 @@ if [ "$FORWARD" = true ]; then
     ) &
     BRIDGE_PID=$!
 else
-    say "forward_to_pc is off. Files and text stay in ${INBOX}."
+    vsay "forward_to_pc is off. Files and text stay in ${INBOX}."
 fi
 
 say "Window is up on ${IFACE}. Stopping this add-on gives the card back."

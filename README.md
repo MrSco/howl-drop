@@ -1,10 +1,12 @@
 # howl-drop
 
-AirDrop from an iPhone to Home Assistant OS. A Home Assistant add-on puts a
-name on the iPhone's share sheet; whatever the phone sends lands in Home
-Assistant's share folder, where any PC on the network can open it. A PC that
-runs `howldrop.exe` also gets each file in its Downloads and shared text on its
-clipboard.
+AirDrop from an iPhone to Home Assistant OS. A Home Assistant add-on puts
+**HowlDrop** on the iPhone's share sheet; whatever the phone sends lands in
+Home Assistant's share folder, where any PC on the network can open it. That
+is the recommended setup and the default: nothing runs on any PC.
+
+Optionally, a Windows PC that runs `howldrop.exe` also gets each file in its
+Downloads and shared text on its clipboard (the add-on's `forward_to_pc`).
 
 ```
 iPhone ──AWDL + BLE──▶ Home Assistant OS, HowlDrop add-on ──▶ /share/howldrop (Samba)
@@ -55,8 +57,8 @@ tools/stage-addon.sh //homeassistant/addons/howldrop
 In Home Assistant: Add-on store, menu, Check for updates, update HowlDrop,
 start it, and read its log.
 
-`howldrop.exe` builds with CMake, Ninja and a MinGW-w64 g++ (Strawberry Perl
-ships all three):
+The optional `howldrop.exe` builds with CMake, Ninja and a MinGW-w64 g++
+(Strawberry Perl ships all three):
 
 ```powershell
 tools\build-howldrop.ps1 -Run

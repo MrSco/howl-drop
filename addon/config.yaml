@@ -1,7 +1,7 @@
 name: HowlDrop
-version: "0.9.0"
+version: "0.9.1"
 slug: howldrop
-description: AirDrop from iPhones to Home Assistant OS, on any Wi-Fi card omdrop-owl supports. Files land in the share folder.
+description: AirDrop from iPhones to Home Assistant OS. Files and text land in the share folder; any Wi-Fi card omdrop-owl supports.
 url: https://github.com/MrSco/howl-drop
 arch:
   - amd64
@@ -23,12 +23,12 @@ apparmor: false
 map:
   - share:rw
 options:
-  pc_name: ""
+  pc_name: HowlDrop
   save_folder: /share/howldrop
   senders: []
   fetch_links: true
   fetch_max_mb: 100
-  forward_to_pc: true
+  forward_to_pc: false
   pc_host: ""
   interface: auto
   allow_untested: false
