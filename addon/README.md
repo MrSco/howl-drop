@@ -103,18 +103,11 @@ untested, including the catch-all line for drivers the table does not name.
 If you try one, the omdrop-owl README says how to report it.
 
 `channels` (exclusive mode) is the channels to try, in order, separated by
-spaces: `1`-`13`, `36`, `44` or `149`. Empty or `auto`: an active-monitor
+spaces: `6`, `36`, `44` or `149`. Empty or `auto`: an active-monitor
 card listens about 5 s each on 149, 44, 36 and 6 for the phone (keep the
 share sheet open) and starts on 5 GHz, where the phone was heard if anywhere,
-else 149; an IBSS card uses 6. With an IBSS card and the iPhone on a 2.4 GHz
-network, that network's channel can do better than 6. Shared mode ignores
-this: it runs on its network's channel.
-
-`unicast_copies` (1-5, default 1) and `heard_window_tu` (0-64, default 0)
-are for a card stuck on a channel the phone rarely visits: OWL sends each
-frame to the phone that many times while the phone is there (`owl -U`), and
-answers within that many TU of hearing the phone rather than in the slot its
-clock gives it (`owl -H`). The defaults are OWL's own behaviour.
+else 149; an IBSS card uses 6. Shared mode ignores this: it runs on its
+network's channel.
 
 `verbose` (default off) logs the radio in detail: every request's headers,
 OWL's peer schedule changes, each TCP connection, frame counts on the

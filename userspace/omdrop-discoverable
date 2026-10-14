@@ -145,8 +145,7 @@ tx_channels() {  # PHY
   order=$(head -1 "$CONF/exclusive-channels" 2>/dev/null)
   [ -n "${order//[[:space:]]/}" ] || order="44 149 6"
   for c in $order; do
-    # 1-13: any 2.4 GHz channel (owl-11), for a phone on a 2.4 GHz network.
-    case "$c" in 36) c=5180 ;; 44) c=5220 ;; 149) c=5745 ;; [1-9]|1[0-3]) c=$((2407 + 5 * c)) ;; *) continue ;; esac
+    case "$c" in 6) c=2437 ;; 36) c=5180 ;; 44) c=5220 ;; 149) c=5745 ;; *) continue ;; esac
     grep -qx "$c" <<< "$ok" && echo "$c"
   done
 }
@@ -499,7 +498,7 @@ supervise() {
 }
 
 cmd_start() {
-  local secs=${1:-} sta drv phy gw ap freqs chan stamac monmac mt76 copies heard _
+  local secs=${1:-} sta drv phy gw ap freqs chan stamac monmac mt76 _
   local owl_extra=() strategy=intersect
   [[ "$secs" =~ ^[0-9]+$ ]] || die "usage: omdrop-discoverable start <seconds>" 2
   need_root
@@ -573,12 +572,6 @@ cmd_start() {
   case "$ap" in
     2437) chan=6 ;; 5180) chan=36 ;; 5220) chan=44 ;; 5745) chan=149 ;;
   esac
-  # An exclusive cell may sit on any 2.4 GHz channel ($CONF/exclusive-channels):
-  # an iPhone on a 2.4 GHz network lists that network's channel in its
-  # sequence, 5 slots of 16 against one on 6 (channel 5, 2026-10-12).
-  if [ -z "$chan" ] && [ "$PROF_MODE" = exclusive ] && [ "${ap:-0}" -ge 2412 ] && [ "$ap" -le 2472 ]; then
-    chan=$(( (ap - 2407) / 5 ))
-  fi
   [ -n "$chan" ] || die "your Wi-Fi network is on ${ap:-an unknown} MHz, but AirDrop can only share channel 6, 44 or 149 with it. Moving the router to one of those makes this work." 3
   stamac=$(cat "/sys/class/net/$sta/address")
   echo "$sta" > "$RUN/station"
@@ -615,14 +608,6 @@ cmd_start() {
   if [ "$PROF_MODE" = exclusive ]; then
     owl_extra+=(-F -E)
     strategy=pin
-    # owl -U (patches/owl-10-fixed-radio-copies.patch): each unicast frame
-    # sent this many times in the peer's visit. $CONF/unicast-copies, 1-5.
-    copies=$(knob unicast-copies)
-    [[ "$copies" =~ ^[1-5]$ ]] && owl_extra+=(-U "$copies")
-    # owl -H (patches/owl-11-fixed-radio-heard.patch): a peer heard within
-    # this many TU is on our channel now. $CONF/heard-window, 1-64.
-    heard=$(knob heard-window)
-    [[ "$heard" =~ ^[0-9]+$ ]] && [ "$heard" -ge 1 ] && [ "$heard" -le 64 ] && owl_extra+=(-H "$heard")
   fi
 
   # mt76_pm: runtime PM off for the window, restored by stop.

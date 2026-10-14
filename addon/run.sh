@@ -495,9 +495,8 @@ want_freqs() {
             36) out="$out 5180" ;;
             44) out="$out 5220" ;;
             149) out="$out 5745" ;;
-            # Any 2.4 GHz channel (owl-11): the phone's own 2.4 GHz network's.
-            [1-9]|1[0-3]) out="$out $((2407 + 5 * c))" ;;
-            *) say "Ignoring channel ${c}: use 1-13 (2.4 GHz), 36, 44 or 149." >&2 ;;
+            6) out="$out 2437" ;;
+            *) say "Ignoring channel ${c}: use 6, 36, 44 or 149." >&2 ;;
         esac
     done
     printf '%s\n' "${out# }"
@@ -1333,7 +1332,7 @@ if [ "$BACKEND" = ibss ]; then
     case "$JOINED_FREQ" in
         5220) echo 44 > /etc/omdrop/exclusive-channels ;;
         5745) echo 149 > /etc/omdrop/exclusive-channels ;;
-        24[1-7][27]) echo $(( (JOINED_FREQ - 2407) / 5 )) > /etc/omdrop/exclusive-channels ;;
+        2437) echo 6 > /etc/omdrop/exclusive-channels ;;
     esac
     echo 1 > /etc/omdrop/keep-cell
 elif [ "$BACKEND" = active-monitor ]; then
@@ -1354,28 +1353,6 @@ elif [ "$BACKEND" = active-monitor ]; then
     echo >> /etc/omdrop/exclusive-channels
     vsay "The helper will tune the active monitor to the first of: $(cat /etc/omdrop/exclusive-channels)that the card may transmit on."
 fi
-# OWL sends unicast once, unacknowledged. For a phone that visits our
-# channel rarely (an IBSS cell on 6, with the phone on 5 GHz Wi-Fi: one slot
-# in sixteen) each frame can go out this many times while the phone is there
-# (owl -U). 1 is OWL's own behaviour.
-COPIES=$(option unicast_copies)
-case "$COPIES" in
-    [1-5]) ;;
-    *) COPIES=1 ;;
-esac
-echo "$COPIES" > /etc/omdrop/unicast-copies
-# The phone is on our channel when we hear it. OWL holds a reply for the
-# slot its clock gives the phone; with this set, it sends one within this
-# many TU of hearing the phone instead (owl -H), which helped an IBSS cell on
-# 6 get mDNS answers through. 0, the default, is OWL's own behaviour.
-HEARD=$(option heard_window_tu)
-case "$HEARD" in
-    ""|*[!0-9]*) HEARD=0 ;;
-esac
-[ "$HEARD" -le 64 ] || HEARD=64
-echo "$HEARD" > /etc/omdrop/heard-window
-vsay "Replies to the phone go out within ${HEARD} TU of hearing it (0: only in the slot OWL's clock gives it)."
-vsay "Each unicast frame to the phone goes out ${COPIES} time(s) per visit to our channel."
 say "Starting the AirDrop window on ${IFACE} (until this add-on stops)."
 if ! "$DISCOVERABLE" start 0; then
     say "The AirDrop window did not finish starting (${BACKEND} on ${IFACE})."

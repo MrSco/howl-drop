@@ -16,7 +16,7 @@ Two things differ here, both because of how OWL sends:
   answer usually leaves after the phone has gone back to 44 or 149: on
   0.2.6 a phone queried three times, every query was answered, and it never
   went on to resolve our host. Unicast to the phone is held until the phone
-  is on our channel and sent owl -U times. RFC 6762 6.7 lets a responder
+  is on our channel. RFC 6762 6.7 lets a responder
   answer a querier directly; iOS takes it from an on-link address. Each
   query gets that unicast answer and the multicast burst as before.
 

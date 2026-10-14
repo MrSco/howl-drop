@@ -1,5 +1,5 @@
 name: OwlDrop
-version: "0.8.1"
+version: "0.8.2"
 slug: owldrop
 description: AirDrop from iPhones to Home Assistant OS, on any Wi-Fi card omdrop-owl supports. Files land in the share folder.
 url: https://github.com/MrSco/howl-drop
@@ -33,8 +33,6 @@ options:
   interface: auto
   allow_untested: false
   channels: ""
-  unicast_copies: 1
-  heard_window_tu: 0
   verbose: false
   debug_capture: false
 schema:
@@ -49,8 +47,6 @@ schema:
   interface: "str?"
   allow_untested: "bool?"
   channels: "str?"
-  unicast_copies: "int(1,5)?"
-  heard_window_tu: "int(0,64)?"
   verbose: "bool?"
   debug_capture: "bool?"
 panel_icon: "mdi:wifi"

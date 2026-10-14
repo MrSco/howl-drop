@@ -164,12 +164,6 @@ tx_channels phy0 | tr '\n' ' '
         out = self.run_case(self.CHANNELS, conf={'exclusive-channels': '149 6'})
         self.assertEqual(out.split(), ['5745', '2437'])
 
-    def test_exclusive_channels_knob_takes_any_24ghz_channel(self):
-        script = self.CHANNELS.replace("'2437 MHz [6]'", "'2432 MHz [5]' '2437 MHz [6]'")
-        self.assertEqual(self.run_case(script, conf={'exclusive-channels': '5'}).split(), ['2432'])
-        self.assertEqual(self.run_case(script, conf={'exclusive-channels': '5 6'}).split(), ['2432', '2437'])
-        self.assertEqual(self.run_case(script, conf={'exclusive-channels': '14 5'}).split(), ['2432'])
-
     ACTIVE_MONITOR = r'''
 PROF_BACKEND=active-monitor
 iw_original=$(declare -f iw)
