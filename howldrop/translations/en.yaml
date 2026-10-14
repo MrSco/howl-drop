@@ -1,0 +1,40 @@
+configuration:
+  pc_name:
+    name: Name on the share sheet
+    description: What the iPhone's AirDrop sheet shows, at most 63 characters.
+  save_folder:
+    name: Save folder
+    description: Where received files land. /share is the folder the Samba share add-on shows as "share". Shared text goes to text/ under it.
+  senders:
+    name: Allowed senders
+    description: Apple ID email addresses and phone numbers (with country code, e.g. +1 555 123 4567) of the people allowed to send. Empty lets anyone nearby send.
+  fetch_links:
+    name: Fetch linked files
+    description: When the phone shares a link to a file (a picture viewed in Safari, say), download the file in its place. Public internet addresses only.
+  fetch_max_mb:
+    name: Largest linked file (MB)
+    description: Links to bigger files stay as shortcuts.
+  delete_after_days:
+    name: Delete files after (days)
+    description: Files are deleted from the save folder this many days after they arrive, checked daily. 0 keeps everything.
+  forward_to_pc:
+    name: Forward to a PC running howldrop.exe
+    description: Optional. Also send each new file to a Windows PC running howldrop.exe, and shared text to its clipboard.
+  pc_host:
+    name: PC address
+    description: Only when forwarding and the PC's announcement doesn't reach Home Assistant.
+  interface:
+    name: Wi-Fi interface
+    description: auto picks a supported card, never the one Home Assistant uses for its network unless its profile keeps the connection. Or name one, e.g. wlan1.
+  allow_untested:
+    name: Allow untested cards
+    description: Use a Wi-Fi card whose omdrop-owl profile is untested.
+  channels:
+    name: Channels
+    description: Channels to try, in order, from 6, 36, 44 and 149. Empty picks for the card (5 GHz first where it can transmit there).
+  verbose:
+    name: Verbose log
+    description: Log the radio in detail, for troubleshooting.
+  debug_capture:
+    name: Debug capture
+    description: Write packet captures and senders' certificates to the save folder's debug/. Turn off and delete it when done; the certificates name their owners' Apple accounts.
