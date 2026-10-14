@@ -56,7 +56,10 @@ RUN git clone https://github.com/brentkearney/omdrop-plugin.git /tmp/omdrop-plug
     && test -s /opt/omdrop-receiver/apple-ca/apple-aai-ca.pem \
     && rm -rf /tmp/omdrop-plugin
 
-# A stalled upload logs where its unread bytes are (patch_receiver.py).
+# A stalled upload logs where its unread bytes are, and an upload whose
+# archive is complete is answered without the chunked terminator the iPhone
+# sometimes never sends (patch_receiver.py, howl_upload.py).
+COPY howl_upload.py /opt/omdrop-receiver/howl_upload.py
 COPY patch_receiver.py /tmp/patch_receiver.py
 RUN python3 /tmp/patch_receiver.py /opt/omdrop-receiver/airdrop-serve.py \
     && rm /tmp/patch_receiver.py

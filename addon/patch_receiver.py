@@ -44,15 +44,39 @@ DIAG = '''        except socket.timeout as e:
 '''
 
 
+# An upload whose archive is complete is answered without waiting for the
+# chunked terminator the iPhone sometimes never sends (howl_upload.py).
+IMPORT = 'import contacts  # noqa: E402  -- sibling module, found via the line above\n'
+IMPORT_NEW = IMPORT + 'import howl_upload  # noqa: E402  -- howl-drop: answer a complete archive\n'
+
+READ = '''                wire_bytes = read_request_body(
+                    self.rfile, self.headers, raw, receive_budget.byte_limit,
+                    check_disk=True, plan=plan, deadline=deadline)
+'''
+READ_NEW = '''                wire_bytes = howl_upload.read(
+                    self, raw, receive_budget.byte_limit, plan, deadline, tid,
+                    sys.modules[__name__])
+'''
+
+EDITS = [
+    ('upload timeout handler', ANCHOR, DIAG),
+    ('sibling imports', IMPORT, IMPORT_NEW),
+    ("handle_upload's body read", READ, READ_NEW),
+]
+
+
 def main(path):
     p = Path(path)
     s = p.read_text()
-    if 'howl-drop: where the bytes' in s:
-        return 0
-    if s.count(ANCHOR) != 1:
-        sys.exit(f'{path}: upload timeout handler not found; the receiver changed')
-    p.write_text(s.replace(ANCHOR, DIAG))
-    print(f'patched {path}: upload stalls log the kernel and TLS backlog')
+    for what, anchor, new in EDITS:
+        if new in s:
+            continue
+        if s.count(anchor) != 1:
+            sys.exit(f'{path}: {what} not found; the receiver changed')
+        s = s.replace(anchor, new)
+    p.write_text(s)
+    print(f'patched {path}: upload stalls log the kernel and TLS backlog; '
+          'a complete archive is answered without the chunked terminator')
     return 0
 
 
