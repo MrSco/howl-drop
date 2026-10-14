@@ -113,6 +113,7 @@ Received files land in `~/Downloads`.
 | MediaTek MT7921 | `mt7921e` | ❌ Exclusive ([#14](https://github.com/t4t5/omdrop-owl/issues/14)); shared untested | `14c3:7961`, CachyOS (kernel 7.2.9) |
 | MediaTek MT7927 | `mt7925e` | ❌ Shared and exclusive ([#44](https://github.com/t4t5/omdrop-owl/issues/44)) | TP-Link Archer TBE550E, `14c3:7927`, CachyOS (kernel 7.2.9) |
 | Qualcomm WCN6855 (QCNFA765) | `ath11k_pci` | ❌ Shared ([#45](https://github.com/t4t5/omdrop-owl/issues/45)); no ad-hoc mode for exclusive | ThinkPad, `17cb:1103`, CachyOS (kernel 7.2.9) |
+| Intel Wireless-AC 8260 | `iwlwifi` | ❌ Exclusive: the firmware resets the card on channel 44; on 6 the iPhone lists it, but no transfer completed | NUC6i7KYK, `8086:24f3`, Home Assistant OS (kernel 6.12) |
 | MediaTek MT7922 (RZ616) | `mt7921e` | ❓ Untested (opt-in) | — |
 | MediaTek MT7612U (USB) | `mt76x2u` | ❓ Untested (opt-in), in progress in [#13](https://github.com/t4t5/omdrop-owl/pull/13) | — |
 | Realtek RTL8852BE | `rtw89_8852be` | ❓ Untested (opt-in) | — |
