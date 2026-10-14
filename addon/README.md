@@ -17,12 +17,13 @@ kernel already drives, and loads no driver or firmware of its own.
 
 - **A Wi-Fi card with an omdrop-owl profile** (`userspace/owl-profiles`),
   within AirDrop range of the phone. The add-on picks one by itself:
-  - a card that is **not** Home Assistant's network uplink runs **exclusive
-    mode** for as long as the add-on runs (it leaves any Wi-Fi network). Best
-    is a card with an active-monitor profile, such as a USB **MediaTek
-    MT7612U** (Alfa AWUS036ACM): it follows the phone onto 5 GHz, where the
-    iPhone runs its transfers. Cards with an IBSS profile (Intel AX2xx,
-    Realtek RTL8822BE) hold channel 6 only and are slow.
+  - a card that is **not** Home Assistant's network uplink runs **exclusive**
+    or **active-monitor** mode for as long as the add-on runs (it leaves any
+    Wi-Fi network). Best is a USB **MediaTek MT7612U** (Alfa AWUS036ACM): its
+    active monitor runs on 5 GHz, where the iPhone runs its transfers. The
+    other cards (Intel AX2xx, Realtek RTL8822BE in exclusive mode; MediaTek
+    MT7921/MT7922 in active-monitor mode, untested) hold channel 6 only and
+    are slow.
   - a card that **is** the uplink, connected on channel 6, 44 or 149, can run
     **shared mode** if its profile says so. That keeps the connection, and is
     untried on Home Assistant OS.

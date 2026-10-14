@@ -1,17 +1,19 @@
 """Exercise exclusive mode with command doubles, never the real radio."""
 import os
-import shutil
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
 
 # Through PATH: Windows itself looks in System32 first, which is WSL's bash,
-# and WSL drops this environment.
+# and WSL's bash neither sees this environment nor reads Windows paths.
 BASH = shutil.which('bash') or 'bash'
+
 SOURCE = (Path(__file__).resolve().parents[1] / 'userspace/omdrop-discoverable').read_text()
-FUNCTIONS = SOURCE[SOURCE.index('tx_channels()'):SOURCE.index('# --------------------------------------------------------------------- status')]
+FUNCTIONS = SOURCE[SOURCE.index('joined_cell_freq()'):SOURCE.index('# --------------------------------------------------------------------- status')]
 STATION = SOURCE[SOURCE.index('station_iface()'):SOURCE.index('\ndriver_of()')]
+TX_CHANNELS = SOURCE[SOURCE.index('tx_channels()'):SOURCE.index('joined_cell_freq()')]
 
 class ExclusiveTests(unittest.TestCase):
     def run_case(self, extra='', fallback=True, join=True, conf=None):
@@ -20,7 +22,8 @@ class ExclusiveTests(unittest.TestCase):
             conf_dir.mkdir()
             for name, value in (conf or {}).items():
                 (conf_dir / name).write_text(value + '\n', newline='\n')
-            env = dict(os.environ, RUN=tmp, CONF=conf_dir.as_posix(), FALLBACK=str(int(fallback)), JOIN=str(int(join)))
+            env = dict(os.environ, RUN=Path(tmp).as_posix(), CONF=conf_dir.as_posix(),
+                       FALLBACK=str(int(fallback)), JOIN=str(int(join)))
             # Whoever runs the tests through sudo must not make them call the real runuser.
             env.pop('SUDO_UID', None)
             env.pop('PKEXEC_UID', None)
@@ -53,10 +56,8 @@ iw() {
   if [[ "$*" == *' link' ]]; then echo 'Joined IBSS 00:25:00:ff:94:73'; fi
 }
 ''' + FUNCTIONS + STATION + '\n' + extra + '\ntouch "$RUN/commands"; cat "$RUN/commands"\n'
-            # As bytes over stdin: on Windows, bash -c's argument loses its
-            # quoting, and text mode would turn every newline into CRLF.
             result = subprocess.run([BASH, '-s'], input=script.encode(), env=env, capture_output=True, timeout=10)
-            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
             return result.stdout.decode()
 
     def test_separate_ibss_path_leaves_station_to_networkmanager(self):
@@ -146,63 +147,62 @@ exclusive_down || exit 11
         self.assertNotIn('connection up uuid', out)
         self.assertIn('nmcli device set wlan0 managed yes', out)
 
-    CHANNELS = r'''
-iw() {
-  if [[ "$*" == 'phy phy0 channels' ]]; then
-    printf '\t* %s\n' '2437 MHz [6]' '5220 MHz [44]' '5745 MHz [149]'
-  fi
-}
-tx_channels phy0 | tr '\n' ' '
-'''
+    def test_active_monitor_makes_station_a_monitor_and_back(self):
+        out = self.run_case('''PROF_MODE=active-monitor
+exclusive_up wlan0 phy0 2437 || exit 10
+[[ $(station_iface) == wlan0 ]] || exit 11
+exclusive_down || exit 12
+[ ! -e "$RUN/exclusive" ] && [ ! -e "$RUN/monitor" ] || exit 13
+''')
+        self.assertIn('iw dev wlan0 set type monitor', out)
+        self.assertIn('iw phy phy0 interface add mon0 type monitor flags active', out)
+        self.assertIn('ip link set mon0 address 02:00:00:00:00:01', out)
+        self.assertIn('iw dev wlan0 set freq 2437 HT20', out)
+        self.assertIn('iw dev mon0 set freq 2437 HT20', out)
+        self.assertLess(out.index('iw dev wlan0 set freq'), out.index('iw dev mon0 set freq'))
+        self.assertNotIn('type ibss', out)
+        self.assertIn('iw dev wlan0 set type managed', out)
+        self.assertIn('connection up uuid 12345678-1234-1234-1234-123456789abc ifname wlan0', out)
 
-    def test_channels_default_to_5ghz_first(self):
-        self.assertEqual(self.run_case(self.CHANNELS).split(), ['5220', '5745', '2437'])
-
-    def test_exclusive_channels_knob_sets_the_order(self):
-        out = self.run_case(self.CHANNELS, conf={'exclusive-channels': '6'})
-        self.assertEqual(out.split(), ['2437'])
-        out = self.run_case(self.CHANNELS, conf={'exclusive-channels': '149 6'})
-        self.assertEqual(out.split(), ['5745', '2437'])
-
-    ACTIVE_MONITOR = r'''
-PROF_BACKEND=active-monitor
+    def test_failed_active_monitor_is_still_undone(self):
+        out = self.run_case('''PROF_MODE=active-monitor
 iw_original=$(declare -f iw)
 eval "${iw_original/iw ()/mock_iw ()}"
-iw() { if [[ "$*" == 'dev wlan0 info' ]]; then printf '\ttype managed\n'; fi; mock_iw "$@"; }
+iw() { if [[ "$*" == 'phy phy0 interface add mon0 type monitor flags active' ]]; then return 1; fi; mock_iw "$@"; }
+exclusive_up wlan0 phy0 2437 && exit 10
+exclusive_down || exit 11
+[ ! -e "$RUN/monitor" ] || exit 12
+''')
+        self.assertIn('iw dev wlan0 set type managed', out)
+        self.assertIn('nmcli device set wlan0 managed yes', out)
+
+    # iw phy phy0 channels: 6, 44 and 149 open, 36 No IR.
+    PHY_CHANNELS = TX_CHANNELS + r'''
+iw() {
+  printf '\t* %s\n' '2437 MHz [6]' '5180 MHz [36]' '\t  No IR' '5220 MHz [44]' '5745 MHz [149]'
+}
 '''
 
-    def test_active_monitor_window_makes_station_passive_and_restores_it(self):
-        out = self.run_case(self.ACTIVE_MONITOR + '''
-[[ $(exclusive_up wlan0 phy0 5220 2437) == 5220 ]] || exit 10
-[[ -e "$RUN/exclusive-monitor" && $(cat "$RUN/exclusive-station-type") == managed ]] || exit 11
-[[ $(station_iface) == wlan0 ]] || exit 12
-exclusive_down || exit 13
-[[ ! -e "$RUN/exclusive-monitor" && ! -e "$RUN/exclusive-station-type" && ! -e "$RUN/exclusive" ]] || exit 14
-''')
-        for line in ('nmcli device set wlan0 managed no', 'iw dev wlan0 set type monitor',
-                     'iw dev wlan0 set monitor none', 'iw phy phy0 interface add mon0 type monitor flags active',
-                     'ip link set mon0 address 02:00:00:00:00:01', 'iw dev mon0 set freq 5220 HT20',
-                     'iw dev wlan0 set type managed', 'nmcli device set wlan0 managed yes'):
-            self.assertIn(line, out)
-        self.assertNotIn('ibss join', out)
-        self.assertNotIn('type ibss', out)
-        self.assertNotIn('set freq 2437', out)
+    def tx_channels(self, mode, driver):
+        return self.run_case(self.PHY_CHANNELS + f'PROF_MODE={mode}\ntx_channels phy0 {driver}').split()
 
-    def test_active_monitor_falls_to_the_next_frequency(self):
-        out = self.run_case(self.ACTIVE_MONITOR + '''
-iw() { if [[ "$*" == 'dev mon0 set freq 5220 HT20' ]]; then echo "iw $*" >> "$RUN/commands"; return 1; fi
-       if [[ "$*" == 'dev wlan0 info' ]]; then printf '\ttype managed\n'; fi; mock_iw "$@"; }
-[[ $(exclusive_up wlan0 phy0 5220 2437) == 2437 ]] || exit 10
-''')
-        self.assertIn('iw dev mon0 set freq 2437 HT20', out)
+    def test_exclusive_tries_5ghz_first(self):
+        self.assertEqual(self.tx_channels('exclusive', 'iwlwifi'), ['5220', '5745', '2437'])
 
-    def test_failed_monitor_restore_keeps_state_for_next_try(self):
-        self.run_case(self.ACTIVE_MONITOR + '''
-exclusive_up wlan0 phy0 5220 >/dev/null || exit 10
-iw() { echo "iw $*" >> "$RUN/commands"; [[ "$*" != 'dev wlan0 set type managed' ]]; }
-exclusive_down && exit 11
-[[ -e "$RUN/exclusive" && -e "$RUN/exclusive-station-type" ]] || exit 12
-''')
+    def test_active_monitor_stays_on_channel_6(self):
+        self.assertEqual(self.tx_channels('active-monitor', 'mt7921e'), ['2437'])
+
+    def test_mt7612u_active_monitor_tries_149_first(self):
+        self.assertEqual(self.tx_channels('active-monitor', 'mt76x2u'), ['5745', '5220', '2437'])
+
+    def test_exclusive_channels_knob_sets_the_order(self):
+        def order(want, mode='exclusive', driver='iwlwifi'):
+            return self.run_case(self.PHY_CHANNELS + f'PROF_MODE={mode}\ntx_channels phy0 {driver}',
+                                 conf={'exclusive-channels': want}).split()
+        self.assertEqual(order('6'), ['2437'])
+        self.assertEqual(order('149 6'), ['5745', '2437'])
+        self.assertEqual(order('36 44'), ['5220'])  # 36 is No IR here
+        self.assertEqual(order('44 6', 'active-monitor', 'mt7921e'), ['5220', '2437'])
 
     # awdlibss0 reports joined only once a join was issued: keep-cell looks at
     # it first and must find nothing, and a join that never reports would

@@ -11,7 +11,7 @@ validate_table() {  # FILE -> awk exits nonzero on any violation
       bad = 0
       if (NF < 6) bad = 1
       if ($2 != "tested" && $2 != "untested") bad = 1
-      if ($3 != "shared" && $3 != "exclusive") bad = 1
+      if ($3 != "shared" && $3 != "exclusive" && $3 != "active-monitor") bad = 1
       if ($4 != "station" && $4 != "own") bad = 1
       if ($5 != "yes" && $5 != "no") bad = 1
       if ($6 != "yes" && $6 != "no") bad = 1

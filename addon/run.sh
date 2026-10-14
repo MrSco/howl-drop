@@ -84,15 +84,22 @@ firmware_of() {
 }
 
 # owl-profiles as the helper reads it (load_profile): this driver's line,
-# else the "*" line. Prints status, mode, mon_mac, reconnect, mt76_pm and
-# backend; a line without the backend field is ibss.
+# else the "*" line. Prints status, mode (shared, exclusive or
+# active-monitor), mon_mac, reconnect and mt76_pm.
 PROFILES=$LIB/owl-profiles
 profile_of() {  # DRIVER
     local line
     line=$(awk -v d="$1" '!/^#/ && NF >= 6 && $1 == d { print; exit }' "$PROFILES" 2>/dev/null)
     [ -n "$line" ] || line=$(awk '!/^#/ && NF >= 6 && $1 == "*" { print; exit }' "$PROFILES" 2>/dev/null)
     [ -n "$line" ] || return 1
-    printf '%s\n' "$line" | awk '{ print $2, $3, $4, $5, $6, ($7 == "active-monitor" ? $7 : "ibss") }'
+    printf '%s\n' "$line" | awk '{ print $2, $3, $4, $5, $6 }'
+}
+
+# Whether the helper runs this driver's window on 5 GHz (tx_channels): an
+# active monitor on the MT7612U does; the MT7921/MT7922's, and every IBSS
+# cell measured so far, hold channel 6.
+uses_5ghz() {  # DRIVER MODE
+    [ "$2" = active-monitor ] && [ "$1" = mt76x2u ]
 }
 
 # Interfaces with a default route: Home Assistant's own network.
@@ -118,26 +125,28 @@ supports_active_monitor() {
 }
 
 # Can IFACE carry the window? Prints "RANK BACKEND STATUS", lower ranks
-# better, or "- REASON". Exclusive mode takes the card off any network, so
-# never Home Assistant's uplink; shared mode stays associated, so it needs a
-# card that is connected, which here means the uplink. An active monitor
-# can follow the phone onto 5 GHz; the IBSS cards measured so far start no
-# 5 GHz cell, so they rank after it.
+# better, or "- REASON". BACKEND is ibss (exclusive mode's IBSS cell),
+# active-monitor or shared. Exclusive and active-monitor take the card off
+# any network, so never Home Assistant's uplink; shared mode stays
+# associated, so it needs a card that is connected, which here means the
+# uplink. A card whose window runs on 5 GHz, where an iPhone runs its
+# transfers, ranks first.
 judge_iface() {  # IFACE
     local name=$1 drv prof status mode backend up=no rank
     drv=$(driver_of "$name")
     prof=$(profile_of "$drv") || { echo "- no-profile"; return; }
-    read -r status mode _ _ _ backend <<< "$prof"
+    read -r status mode _ <<< "$prof"
     uplinks | grep -qx "$name" && up=yes
     case "$mode" in
-        exclusive)
+        exclusive|active-monitor)
             [ "$up" = no ] || { echo "- uplink"; return; }
-            if [ "$backend" = active-monitor ]; then
+            backend=ibss
+            if [ "$mode" = active-monitor ]; then
                 supports_active_monitor "$name" || { echo "- no-active-monitor"; return; }
-                rank=0
-            else
-                rank=1
+                backend=active-monitor
             fi
+            rank=1
+            uses_5ghz "$drv" "$mode" && rank=0
             ;;
         shared)
             [ "$up" = yes ] || { echo "- not-connected"; return; }
@@ -1217,16 +1226,18 @@ fi
 PC_HOST=$(option pc_host)
 PC_NAME=$(option pc_name)
 CHANNELS=$(option channels)
-# Empty or auto: an active monitor surveys 149, 44, 36 and 6 for the phone
-# before the window; an IBSS cell holds 6, since no IBSS card measured so far
-# starts a 5 GHz cell. Shared mode runs on its network's channel.
+# Empty or auto: a card whose window runs on 5 GHz (uses_5ghz) surveys 149,
+# 44, 36 and 6 for the phone before the window; the rest hold 6. Shared mode
+# runs on its network's channel.
 SURVEY=0
 case "${CHANNELS// /}" in
     ""|auto)
-        case "$BACKEND" in
-            active-monitor) CHANNELS="149 44 36 6"; SURVEY=1 ;;
-            *) CHANNELS=6 ;;
-        esac
+        if uses_5ghz "$DRV" "$BACKEND"; then
+            CHANNELS="149 44 36 6"
+            SURVEY=1
+        else
+            CHANNELS=6
+        fi
         ;;
 esac
 WANT_FREQS=$(want_freqs "$CHANNELS")

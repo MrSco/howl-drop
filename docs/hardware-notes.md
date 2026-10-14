@@ -31,9 +31,13 @@ and the add-on's defaults.
 
 - **MediaTek MT7612U (USB `0e8d:7612`, driver `mt76x2u`, e.g. Alfa
   AWUS036ACM): works.** Home Assistant OS ships the driver and firmware
-  (`mediatek/mt7662.bin`). It runs as an active monitor (t4t5/omdrop-owl pull
-  request 13, ported into `userspace/omdrop-discoverable`), transmits on 44
+  (`mediatek/mt7662.bin`). It runs as an active monitor (omdrop-owl's
+  `active-monitor` mode, from its pull requests 13 and 24), transmits on 44
   and 149 with regulatory domain US, and carried every transfer above on 149.
+  Upstream holds active monitors to channel 6, because the MT7921/MT7922
+  send no injected unicast on 5 GHz; this fork runs the MT7612U's on 149
+  first, and tunes the station monitor too (offered upstream as
+  t4t5/omdrop-owl pull request 54).
   It needs no USB passthrough: the host's driver makes the interface and the
   add-on shares the host network.
 - **Intel Wireless-AC 8260 (`iwlwifi`, firmware `8000C-36`): not usable.**

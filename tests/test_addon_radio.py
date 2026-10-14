@@ -59,6 +59,12 @@ class RadioChoiceTest(unittest.TestCase):
         cards = {'wlp1s0': ('mt7925e', False), 'wlx0': ('mt76x2u', True)}
         self.assertEqual(run(cards, uplink='wlp1s0'), 'wlx0 active-monitor tested')
 
+    def test_mt7921_active_monitor_ranks_with_ibss_cards(self):
+        # Its active monitor holds channel 6, like an IBSS cell, and is untested.
+        cards = {'wlp1s0': ('mt7921e', True), 'wlp3s0': ('iwlwifi', False)}
+        self.assertEqual(run(cards, allow_untested=True), 'wlp3s0 ibss tested')
+        self.assertEqual(run({'wlp1s0': ('mt7921e', True)}, allow_untested=True), 'wlp1s0 active-monitor untested')
+
     def test_driver_without_active_monitor_is_skipped(self):
         self.assertEqual(run({'wlx0': ('mt76x2u', False)}), '')
         self.assertIn('offers none', run({'wlx0': ('mt76x2u', False)}, body='explain_radios'))
