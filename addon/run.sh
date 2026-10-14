@@ -175,7 +175,7 @@ why_not() {
 
 # The best interface: prints "IFACE BACKEND STATUS", or nothing.
 pick_radio() {
-    local name verdict rank best= best_rank=99
+    local name verdict rank best='' best_rank=99
     for name in $(wifi_ifaces); do
         verdict=$(judge_iface "$name")
         rank=${verdict%% *}
@@ -237,6 +237,9 @@ join_host_netns() {
     command -v nsenter >/dev/null 2>&1 || return 0
     export HOWLDROP_JOINED_HOST_NETNS=1
     say "This container is not in the host network namespace. Joining the host network namespace."
+    # execfail: a failed exec returns here instead of ending the script.
+    shopt -s execfail
+    # shellcheck disable=SC2093
     exec nsenter -t 1 -n -- "$0"
     say "Joining the host network namespace failed."
     exit 1
@@ -559,7 +562,7 @@ cell_joined_freq() {
 # that changes. A down interface is brought up once and the same join is
 # retried. A join that never reports Joined IBSS is left before the next.
 try_join_freq() {
-    local dev=$1 freq=$2 err i got
+    local dev=$1 freq=$2 err got
     say "Joining the released exclusive IBSS on $(freq_name "$freq"), HT20, BSSID ${BSSID}."
     err=$(iw dev "$dev" ibss join omdrop "$freq" HT20 fixed-freq "$BSSID" beacon-interval 10000 2>&1) || {
         JOIN_ERR=$err
@@ -575,7 +578,7 @@ try_join_freq() {
             return 1
         fi
     }
-    for i in $(seq 100); do
+    for _ in $(seq 100); do
         got=$(cell_joined_freq "$dev")
         if [ "$got" = "$freq" ]; then
             JOINED_FREQ=$freq
@@ -632,10 +635,10 @@ scan_for_5ghz() {
     fi
     say "Scanning once on ${1} so the card can hear a 5 GHz network."
     if command -v timeout >/dev/null 2>&1; then
-        err=$(timeout 25 iw dev "$1" scan >/dev/null 2>&1)
+        err=$(timeout 25 iw dev "$1" scan 2>&1 >/dev/null)
         rc=$?
     else
-        err=$(iw dev "$1" scan >/dev/null 2>&1)
+        err=$(iw dev "$1" scan 2>&1 >/dev/null)
         rc=$?
     fi
     if [ "$rc" -ne 0 ]; then
@@ -1056,7 +1059,7 @@ trim_logs() {
 
 watch_radio() {
     local owl=/run/omdrop-owl/owl.log ann=/run/omdrop-owl/announce.log mdns=/run/omdrop-owl/mdns.log
-    local seen=0 total tick=0 peers tcp last_tcp= fault= mseen=0 mtotal
+    local seen=0 total tick=0 peers tcp last_tcp='' fault='' mseen=0 mtotal
     vsay "OWL's first lines:"
     [ "$VERBOSE" != true ] || head -n 15 "$owl" 2>/dev/null | sed 's/^/OWL: /'
     seen=$(wc -l < "$owl" 2>/dev/null || echo 0)
