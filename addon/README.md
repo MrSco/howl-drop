@@ -139,7 +139,9 @@ monitor, mDNS and announcer lines, and a radio check every 30 s. Without it
 the log keeps the start-up, each transfer, deliveries and failures.
 
 `debug_capture` (default off) writes pcap files of the monitor interface and
-the AirDrop TCP to `save_folder/debug` (a ring: up to 160 MB and 80 MB).
+the AirDrop TCP to `save_folder/debug` (a ring: up to 160 MB and 80 MB), and
+each sender's TLS client certificate to `save_folder/debug/peercerts`. A
+certificate names its owner's Apple account: don't post it.
 Turn it off and delete the folder when done.
 
 ## Reading the log

@@ -1468,6 +1468,13 @@ vsay "AirDrop receiver on awdl0, saving into ${STAGING}; finished items move to 
 # upload, not every request's headers (patch_receiver.py).
 RECEIVER_LOG=INFO
 [ "$VERBOSE" != true ] || RECEIVER_LOG=DEBUG
+# debug_capture also keeps each sender's TLS client certificate (the
+# receiver's OMDROP_PEERCERT), in save_folder/debug/peercerts: a Contacts Only
+# refusal for "the validation record does not belong to the presented
+# certificate" turns on what that certificate is.
+if [ "$CAPTURE" = true ]; then
+    export OMDROP_PEERCERT="$INBOX/debug/peercerts"
+fi
 HOWLDROP_LOG_LEVEL=$RECEIVER_LOG PYTHONWARNINGS=ignore::DeprecationWarning \
 python3 "$RECEIVER" --iface awdl0 --port 8771 --name "$PC_NAME" --model "$MODEL" \
     --outdir "$STAGING" --keys "${HOWLDROP_KEYS_DIR:-/data/omdrop}" &
