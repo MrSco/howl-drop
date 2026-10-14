@@ -830,16 +830,16 @@ EOF
 # route and every other interface's (the Ethernet uplink's) stay as they are.
 # 0.2.1's delete-and-add was refused and hid why, so errors are printed.
 fast_awdl_retransmit() {
-    local err opts
-    for opts in "rto_min 20ms quickack 1" "rto_min 20ms"; do
-        # shellcheck disable=SC2086
-        if err=$(ip -6 route add fe80::/64 dev awdl0 metric 128 $opts 2>&1); then
-            vsay "TCP on awdl0 resends after 20 ms instead of 200 ms ($opts)."
-            [ "$VERBOSE" != true ] || ip -6 route show dev awdl0 2>/dev/null | sed 's/^/  awdl0 route: /'
-            return 0
-        fi
-        say "ip -6 route add fe80::/64 dev awdl0 metric 128 ${opts}: ${err}"
-    done
+    local err
+    # No quickack: it acknowledges every segment, and a 30 MB upload on 149
+    # drew one injected ACK per segment (21,926 for 21,921), each taking the
+    # air the phone sends on (2026-10-14). Delayed ACKs halve that.
+    if err=$(ip -6 route add fe80::/64 dev awdl0 metric 128 rto_min 20ms 2>&1); then
+        vsay "TCP on awdl0 resends after 20 ms instead of 200 ms."
+        [ "$VERBOSE" != true ] || ip -6 route show dev awdl0 2>/dev/null | sed 's/^/  awdl0 route: /'
+        return 0
+    fi
+    say "ip -6 route add fe80::/64 dev awdl0 metric 128 rto_min 20ms: ${err}"
     say "TCP on awdl0 keeps the 200 ms retransmit floor. Routes on awdl0:"
     ip -6 route show dev awdl0 2>&1 | sed 's/^/  /'
 }
@@ -929,12 +929,12 @@ survey_freqs() {  # IFACE FREQ...
 # never confirmed. Sequence numbers are tcpdump's, relative per connection.
 tcp_flow() {
     command -v tcpdump >/dev/null 2>&1 || return 0
-    tcpdump -i awdl0 -n -tt -l 'tcp port 8771' 2>/dev/null | awk '
+    tcpdump -i awdl0 -n -S -tt -l 'tcp port 8771' 2>/dev/null | awk '
         function flush() {
             if (inp || outp)
-                printf "TCP flow t+%ds: in %d seg, +%d new bytes, %d resent | out %d, last ack %s%s\n",
-                    bucket * 2 - t0, inp, newb, resent, outp, lastack, (syn ? ", SYN" : "") (fin ? ", FIN" : "")
-            inp = outp = newb = resent = syn = fin = 0
+                printf "TCP flow t+%ds: in %d seg, +%d new bytes, %d resent | out %d, acked +%d bytes%s\n",
+                    bucket * 2 - t0, inp, newb, resent, outp, ackb, (syn ? ", SYN" : "") (fin ? ", FIN" : "")
+            inp = outp = newb = resent = ackb = syn = fin = 0
         }
         {
             ts = int($1)
@@ -947,7 +947,11 @@ tcp_flow() {
             if ($0 ~ /Flags \[[^]]*F/) fin = 1
             if (out) {
                 outp++
-                if (match($0, /ack [0-9]+/)) lastack = substr($0, RSTART + 4, RLENGTH - 4)
+                if (match($0, /ack [0-9]+/)) {
+                    ack = substr($0, RSTART + 4, RLENGTH - 4) + 0
+                    if (lastack[dst] && ack > lastack[dst]) ackb += ack - lastack[dst]
+                    lastack[dst] = ack
+                }
             } else {
                 inp++
                 conn = src
@@ -1358,7 +1362,7 @@ if [ "$BACKEND" != shared ]; then
     release_supplicant
 fi
 
-rm -f /etc/omdrop/exclusive-channels /etc/omdrop/keep-cell
+rm -f /etc/omdrop/exclusive-channels /etc/omdrop/keep-cell /etc/omdrop/tx-rate
 if [ "$BACKEND" = ibss ]; then
     if ! prepare_cell || ! ready_cell; then
         "$DISCOVERABLE" stop >/dev/null 2>&1 || true
@@ -1384,6 +1388,13 @@ if [ "$BACKEND" = ibss ]; then
     esac
     echo 1 > /etc/omdrop/keep-cell
 elif [ "$BACKEND" = active-monitor ]; then
+    # Our data frames (TCP ACKs) at 24 Mbit/s rather than OWL's 12 where the
+    # window runs on 5 GHz: half the airtime each. A third of the phone's
+    # frames to an MT7612U on 149 were retries whose first try it never
+    # received, and a radio that is sending is not receiving (2026-10-14).
+    if uses_5ghz "$DRV" "$BACKEND"; then
+        echo 24 > /etc/omdrop/tx-rate
+    fi
     if [ "$SURVEY" = 1 ]; then
         say "Surveying $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g') for the phone, about 5 s each. Keep the iPhone's share sheet open."
         SURVEYED=$(survey_freqs "$IFACE" $WANT_FREQS | paste -sd' ' -)
