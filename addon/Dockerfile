@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         network-manager \
         openssl \
         pkg-config \
+        tcpdump \
         procps \
         python3 \
         python3-dbus \

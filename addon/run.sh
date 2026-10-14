@@ -17,6 +17,7 @@ IFACE=
 BLE_PID=
 SERVE_PID=
 BRIDGE_PID=
+MON_IF=mon0
 WATCH_PID=
 RADIO=0
 
@@ -760,6 +761,22 @@ fast_awdl_retransmit() {
 # The host kernel's last radio lines: a firmware crash (Microcode SW error)
 # or a failed restart is what takes mon0 away mid-window. dmesg needs
 # CAP_SYSLOG or SYS_ADMIN; the host's mount namespace is the fallback.
+# What mon0 actually receives over SECS, by frequency, and how much of it
+# carries AWDL's BSSID. iw's channel report is not proof: on the MT7612U an
+# active monitor alone "accepted" channel changes and kept receiving on
+# channel 1 (pull request 13), and on Home Assistant OS iw reported no channel
+# at all while the stick heard nothing on 44 (2026-10-14).
+frames_heard() {  # SECS
+    local secs=$1 cap freqs awdl total
+    command -v tcpdump >/dev/null 2>&1 || return 0
+    cap=$(timeout "$secs" tcpdump -i "$MON_IF" -n -e -l 2>/dev/null)
+    total=$(printf '%s\n' "$cap" | grep -c 'MHz')
+    awdl=$(printf '%s\n' "$cap" | grep -ci "$BSSID")
+    freqs=$(printf '%s\n' "$cap" | grep -oE '[0-9]{4} MHz' | sort | uniq -c | sort -rn | head -n 4 \
+        | awk '{ printf "%s%s %s x%s", (NR > 1 ? ", " : ""), $2, $3, $1 }')
+    say "Frames on ${MON_IF} in ${secs} s: ${total:-0} (${freqs:-none}); ${awdl:-0} with AWDL's BSSID."
+}
+
 kernel_radio_log() {
     local pattern='iwlwifi|iwlmvm|ieee80211|mac80211|cfg80211|wlp|mon0|awdl'
     local out
@@ -914,6 +931,7 @@ watch_radio() {
         if [ $((tick % 30)) -eq 0 ]; then
             peers=$(grep -c 'add peer' "$owl" 2>/dev/null)
             say "Radio check: ${peers:-0} peer adds in OWL's log so far ($total lines). Helper: $("$DISCOVERABLE" status 2>/dev/null)."
+            frames_heard 2
             tail -n 2 "$ann" 2>/dev/null | sed 's/^/Announce: /'
         fi
     done
@@ -1182,6 +1200,7 @@ if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
 fi
 
 say "Window is up. Stop this add-on to leave the cell and return ${IFACE} to a station."
+frames_heard 3
 watch_radio &
 WATCH_PID=$!
 wait "$BRIDGE_PID" "$SERVE_PID" || true

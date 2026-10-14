@@ -189,7 +189,11 @@ exclusive_monitor_up() {  # STA PHY FREQ...
   nmcli device set "$MON" managed no >/dev/null 2>&1
   ip link set "$MON" address "$(cat "/sys/class/net/$sta/address")" || return 1
   ip link set "$MON" up || return 1
+  # The passive station monitor is what holds the channel context, so it is
+  # tuned too: with only mon0 set, an MT7612U on Home Assistant OS heard
+  # nothing on 44 and iw reported no channel for either (2026-10-14).
   for f in "$@"; do
+    iw dev "$sta" set freq "$f" HT20 >&2 2>/dev/null
     iw dev "$MON" set freq "$f" HT20 >&2 && { echo "$f"; return 0; }
   done
   return 1
