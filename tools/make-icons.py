@@ -1,69 +1,41 @@
 #!/usr/bin/env python3
-"""Draw the add-on's icon.png (128x128) and logo.png (250x100), the images
-Home Assistant shows for it: an owl's face in an AirDrop-blue drop.
+"""Make the add-on's icon.png and logo.png, the images Home Assistant shows
+for it, from the artwork in art/howldrop.png.
 
-  python tools/make-icons.py      writes addon/icon.png and addon/logo.png
+  python tools/make-icons.py [SOURCE]
 
-Needs Pillow. Drawn at 8x and scaled down, for smooth edges.
+SOURCE (default art/howldrop.png) is a square app icon on a black field. The
+black outside its rounded square becomes transparent: it is filled from the
+corners, so dark blue inside the icon is never touched. Without an argument
+the stored artwork is used; with one, that file also replaces it (scaled to
+512 px). Needs Pillow.
 """
-import math
+import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
-S = 8  # supersampling
-
-BLUE_TOP = (64, 156, 255)
-BLUE_BOTTOM = (16, 92, 214)
-WHITE = (255, 255, 255)
-PUPIL = (17, 30, 60)
-BEAK = (255, 176, 46)
+ART = ROOT / 'art' / 'howldrop.png'
+BLUE = (24, 110, 230)
+GREY = (90, 100, 120)
 
 
-def drop_polygon(cx, cy, r, tip_y, steps=180):
-    """A drop: a circle of radius r at (cx, cy) and the two tangents from the
-    tip at (cx, tip_y) above it."""
-    d = cy - tip_y
-    a = math.asin(r / d)              # half-angle at the tip
-    # Tangent points on the circle, measured from straight up.
-    t = math.pi / 2 - a
-    start = -math.pi / 2 + t          # right tangent, angles in screen coords
-    end = -math.pi / 2 - t + 2 * math.pi
-    pts = [(cx, tip_y)]
-    for i in range(steps + 1):
-        ang = start + (end - start) * i / steps
-        pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
-    return pts
-
-
-def owl_drop(size):
-    """The mark on a transparent square of `size` pixels."""
-    n = size * S
-    img = Image.new('RGBA', (n, n), (0, 0, 0, 0))
-    # Gradient, masked by the drop.
-    grad = Image.new('RGBA', (n, n))
-    gd = ImageDraw.Draw(grad)
-    for y in range(n):
-        f = y / (n - 1)
-        gd.line([(0, y), (n, y)], fill=tuple(int(a + (b - a) * f) for a, b in zip(BLUE_TOP, BLUE_BOTTOM)) + (255,))
-    mask = Image.new('L', (n, n), 0)
-    cx, cy, r = n * 0.5, n * 0.6, n * 0.36
-    ImageDraw.Draw(mask).polygon(drop_polygon(cx, cy, r, n * 0.04), fill=255)
-    img.paste(grad, (0, 0), mask)
-
-    d = ImageDraw.Draw(img)
-    # Eyes: white, with pupils looking slightly up, toward the tip.
-    eye_r, pupil_r = r * 0.30, r * 0.14
-    for ex in (cx - r * 0.38, cx + r * 0.38):
-        ey = cy - r * 0.08
-        d.ellipse([ex - eye_r, ey - eye_r, ex + eye_r, ey + eye_r], fill=WHITE)
-        py = ey - eye_r * 0.12
-        d.ellipse([ex - pupil_r, py - pupil_r, ex + pupil_r, py + pupil_r], fill=PUPIL)
-    # Beak, between and below the eyes.
-    by = cy + r * 0.18
-    d.polygon([(cx - r * 0.12, by), (cx + r * 0.12, by), (cx, by + r * 0.24)], fill=BEAK)
-    return img.resize((size, size), Image.LANCZOS)
+def transparent_corners(img, threshold=24):
+    """Make the near-black field around the icon transparent."""
+    img = img.convert('RGBA')
+    w, h = img.size
+    # Pixels close to black, then only the ones reachable from a corner.
+    dark = img.convert('L').point(lambda v: 255 if v <= threshold else 0)
+    field = Image.new('L', img.size, 0)
+    for corner in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+        if dark.getpixel(corner):
+            region = dark.copy()
+            ImageDraw.floodfill(region, corner, 128)
+            field = ImageChops.lighter(field, region.point(lambda v: 255 if v == 128 else 0))
+    alpha = ImageChops.subtract(img.getchannel('A'), field)
+    img.putalpha(alpha)
+    return img
 
 
 def font(px):
@@ -74,25 +46,30 @@ def font(px):
     return ImageFont.load_default()
 
 
-def logo():
+def logo(icon):
+    s = 4
     w, h = 250, 100
-    img = Image.new('RGBA', (w * S, h * S), (0, 0, 0, 0))
-    mark = owl_drop(84).resize((84 * S, 84 * S), Image.LANCZOS)
-    img.paste(mark, (0, 8 * S), mark)
+    img = Image.new('RGBA', (w * s, h * s), (0, 0, 0, 0))
+    mark = icon.resize((88 * s, 88 * s), Image.LANCZOS)
+    img.paste(mark, (0, 6 * s), mark)
     d = ImageDraw.Draw(img)
-    f = font(30 * S)
-    d.text((88 * S, h * S / 2), 'Howl', font=f, fill=BLUE_BOTTOM + (255,), anchor='lm')
-    howl_w = d.textlength('Howl', font=f)
-    d.text((88 * S + howl_w, h * S / 2), 'Drop', font=f, fill=(90, 100, 120, 255), anchor='lm')
+    f = font(30 * s)
+    d.text((94 * s, h * s / 2), 'Howl', font=f, fill=BLUE + (255,), anchor='lm')
+    d.text((94 * s + d.textlength('Howl', font=f), h * s / 2), 'Drop', font=f, fill=GREY + (255,), anchor='lm')
     return img.resize((w, h), Image.LANCZOS)
 
 
-def main():
+def main(argv):
+    if argv:
+        src = Image.open(argv[0])
+        ART.parent.mkdir(exist_ok=True)
+        transparent_corners(src).resize((512, 512), Image.LANCZOS).save(ART, optimize=True)
+    icon = Image.open(ART).convert('RGBA')
     out = ROOT / 'addon'
-    owl_drop(128).save(out / 'icon.png', optimize=True)
-    logo().save(out / 'logo.png', optimize=True)
-    print(f'wrote {out / "icon.png"} and {out / "logo.png"}')
+    icon.resize((256, 256), Image.LANCZOS).save(out / 'icon.png', optimize=True)
+    logo(icon).save(out / 'logo.png', optimize=True)
+    print(f'wrote {out / "icon.png"} and {out / "logo.png"} from {ART}')
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv[1:])
