@@ -29,6 +29,10 @@
 #   owl-10-addba-accept.patch  -A: answer a peer's Block Ack session request
 #                           (ADDBA) with success, so it may send A-MPDUs
 #                           (tests/owl_addba.c)
+#   owl-11-rx-reorder.patch  with -A, hold a Block Ack session's frames until
+#                           the gaps before them fill, as mac80211 does, so
+#                           TCP gets them in order (src/reorder.c,
+#                           tests/owl_reorder.c)
 # Applied in name order: each is a diff against the tree with the previous ones.
 set -eu
 
