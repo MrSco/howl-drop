@@ -28,7 +28,10 @@ void usage() {
         << "  --port N        PC transfer port (default 47632) when --host is set\n"
         << "  --name NAME     Which PC, when more than one answers\n"
         << "  --inbox DIR     Folder omdrop saves into (watch)\n"
-        << "  --timeout SEC   How long to wait for a hello (default 8)\n";
+        << "  --timeout SEC   How long to wait for a hello (default 8)\n"
+        << "  --keep          (watch) Leave files in DIR after forwarding, and forward only\n"
+        << "                  ones that arrive after the bridge starts\n"
+        << "  --wait          (watch) No PC yet, or it went away: keep looking for one\n";
 }
 
 struct Options {
@@ -41,6 +44,8 @@ struct Options {
     std::filesystem::path file;
     int timeout_s = 8;
     bool text_stdin = false;
+    bool keep = false;
+    bool wait = false;
 };
 
 bool parse_port(const std::string& text, std::uint16_t& port) {
@@ -107,6 +112,10 @@ bool parse_args(const std::vector<std::string>& args, Options& opt, std::string&
                 return false;
             }
             opt.timeout_s = seconds;
+        } else if (arg == "--keep") {
+            opt.keep = true;
+        } else if (arg == "--wait") {
+            opt.wait = true;
         } else if (arg == "--help" || arg == "-h" || arg == "help") {
             opt.command = "help";
         } else if (!arg.empty() && arg[0] == '-') {
@@ -164,11 +173,36 @@ int fail(const std::string& message) {
     return 1;
 }
 
-void watch_loop(const owldrop::LanTarget& target, const std::filesystem::path& inbox) {
+std::vector<std::filesystem::path> inbox_files(const std::filesystem::path& inbox) {
+    std::vector<std::filesystem::path> files;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(inbox, ec)) {
+        if (entry.is_regular_file(ec)) files.push_back(entry.path());
+    }
+    const auto text_dir = inbox / "text";
+    if (std::filesystem::is_directory(text_dir, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(text_dir, ec)) {
+            if (entry.is_regular_file(ec)) files.push_back(entry.path());
+        }
+    }
+    return files;
+}
+
+// A run of this many retryable failures means the PC has gone (closed,
+// asleep, a new address): with --wait, watch returns to looking for one.
+constexpr int kGoneAfterRetries = 20;
+
+// Forward what settles in inbox until the PC looks gone (only when it can be
+// looked for again) . handled holds what keep mode has already dealt with,
+// across returns: forwarded, refused, or there before the bridge started.
+void watch_loop(const owldrop::LanTarget& target, const std::filesystem::path& inbox, bool keep, bool can_rediscover,
+                std::set<std::string>& handled) {
     std::filesystem::create_directories(inbox / "text");
     std::cout << "forwarding to " << target.name << " at " << target.host << ":" << target.port << '\n';
     std::cout << "inbox " << inbox << '\n';
-    std::cout << "text " << (inbox / "text") << '\n';
+    // Flushed: the add-on reads this through a pipe, and an unflushed line
+    // shows up minutes late or not at all.
+    std::cout << "text " << (inbox / "text") << std::endl;
 
     struct Stamp {
         std::uintmax_t size = 0;
@@ -176,24 +210,16 @@ void watch_loop(const owldrop::LanTarget& target, const std::filesystem::path& i
     };
     std::map<std::string, Stamp> stamps;
     std::set<std::string> gave_up;
+    int retries = 0;
 
     while (true) {
-        std::vector<std::filesystem::path> files;
+        const std::vector<std::filesystem::path> files = inbox_files(inbox);
         std::error_code ec;
-        for (const auto& entry : std::filesystem::directory_iterator(inbox, ec)) {
-            if (entry.is_regular_file(ec)) files.push_back(entry.path());
-        }
-        const auto text_dir = inbox / "text";
-        if (std::filesystem::is_directory(text_dir)) {
-            for (const auto& entry : std::filesystem::directory_iterator(text_dir, ec)) {
-                if (entry.is_regular_file(ec)) files.push_back(entry.path());
-            }
-        }
         std::set<std::string> live;
         for (const auto& file : files) {
             const std::string key = file.string();
             live.insert(key);
-            if (gave_up.count(key)) continue;
+            if (gave_up.count(key) || handled.count(key)) continue;
             const auto size = std::filesystem::file_size(file, ec);
             if (ec) continue;
             Stamp& stamp = stamps[key];
@@ -204,21 +230,27 @@ void watch_loop(const owldrop::LanTarget& target, const std::filesystem::path& i
             }
             ++stamp.seen;
             if (stamp.seen < 2) continue;
-            const owldrop::DropResult result = owldrop::take_drop(inbox, file, target);
+            const owldrop::DropResult result = owldrop::take_drop(inbox, file, target, keep);
             stamps.erase(key);
             if (result.action == owldrop::DropAction::Retry) {
                 std::cerr << file.filename().string() << ": " << result.message << '\n';
+                if (can_rediscover && ++retries >= kGoneAfterRetries) {
+                    std::cerr << target.name << " stopped answering; looking for a PC again\n";
+                    return;
+                }
                 continue;
             }
+            retries = 0;
+            if (keep) handled.insert(key);
             if (result.action == owldrop::DropAction::Rejected) {
                 gave_up.insert(key);
                 std::cerr << file.filename().string() << ": " << result.message << '\n';
                 continue;
             }
             if (result.action == owldrop::DropAction::SentFile) {
-                std::cout << "sent file " << result.message << '\n';
+                std::cout << "sent file " << result.message << std::endl;
             } else if (result.action == owldrop::DropAction::SentText) {
-                std::cout << "sent text\n";
+                std::cout << "sent text" << std::endl;
             }
         }
         for (auto it = stamps.begin(); it != stamps.end();) {
@@ -226,6 +258,43 @@ void watch_loop(const owldrop::LanTarget& target, const std::filesystem::path& i
             else ++it;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+}
+
+int run_watch(const Options& opt) {
+    std::string error;
+    std::filesystem::path inbox = opt.inbox;
+    if (inbox.empty()) {
+        if (const char* home = std::getenv("HOME")) inbox = std::filesystem::path(home) / "OwlDrop" / "incoming";
+        else inbox = std::filesystem::path("OwlDrop") / "incoming";
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(inbox / "text", ec);
+    if (ec) return fail("could not create " + inbox.string());
+    std::set<std::string> handled;
+    if (opt.keep) {
+        for (const auto& file : inbox_files(inbox)) handled.insert(file.string());
+        std::cout << "keeping files in " << inbox << "; " << handled.size()
+                  << " already there are not forwarded" << std::endl;
+    }
+    const bool can_rediscover = opt.wait && opt.host.empty();
+    auto target = resolve_target(opt, error);
+    bool looking = false;
+    while (true) {
+        if (!target) {
+            if (!opt.wait) return fail(error.empty() ? "no OwlDrop PC answered" : error);
+            if (!looking) {
+                std::cout << "no OwlDrop PC answering; files stay in " << inbox << ", still looking" << std::endl;
+                looking = true;
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            error.clear();
+            target = resolve_target(opt, error);
+            continue;
+        }
+        looking = false;
+        watch_loop(*target, inbox, opt.keep, can_rediscover, handled);
+        target.reset();
     }
 }
 
@@ -257,6 +326,8 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    if (opt.command == "watch") return run_watch(opt);
+
     const auto target = resolve_target(opt, error);
     if (!target) return fail(error.empty() ? "no OwlDrop PC answered" : error);
 
@@ -280,18 +351,6 @@ int main(int argc, char** argv) {
         const owldrop::Status status = owldrop::forward_text(*target, text);
         if (!status.ok) return fail(status.message);
         std::cout << "sent text to " << target->name << '\n';
-        return 0;
-    }
-    if (opt.command == "watch") {
-        std::filesystem::path inbox = opt.inbox;
-        if (inbox.empty()) {
-            if (const char* home = std::getenv("HOME")) inbox = std::filesystem::path(home) / "OwlDrop" / "incoming";
-            else inbox = std::filesystem::path("OwlDrop") / "incoming";
-        }
-        std::error_code ec;
-        std::filesystem::create_directories(inbox / "text", ec);
-        if (ec) return fail("could not create " + inbox.string());
-        watch_loop(*target, inbox);
         return 0;
     }
     usage();

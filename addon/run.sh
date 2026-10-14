@@ -10,7 +10,9 @@ DISCOVERABLE=$LIB/omdrop-discoverable
 BLE=$LIB/ble-airdrop-adv.py
 RECEIVER=/opt/omdrop-receiver/airdrop-serve.py
 BRIDGE=/usr/local/bin/owldrop-bridge
-INBOX=/data/incoming
+# Where the phone's files and text land: save_folder, in Home Assistant's
+# share folder by default, which its Samba share shows to every PC.
+INBOX=/share/owldrop
 BSSID=00:25:00:ff:94:73
 IFACE=
 
@@ -941,6 +943,7 @@ stop_stack() {
     rm -f /tmp/owldrop-running
     if [ -n "$WATCH_PID" ]; then kill "$WATCH_PID" 2>/dev/null || true; fi
     if [ -n "$BRIDGE_PID" ]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
+    pkill -f "$BRIDGE watch" 2>/dev/null || true
     if [ -n "$SERVE_PID" ]; then kill "$SERVE_PID" 2>/dev/null || true; fi
     if [ -n "$BLE_PID" ]; then kill "$BLE_PID" 2>/dev/null || true; fi
     if [ "$RADIO" = 1 ]; then
@@ -958,7 +961,7 @@ say "OwlDrop add-on"
 say "Home Assistant OS stays installed. This add-on does not load iwlwifi and does not replace the firmware blob."
 say ""
 say "Ethernet stays the uplink. The AirDrop radio is a MediaTek MT7612U USB stick when one is plugged in (radio option auto or usb), else the NUC's Intel Wireless-AC 8260."
-say "Until a phone finishes a transfer, ${INBOX} stays empty and owldrop.exe has nothing to receive."
+say "Files and text from the phone are kept in save_folder (default /share/owldrop, the share folder's owldrop). owldrop.exe, when a PC runs it, gets them too."
 say ""
 
 if ! dbus_host; then
@@ -1031,14 +1034,28 @@ if [ -z "$WANT_FREQS" ]; then
     WANT_FREQS=2437
 fi
 say "Channels to try, in order: $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g')."
+SAVE_FOLDER=$(option save_folder)
+case "${SAVE_FOLDER:-/share/owldrop}" in
+    /*) INBOX=${SAVE_FOLDER:-/share/owldrop} ;;
+    *) say "save_folder must be an absolute path such as /share/owldrop; using /share/owldrop." ;;
+esac
+FORWARD=$(option forward_to_pc)
+case "$FORWARD" in
+    False|false|0|no) FORWARD=false ;;
+    *) FORWARD=true ;;
+esac
+# The sheet name: pc_name, else the name a running owldrop.exe announces,
+# else OwlDrop. No PC is not a reason to stop: the files still land in
+# save_folder.
+PC_BEACON=
 if [ -z "$PC_NAME" ]; then
-    say "Listening for owldrop.exe on UDP 47631."
-    if [ -n "$PC_HOST" ]; then
-        say "pc_host is set, so the forwarder will use ${PC_HOST}. The share-sheet name still comes from the beacon unless pc_name is set."
-    fi
-    if ! PC_NAME=$("$BRIDGE" name --timeout 20); then
-        say "No OwlDrop beacon arrived. Start owldrop.exe on the Windows PC and allow UDP 47631 and TCP 47632 from this LAN, or set pc_name to that PC's name."
-        exit 1
+    say "Listening for owldrop.exe on UDP 47631 for up to 10 s, for the share-sheet name."
+    if PC_BEACON=$("$BRIDGE" name --timeout 10 2>/dev/null) && [ -n "$PC_BEACON" ]; then
+        PC_NAME=$PC_BEACON
+    else
+        PC_BEACON=
+        PC_NAME=OwlDrop
+        say "No owldrop.exe answered. The sheet shows OwlDrop; set pc_name to choose the name."
     fi
 fi
 if [ "${#PC_NAME}" -gt 63 ]; then
@@ -1185,24 +1202,36 @@ if ! kill -0 "$SERVE_PID" 2>/dev/null; then
 fi
 say "The AirDrop receiver is listening on awdl0 port 8771."
 
-BRIDGE_ARGS=(watch --inbox "$INBOX" --name "$PC_NAME")
-if [ -n "$PC_HOST" ]; then
-    BRIDGE_ARGS+=(--host "$PC_HOST")
-fi
-say "Forwarding files to owldrop.exe. Text placed in ${INBOX}/text becomes the PC clipboard."
-"$BRIDGE" "${BRIDGE_ARGS[@]}" &
-BRIDGE_PID=$!
-sleep 1
-if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
-    say "owldrop-bridge exited. The PC has to be answering on TCP 47632."
-    stop_stack
-    exit 1
+# The PC is optional. The forwarder leaves every file in save_folder
+# (--keep), sends only what arrives from now on, and keeps looking for a PC
+# when none answers or the one it had goes away (--wait). It filters by name
+# only when that name came from a PC's own beacon. Restarted if it exits; the
+# AirDrop window never waits on it.
+if [ "$FORWARD" = true ]; then
+    BRIDGE_ARGS=(watch --inbox "$INBOX" --keep --wait --timeout 10)
+    if [ -n "$PC_BEACON" ]; then
+        BRIDGE_ARGS+=(--name "$PC_BEACON")
+    fi
+    if [ -n "$PC_HOST" ]; then
+        BRIDGE_ARGS+=(--host "$PC_HOST")
+    fi
+    say "Forwarding new files to owldrop.exe whenever a PC runs it; they stay in ${INBOX} either way. Text goes to that PC's clipboard."
+    (
+        while [ -f /tmp/owldrop-running ]; do
+            "$BRIDGE" "${BRIDGE_ARGS[@]}" 2>&1 | sed -u 's/^/Forward: /'
+            [ -f /tmp/owldrop-running ] || break
+            sleep 5
+        done
+    ) &
+    BRIDGE_PID=$!
+else
+    say "forward_to_pc is off. Files and text stay in ${INBOX}."
 fi
 
 say "Window is up. Stop this add-on to leave the cell and return ${IFACE} to a station."
 frames_heard 3
 watch_radio &
 WATCH_PID=$!
-wait "$BRIDGE_PID" "$SERVE_PID" || true
+wait "$SERVE_PID" || true
 stop_stack
 exit 0

@@ -54,7 +54,10 @@ struct DropResult {
 
 // Classify one inbox entry, forward it, and move it aside when the PC has
 // accepted it or has permanently refused it. A PC that is down leaves the
-// file in place so a later pass can retry.
-DropResult take_drop(const std::filesystem::path& inbox, const std::filesystem::path& file, const LanTarget& target);
+// file in place so a later pass can retry. With keep, the file stays where
+// it is either way: the inbox is a shared folder people read, and the
+// caller remembers what it has handled.
+DropResult take_drop(const std::filesystem::path& inbox, const std::filesystem::path& file, const LanTarget& target,
+                     bool keep = false);
 
 }  // namespace owldrop

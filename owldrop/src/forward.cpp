@@ -249,7 +249,8 @@ DropKind classify_inbox_file(const std::filesystem::path& inbox, const std::file
     }
 }
 
-DropResult take_drop(const std::filesystem::path& inbox, const std::filesystem::path& file, const LanTarget& target) {
+DropResult take_drop(const std::filesystem::path& inbox, const std::filesystem::path& file, const LanTarget& target,
+                     bool keep) {
     const DropKind kind = classify_inbox_file(inbox, file);
     if (kind == DropKind::Skip) return DropResult{DropAction::Skip, {}};
 
@@ -259,7 +260,7 @@ DropResult take_drop(const std::filesystem::path& inbox, const std::filesystem::
         const auto bytes = std::filesystem::file_size(file, ec);
         if (ec) return DropResult{DropAction::Rejected, "could not read the file"};
         if (bytes > kMaxClipBytes) {
-            move_aside(inbox / ".failed", file);
+            if (!keep) move_aside(inbox / ".failed", file);
             return DropResult{DropAction::Rejected, "too large"};
         }
         std::ifstream in(file, std::ios::binary);
@@ -274,10 +275,10 @@ DropResult take_drop(const std::filesystem::path& inbox, const std::filesystem::
 
     if (!status.ok) {
         if (retryable(status)) return DropResult{DropAction::Retry, status.message};
-        move_aside(inbox / ".failed", file);
+        if (!keep) move_aside(inbox / ".failed", file);
         return DropResult{DropAction::Rejected, status.message};
     }
-    move_aside(inbox / ".forwarded", file);
+    if (!keep) move_aside(inbox / ".forwarded", file);
     const DropAction action = kind == DropKind::Text ? DropAction::SentText : DropAction::SentFile;
     return DropResult{action, status.message};
 }

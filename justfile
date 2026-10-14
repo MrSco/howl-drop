@@ -12,7 +12,7 @@ test:
 stage-addon DEST="":
     tools/stage-addon.sh {{DEST}}
 
-# Build owldrop.exe and owldrop-bridge into owldrop/build
+# Build owldrop.exe and owldrop-bridge into owldrop/build-win (Windows: tools/build-owldrop.ps1)
 owldrop:
-    cmake -S owldrop -B owldrop/build
-    cmake --build owldrop/build --config Release
+    cmake -S owldrop -B owldrop/build-win -G Ninja -DCMAKE_BUILD_TYPE=Release
+    cmake --build owldrop/build-win

@@ -144,6 +144,29 @@ void test_bridge() {
     CHECK(!std::filesystem::exists(root / "evil.txt"));
     CHECK(!std::filesystem::exists(pc_inbox.parent_path().parent_path() / "evil.txt"));
 
+    // keep: the inbox is a shared folder, so a forwarded file stays put.
+    const auto kept = pi_inbox / "kept.bin";
+    {
+        std::ofstream out(kept, std::ios::binary);
+        out << "stays in the share";
+    }
+    const auto sent_kept = owldrop::take_drop(pi_inbox, kept, target, true);
+    if (sent_kept.action != owldrop::DropAction::SentFile) std::cerr << "kept: " << sent_kept.message << '\n';
+    CHECK(sent_kept.action == owldrop::DropAction::SentFile);
+    CHECK(std::filesystem::is_regular_file(kept));
+    CHECK(std::filesystem::is_regular_file(pc_inbox / "kept.bin"));
+    CHECK(!std::filesystem::exists(pi_inbox / ".forwarded" / "kept.bin"));
+
+    const auto kept_note = pi_inbox / "text" / "kept.txt";
+    {
+        std::ofstream out(kept_note, std::ios::binary);
+        out << "text kept too";
+    }
+    const auto sent_kept_text = owldrop::take_drop(pi_inbox, kept_note, target, true);
+    CHECK(sent_kept_text.action == owldrop::DropAction::SentText);
+    CHECK(clipboard.read().text == "text kept too");
+    CHECK(std::filesystem::is_regular_file(kept_note));
+
     node.stop();
     std::filesystem::remove_all(root);
 }

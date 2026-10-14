@@ -27,9 +27,11 @@ Leave full access off. The add-on does not request it, and it does not bind the 
 
 `radio` picks the AirDrop radio. `auto` uses a MediaTek MT7612U USB stick (Alfa AWUS036ACM, `0e8d:7612`, driver `mt76x2u`) when one is plugged in, and the NUC's built-in Intel Wireless-AC 8260 otherwise; `usb` and `intel` force one. The 8260 is soldered to the NUC6i7KYK and its firmware resets the card on 5 GHz, so it holds only 2.4 GHz channels, where an iPhone on 5 GHz Wi-Fi spends one slot in sixteen; it showed the tile and never finished a transfer. The stick runs t4t5/omdrop-owl pull request 13's active-monitor profile (ported into this repo's helper): no IBSS cell, an active monitor that acknowledges the phone itself, and it can transmit on 44 and 149. Home Assistant OS ships its driver (`CONFIG_MT76x2U`) and firmware (`mediatek/mt7662.bin`, the `MT76X2E` firmware package). Plug it into the NUC; the add-on needs no USB passthrough, because the host's driver makes the interface and the add-on shares the host network.
 
-On the Windows PC, start `owldrop.exe` and leave it open. Allow UDP 47631 and TCP 47632 from the LAN. The add-on reads the PC's name from that beacon and puts the same name on the iPhone share sheet.
+`save_folder` (default `/share/owldrop`) is where the phone's files land, and its shared text as UTF-8 files in `text/` under it. `/share` is Home Assistant's share folder, which the Samba share add-on exposes as `share`, so any PC on the network can open `\\homeassistant\share\owldrop`. No PC has to be running anything.
 
-Set `pc_host` to the PC's Ethernet address only when the beacon does not reach the NUC. Set `pc_name` only when you want to force the sheet name. The name can be at most 63 characters.
+`forward_to_pc` (default on) also sends each new file to `owldrop.exe` when a PC runs it: the file goes to that PC's `Downloads\OwlDrop` and text to its clipboard. The file stays in `save_folder` either way, files already there when the add-on starts are not sent, and a file that arrives while no PC answers is sent once one does (while the add-on runs). Allow UDP 47631 and TCP 47632 from the LAN on that PC. Build `owldrop.exe` with `tools\build-owldrop.ps1`.
+
+`pc_name` is the name on the iPhone share sheet. Empty: the name a running `owldrop.exe` announces in the first 10 s, else `OwlDrop`. At most 63 characters. Set `pc_host` to the PC's address only when its beacon does not reach the NUC.
 
 `channels` is the channels to try, in order, separated by spaces: any 2.4 GHz channel `1`-`13`, or `44` or `149`. Empty means `44 149 6` for the USB stick and `6` for the 8260. With the iPhone on 5 GHz Wi-Fi, leave it at `6`: the phone visits 6 one slot in sixteen. With the iPhone on a 2.4 GHz network, set it to that network's channel (shown on the phone's schedule in the log, e.g. `5,0,149,0,0,149,5,5,6,...` is channel 5): the phone is there about 5 slots in 16 (`patches/owl-12-any-24ghz-channel.patch`). On this 8260, 0.1.12 and 0.1.13 unlocked 5 GHz and joined channel 44; the log said `Joined IBSS` and the iPhone never listed the PC. On channel 6 (0.1.11) the tile appeared. Do not use 44: on 0.2.3 the cell joined there, OWL rejected the phone's frames, and about 13 s in the 8260's firmware stopped answering and iwlwifi removed and re-probed the card (kernel log in `docs/8260-ibss-join.md`). The add-on now stops itself when that happens.
 
@@ -45,7 +47,7 @@ Before the join, the add-on marks the interface unmanaged and stops the host `wp
 
 The receiver will not create its certificate while it is root. The first start writes a self-signed pair into the add-on data and reuses it after that. `awdl0` needs a link-local address that is not still tentative. The log line `awdl0 IPv6 address is <addr> and it is ready.` is that step. A tentative address is added again without duplicate-address detection. The image also installs the plugin's Apple root at `/opt/share/certs/apple_root_ca.pem`, which is the path the receiver checks. The log line `The AirDrop receiver is listening on awdl0 port 8771.` means that bind succeeded.
 
-Files the phone sends land in the add-on data folder `incoming`, then go to `Downloads\OwlDrop` on the PC. A UTF-8 file in `incoming/text` becomes the PC clipboard.
+Files the phone sends land in `save_folder`. Lines starting `Forward:` are the forwarder: `no OwlDrop PC answering` (files stay put), `forwarding to <PC>`, `sent file <name>`.
 
 ## After the window is up
 

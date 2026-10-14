@@ -44,10 +44,13 @@ tools/stage-addon.sh //homeassistant/addons/owldrop
 Bump `version` in `addon/config.yaml`, then in Home Assistant: Add-on store,
 menu, Check for updates, update OwlDrop, start it, and read its log.
 
-The Windows side:
+The Windows side, `owldrop.exe`, is optional: files and text from the phone
+land in the add-on's `save_folder` (`/share/owldrop`, on the Samba share),
+and a PC running `owldrop.exe` also gets each new one. Build it with CMake,
+Ninja and a MinGW-w64 g++ (Strawberry Perl ships all three):
 
-```bash
-cmake -S owldrop -B owldrop/build && cmake --build owldrop/build --config Release --target owldrop
+```powershell
+tools\build-owldrop.ps1 -Run
 ```
 
 Everything that runs on the NUC is a Linux script, so `.gitattributes` keeps
