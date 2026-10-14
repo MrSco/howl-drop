@@ -144,9 +144,19 @@ mt76_dir() { echo "/sys/kernel/debug/ieee80211/$(basename "$(readlink -f "/sys/c
 # unicast injected from it at 1 Mbit/s CCK whatever rate OWL asks for, so on
 # 44 none of the MT7922's reached the air (0 of 132, to an independent
 # capture), while on 6 115 of 121 did, and the phone ACKed 100.
-tx_channels() {  # PHY
+# The MT7612U (mt76x2u) is not held to that: its unicast gets through on 149,
+# where an iPhone on 5/6 GHz Wi-Fi gives a transfer most of its slots
+# (149,149,149,149,149,149,0,0,6,149,...). There a 3 MB photo arrived in about
+# 5 s, where on 6 a 1.1 MB one took 27 s and multi-photo transfers stalled.
+# 149 is the 5 GHz channel it was measured on, so it goes first.
+tx_channels() {  # PHY DRIVER
   local ok c order="5220 5745 2437"
-  [ "${PROF_MODE:-}" = active-monitor ] && order=2437
+  if [ "${PROF_MODE:-}" = active-monitor ]; then
+    case "${2:-}" in
+      mt76x2u) order="5745 5220 2437" ;;
+      *) order=2437 ;;
+    esac
+  fi
   ok=$(iw phy "$1" channels 2>/dev/null | awk '
     /^[[:space:]]*\* [0-9]+ MHz/ { if (f && ok) print f; f = $2; ok = !/disabled/; next }
     /No IR|Radar detection/ { ok = 0 }
@@ -260,7 +270,11 @@ monitor_up() {  # STA PHY FREQ...
   iw phy "$phy" interface add "$MON" type monitor flags active || return 1
   ip link set "$MON" address "$(cat "/sys/class/net/$sta/address")" || return 1
   ip link set "$MON" up || return 1
+  # The station, as the passive monitor holding the channel context, is
+  # tuned too: with only mon0 set to 44, an MT7612U (kernel 6.12) heard
+  # nothing there and iw showed no channel for either interface.
   for f in "$@"; do
+    iw dev "$sta" set freq "$f" HT20 >&2 2>/dev/null
     iw dev "$MON" set freq "$f" HT20 >&2 && { echo "$f"; return 0; }
   done
   return 1
@@ -515,12 +529,12 @@ cmd_start() {
   echo "$drv $PROF_MODE $PROF_MONMAC $PROF_RECONNECT $PROF_PM" > "$RUN/profile"
   if [ "$PROF_MODE" != shared ]; then
     gw=none
-    freqs=$(tx_channels "$phy")
+    freqs=$(tx_channels "$phy" "$drv")
     [ -n "$freqs" ] || die "this Wi-Fi card may not transmit on any of AirDrop's channels (6, 44, 149) here" 4
     # From here a failure has to give Wi-Fi back, which is cmd_stop's job.
     if ! ap=$(exclusive_up "$sta" "$phy" $freqs); then
       cmd_stop start-failed >/dev/null
-      [ "$PROF_MODE" = active-monitor ] && die "could not set up the active monitor $MON on channel 6" 4
+      [ "$PROF_MODE" = active-monitor ] && die "could not set up the active monitor $MON on any of AirDrop's channels" 4
       die "could not start the ad-hoc interface $IBSS on any of AirDrop's channels" 4
     fi
   else

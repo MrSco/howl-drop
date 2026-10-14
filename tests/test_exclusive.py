@@ -8,6 +8,7 @@ import unittest
 SOURCE = (Path(__file__).resolve().parents[1] / 'userspace/omdrop-discoverable').read_text()
 FUNCTIONS = SOURCE[SOURCE.index('exclusive_up()'):SOURCE.index('# --------------------------------------------------------------------- status')]
 STATION = SOURCE[SOURCE.index('station_iface()'):SOURCE.index('\ndriver_of()')]
+TX_CHANNELS = SOURCE[SOURCE.index('tx_channels()'):SOURCE.index('exclusive_up()')]
 
 class ExclusiveTests(unittest.TestCase):
     def run_case(self, extra='', fallback=True, join=True):
@@ -146,7 +147,9 @@ exclusive_down || exit 12
         self.assertIn('iw dev wlan0 set type monitor', out)
         self.assertIn('iw phy phy0 interface add mon0 type monitor flags active', out)
         self.assertIn('ip link set mon0 address 02:00:00:00:00:01', out)
+        self.assertIn('iw dev wlan0 set freq 2437 HT20', out)
         self.assertIn('iw dev mon0 set freq 2437 HT20', out)
+        self.assertLess(out.index('iw dev wlan0 set freq'), out.index('iw dev mon0 set freq'))
         self.assertNotIn('type ibss', out)
         self.assertIn('iw dev wlan0 set type managed', out)
         self.assertIn('connection up uuid 12345678-1234-1234-1234-123456789abc ifname wlan0', out)
@@ -162,6 +165,25 @@ exclusive_down || exit 11
 ''')
         self.assertIn('iw dev wlan0 set type managed', out)
         self.assertIn('nmcli device set wlan0 managed yes', out)
+
+    # iw phy phy0 channels: 6, 44 and 149 open, 36 No IR.
+    PHY_CHANNELS = TX_CHANNELS + r'''
+iw() {
+  printf '\t* %s\n' '2437 MHz [6]' '5180 MHz [36]' '\t  No IR' '5220 MHz [44]' '5745 MHz [149]'
+}
+'''
+
+    def tx_channels(self, mode, driver):
+        return self.run_case(self.PHY_CHANNELS + f'PROF_MODE={mode}\ntx_channels phy0 {driver}').split()
+
+    def test_exclusive_tries_5ghz_first(self):
+        self.assertEqual(self.tx_channels('exclusive', 'iwlwifi'), ['5220', '5745', '2437'])
+
+    def test_active_monitor_stays_on_channel_6(self):
+        self.assertEqual(self.tx_channels('active-monitor', 'mt7921e'), ['2437'])
+
+    def test_mt7612u_active_monitor_tries_149_first(self):
+        self.assertEqual(self.tx_channels('active-monitor', 'mt76x2u'), ['5745', '5220', '2437'])
 
     def test_unreconnected_station_gets_its_recorded_connection_up(self):
         # A connection with autoconnect off: NetworkManager never brings it back (#51).
