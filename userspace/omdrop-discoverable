@@ -436,7 +436,8 @@ cmd_stop() {
 
 # ---------------------------------------------------------------------- start
 
-# The background half of a window: announce, watch OWL, end at expiry.
+# The background half of a window: announce, watch OWL and the monitor
+# interface, end at expiry.
 supervise() {
   local until burst=$ADV_BURST
   [ -e "$RUN/exclusive" ] && burst=$ADV_BURST_EXCLUSIVE
@@ -449,6 +450,14 @@ supervise() {
     if ! alive "$(pid_of owl)" "$OWL_BIN"; then
       log "OWL exited: $(tail -1 "$OWL_LOG" 2>/dev/null)"
       exec "$SELF" stop owl-exited
+    fi
+    # A driver that reloads (iwlwifi after a firmware crash, as the 8260 did on
+    # channel 44) takes the monitor interface with it. OWL stays up, failing
+    # every injection, and awdl0 keeps its address, so status went on
+    # reporting a dead window as visible (upstream 9d68ddd, #23).
+    if ! ip link show "$MON" >/dev/null 2>&1; then
+      log "$MON is gone; the driver may have reloaded"
+      exec "$SELF" stop radio-lost
     fi
     python3 "$LIB/awdl-airdrop-adv.py" --iface "$IF" --plain --flags "$ADV_FLAGS" --port 8771 \
       $burst >> "$RUN/announce.log" 2>&1
@@ -488,7 +497,9 @@ cmd_start() {
     cmd_stop recovered >/dev/null
     [ -e "$RUN/exclusive-station-type" ] && die "Wi-Fi ($(cat "$RUN/exclusive")) is still a monitor from the last window and couldn't be switched back. Restarting the computer fixes it." 4
   fi
-  rm -f "$RUN/reason"
+  # The last window's, which a stop after a failed start would act on
+  # (upstream 5d014bd).
+  rm -f "$RUN/reason" "$RUN/profile" "$RUN/station" "$RUN/pm"
 
   sta=$(station_iface)
   [ -n "$sta" ] || die "no Wi-Fi interface to run AWDL on" 4
@@ -571,11 +582,11 @@ cmd_start() {
   if [ "$PROF_MODE" = exclusive ]; then
     owl_extra+=(-F -E)
     strategy=pin
-    # owl -U (patches/owl-09-fixed-radio-copies.patch): each unicast frame
+    # owl -U (patches/owl-10-fixed-radio-copies.patch): each unicast frame
     # sent this many times in the peer's visit. $CONF/unicast-copies, 1-5.
     copies=$(knob unicast-copies)
     [[ "$copies" =~ ^[1-5]$ ]] && owl_extra+=(-U "$copies")
-    # owl -H (patches/owl-10-fixed-radio-heard.patch): a peer heard within
+    # owl -H (patches/owl-11-fixed-radio-heard.patch): a peer heard within
     # this many TU is on our channel now. $CONF/heard-window, 1-64.
     heard=$(knob heard-window)
     [[ "$heard" =~ ^[0-9]+$ ]] && [ "$heard" -ge 1 ] && [ "$heard" -le 64 ] && owl_extra+=(-H "$heard")
