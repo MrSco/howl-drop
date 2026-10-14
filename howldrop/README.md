@@ -129,11 +129,12 @@ untested, including the catch-all line for drivers the table does not name.
 If you try one, the omdrop-owl README says how to report it.
 
 `channels` (exclusive mode) is the channels to try, in order, separated by
-spaces: `6`, `36`, `44` or `149`. Empty or `auto`: an active-monitor
-card listens about 5 s each on 149, 44, 36 and 6 for the phone (keep the
-share sheet open) and starts on 5 GHz, where the phone was heard if anywhere,
-else 149; an IBSS card uses 6. Shared mode ignores this: it runs on its
-network's channel.
+spaces: `6`, `36`, `44` or `149`. Empty or `auto`: a card that can run
+on 5 GHz starts on 149, where an iPhone runs its transfers, then 44, 36 and
+6; an IBSS card uses 6. If HowlDrop doesn't appear on your phone, `OWL: …
+peer … changed channel sequence to …` in the log (with `verbose` on) shows
+the channels your phone visits; set `channels` to one of them. Shared mode
+ignores this: it runs on its network's channel.
 
 `aggregation` (default `auto`) lets the phone send in aggregated bursts
 (A-MPDU) instead of one frame at a time, which is how Wi-Fi normally reaches
