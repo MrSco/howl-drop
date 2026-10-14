@@ -7,8 +7,8 @@
 #
 # DEST, when given, is where the folder is copied as well: the NUC's add-on
 # share, e.g. //homeassistant/addons/owldrop from Git Bash on Windows
-# (Samba share add-on), or /addons/owldrop from the SSH add-on. Files are
-# replaced; stale ones already in DEST are left alone.
+# (Samba share add-on), or /addons/owldrop from the SSH add-on. Its generated
+# omdrop-owl/ and owldrop/ are replaced whole; other files are overwritten.
 #
 # The image builds OWL and the radio helper from this checkout (pins,
 # patches/, tools/, userspace/), and owldrop-bridge from owldrop/, so what
@@ -39,6 +39,14 @@ echo "staged $OUT (add-on $version)"
 
 if [ -n "$DEST" ]; then
   mkdir -p "$DEST"
+  # omdrop-owl/ and owldrop/ are generated here whole, so they are replaced
+  # whole: a renamed patch left behind would be applied twice and break the
+  # OWL build. Only in a folder that is this add-on already.
+  if [ -e "$DEST/config.yaml" ] && ! grep -q '^slug: owldrop$' "$DEST/config.yaml"; then
+    echo "$DEST holds another add-on (no 'slug: owldrop'); not touching it"
+    exit 1
+  fi
+  rm -rf "$DEST/omdrop-owl" "$DEST/owldrop"
   cp -r "$OUT"/. "$DEST"/
   echo "copied to $DEST; in Home Assistant: Add-on store, menu, Check for updates, then update OwlDrop"
 fi
