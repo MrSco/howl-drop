@@ -44,20 +44,6 @@ DIAG = '''        except socket.timeout as e:
 '''
 
 
-# An upload whose archive is complete is answered without waiting for the
-# chunked terminator the iPhone sometimes never sends (howl_upload.py).
-IMPORT = 'import contacts  # noqa: E402  -- sibling module, found via the line above\n'
-IMPORT_NEW = IMPORT + 'import howl_upload  # noqa: E402  -- howl-drop: answer a complete archive\n'
-
-READ = '''                wire_bytes = read_request_body(
-                    self.rfile, self.headers, raw, receive_budget.byte_limit,
-                    check_disk=True, plan=plan, deadline=deadline)
-'''
-READ_NEW = '''                wire_bytes = howl_upload.read(
-                    self, raw, receive_budget.byte_limit, plan, deadline, tid,
-                    sys.modules[__name__])
-'''
-
 # The add-on's verbose option: DEBUG logs every request's headers, which is
 # most of the log during a transfer; run.sh passes INFO without verbose.
 LOGGING = "logging.basicConfig(level=logging.DEBUG, stream=sys.stdout,\n"
@@ -66,8 +52,6 @@ LOGGING_NEW = "logging.basicConfig(level=os.environ.get('OWLDROP_LOG_LEVEL', 'DE
 EDITS = [
     ('upload timeout handler', ANCHOR, DIAG),
     ('the logging setup', LOGGING, LOGGING_NEW),
-    ('sibling imports', IMPORT, IMPORT_NEW),
-    ("handle_upload's body read", READ, READ_NEW),
 ]
 
 
@@ -82,7 +66,7 @@ def main(path):
         s = s.replace(anchor, new)
     p.write_text(s)
     print(f'patched {path}: upload stalls log the kernel and TLS backlog; '
-          'a complete archive is answered without the chunked terminator')
+          'the log level follows OWLDROP_LOG_LEVEL')
     return 0
 
 

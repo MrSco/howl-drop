@@ -33,7 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-libarchive-c \
     && rm -rf /var/lib/apt/lists/*
 
-ARG OMDROP_PLUGIN_COMMIT=b2f9a537b150c26402c5daad8125fb7e61c214ec
+# 0.16.3. Since 0.16.2 the receiver stores an upload whose closing chunk
+# never comes (upstream pull requests 41 and 47).
+ARG OMDROP_PLUGIN_COMMIT=f612996ac5a8321438ca83fa0d84a8a678b6e427
 
 # OWL first, in its own layer: it is the slow compile, and it depends only on
 # pins and patches/. Scripts run through bash because a copy over the Samba
@@ -47,7 +49,7 @@ RUN bash /src/omdrop-owl/tools/build-owl.sh
 # share/certs. The receiver is /opt/omdrop-receiver/contacts.py, so the
 # certificate has to be /opt/share/certs/apple_root_ca.pem. The issuing
 # intermediates stay beside contacts.py, in apple-ca/.
-RUN git clone https://github.com/brentkearney/omdrop-plugin.git /tmp/omdrop-plugin \
+RUN git clone https://github.com/netmojo-systems/omdrop-plugin.git /tmp/omdrop-plugin \
     && git -C /tmp/omdrop-plugin checkout "$OMDROP_PLUGIN_COMMIT" \
     && mkdir -p /opt/omdrop-receiver /opt/share \
     && cp -a /tmp/omdrop-plugin/bin/. /opt/omdrop-receiver/ \
@@ -56,10 +58,8 @@ RUN git clone https://github.com/brentkearney/omdrop-plugin.git /tmp/omdrop-plug
     && test -s /opt/omdrop-receiver/apple-ca/apple-aai-ca.pem \
     && rm -rf /tmp/omdrop-plugin
 
-# A stalled upload logs where its unread bytes are, and an upload whose
-# archive is complete is answered without the chunked terminator the iPhone
-# sometimes never sends (patch_receiver.py, howl_upload.py).
-COPY howl_upload.py /opt/omdrop-receiver/howl_upload.py
+# A stalled upload logs where its unread bytes are, and the log level
+# follows the verbose option (patch_receiver.py).
 COPY patch_receiver.py /tmp/patch_receiver.py
 RUN python3 /tmp/patch_receiver.py /opt/omdrop-receiver/airdrop-serve.py \
     && rm /tmp/patch_receiver.py

@@ -23,7 +23,7 @@ transfers run. See [docs/hardware-notes.md](docs/hardware-notes.md).
 Install and options: [addon/README.md](addon/README.md).
 
 This is a fork of [t4t5/omdrop-owl](https://github.com/t4t5/omdrop-owl), the
-Linux radio backend for [omdrop](https://github.com/brentkearney/omdrop-plugin),
+Linux radio backend for [omdrop](https://github.com/netmojo-systems/omdrop-plugin),
 with the add-on, delivery, and the Windows listener added and its distribution
 packaging removed (upstream has it).
 
@@ -31,12 +31,12 @@ packaging removed (upstream has it).
 
 | Path | What |
 |---|---|
-| `addon/` | The add-on: `config.yaml`, `Dockerfile`, `run.sh`, and the Python it ships (`deliver.py`, `senders.py`, `howl_upload.py`, `patch_receiver.py`). |
+| `addon/` | The add-on: `config.yaml`, `Dockerfile`, `run.sh`, and the Python it ships (`deliver.py`, `senders.py`, `patch_receiver.py`). |
 | `owldrop/` | `owldrop.exe` (the Windows listener) and `owldrop-bridge` (the forwarder in the add-on), C++17, one CMake tree. |
 | `userspace/` | `omdrop-discoverable`, the radio helper, and `owl-profiles`, its per-driver table. |
 | `patches/`, `pins` | OWL's pinned upstream commit and the patches applied to it; `tools/build-owl.sh` applies them. |
 | `tools/` | `build-owl.sh` and `stage.sh` build the radio stack (inside the add-on image); `stage-addon.sh` assembles the add-on folder; `build-owldrop.ps1` builds `owldrop.exe`. |
-| `tests/` | The helper, the add-on's radio choice, delivery, the allow list and the upload reader, against command doubles and local sockets: no radio needed. |
+| `tests/` | The helper, the add-on's radio choice, delivery and the allow list, against command doubles and local sockets: no radio needed. |
 
 ## Develop
 

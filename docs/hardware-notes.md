@@ -20,10 +20,10 @@ and the add-on's defaults.
   `/Upload` body chunked, and now and then sends the whole archive, has every
   byte acknowledged, and then sends nothing at all: no `0\r\n\r\n`, no
   resend. A receiver that waits for the terminator answers 408 after its idle
-  timeout and the phone reports a failed transfer. A Mac answers once the
-  archive is complete; `addon/howl_upload.py` does the same (the DVZip stream
-  ends and the CPIO trailer is in). Seen on channels 6 and 149, with 1 MB and
-  3 MB photos.
+  timeout and the phone reports a failed transfer. Seen here on channels 6
+  and 149, with 1 MB and 3 MB photos, and upstream on an Intel card. Since
+  omdrop-plugin 0.16.2 the receiver stores an upload whose body is already a
+  complete archive after 3 s of quiet (its pull requests 41 and 47).
 - **Sharing a picture from a browser sends its address**, not the image,
   though the sheet says "PNG Image". `fetch_links` fetches it.
 

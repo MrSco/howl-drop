@@ -135,8 +135,9 @@ Turn it off and delete the folder when done.
 - `OWL: ... add peer <mac>` means OWL synced with a phone. None at all, with
   the share sheet open, means the radio never heard it: check the card's
   channel and distance.
-- `upload ...: archive complete ..., answering without it` is normal: the
-  iPhone sometimes never ends its upload, and the add-on answers once the
-  archive is whole ([hardware notes](../docs/hardware-notes.md)).
+- `upload ...: no closing chunk after 3 s, but the archive is complete;
+  storing it` is normal: the iPhone sometimes never ends its upload, and the
+  receiver answers once the archive is whole
+  ([hardware notes](../docs/hardware-notes.md)).
 - `Forward:` lines are the forwarder: `no OwlDrop PC answering` (files stay
   put), `forwarding to <PC>`, `sent file <name>`.
