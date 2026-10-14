@@ -1033,6 +1033,27 @@ neighbor_for() {  # IPV6 (as tcp6_8771 prints it)
 # summary every 30 s. No "add peer" means the radio never heard the iPhone.
 # A /Discover answered 200 with no tile means the answer did not reach the
 # phone in time; rtt, rto and retrans say whether that is loss on the air.
+# The helper's logs grow for as long as the window is open (OWL runs with
+# -v, a few lines a second while a phone is near). Past 20 MB each keeps its
+# last 2 MB. Every writer appends, so the next line lands after what stays.
+# The add-on's own output goes to Home Assistant's journal, which rotates.
+trim_logs() {
+    local f size
+    for f in /run/omdrop-owl/owl.log /run/omdrop-owl/announce.log /run/omdrop-owl/mdns.log /run/omdrop-owl/log; do
+        size=$(stat -c %s "$f" 2>/dev/null || echo 0)
+        [ "$size" -gt 20971520 ] || continue
+        tail -c 2097152 "$f" > "$f.keep" 2>/dev/null && cat "$f.keep" > "$f"
+        rm -f "$f.keep"
+        # watch_radio's read positions (bash scoping: it is the caller), so
+        # what stays is not printed again.
+        case "$f" in
+            */owl.log) seen=$(wc -l < "$f") ;;
+            */mdns.log) mseen=$(wc -l < "$f") ;;
+        esac
+        vsay "Trimmed ${f} from $((size / 1048576)) MB to its last 2 MB."
+    done
+}
+
 watch_radio() {
     local owl=/run/omdrop-owl/owl.log ann=/run/omdrop-owl/announce.log mdns=/run/omdrop-owl/mdns.log
     local seen=0 total tick=0 peers tcp last_tcp= fault= mseen=0 mtotal
@@ -1114,6 +1135,7 @@ watch_radio() {
             fi
             seen=$total
         fi
+        [ $((tick % 600)) -eq 0 ] && trim_logs
         if [ "$VERBOSE" = true ] && [ $((tick % 30)) -eq 0 ]; then
             peers=$(grep -c 'add peer' "$owl" 2>/dev/null)
             say "Radio check: ${peers:-0} peer adds in OWL's log so far ($total lines). Helper: $("$DISCOVERABLE" status 2>/dev/null)."
@@ -1261,6 +1283,11 @@ esac
 FETCH_MB=$(option fetch_max_mb)
 case "$FETCH_MB" in
     ""|*[!0-9]*) FETCH_MB=100 ;;
+esac
+# Files older than this many days are deleted from save_folder; 0 keeps them.
+KEEP_DAYS=$(option delete_after_days)
+case "$KEEP_DAYS" in
+    ""|*[!0-9]*) KEEP_DAYS=30 ;;
 esac
 CAPTURE=$(option debug_capture)
 case "$CAPTURE" in
@@ -1415,7 +1442,7 @@ fi
 fast_awdl_retransmit
 # Delivery first, so an item the receiver saves is moved as soon as it is
 # whole. Anything left in staging by an earlier run goes too.
-DELIVER_ARGS=(--staging "$STAGING" --dest "$INBOX" --max-mb "$FETCH_MB")
+DELIVER_ARGS=(--staging "$STAGING" --dest "$INBOX" --max-mb "$FETCH_MB" --keep-days "$KEEP_DAYS")
 [ "$FETCH" = true ] || DELIVER_ARGS+=(--no-fetch)
 python3 "$DELIVER" "${DELIVER_ARGS[@]}" 2>&1 | sed -u 's/^/Deliver: /' &
 DELIVER_PID=$!

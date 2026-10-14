@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 
 SPEC = importlib.util.spec_from_file_location(
@@ -130,6 +131,55 @@ class DeliverTests(unittest.TestCase):
             with self.assertRaises(deliver.Refused, msg=host):
                 deliver.public_host(host)
 
+
+
+class PurgeTests(unittest.TestCase):
+    """delete_after_days: files go that many days after they arrive."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dest = Path(self.tmp.name) / 'howldrop'
+        (self.dest / 'text').mkdir(parents=True)
+        (self.dest / 'debug').mkdir()
+        (self.dest / 'photo.jpg').write_bytes(b'jpg')
+        (self.dest / 'text' / 'note.txt').write_text('hi')
+        (self.dest / 'debug' / 'mon0.pcap0').write_bytes(b'pcap')
+        self.now = time.time()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def names(self):
+        return sorted(str(p.relative_to(self.dest)).replace(os.sep, '/') for p in self.dest.rglob('*'))
+
+    def test_nothing_goes_before_its_time(self):
+        self.assertEqual(deliver.purge(str(self.dest), 30, now=self.now + 29 * 86400), 0)
+        self.assertEqual(len(self.names()), 5)
+
+    def test_old_files_go_and_empty_folders_with_them(self):
+        self.assertEqual(deliver.purge(str(self.dest), 30, now=self.now + 31 * 86400), 3)
+        self.assertEqual(self.names(), ['text'])
+        self.assertTrue(self.dest.is_dir())
+
+    def test_age_counts_from_arrival_not_the_files_own_date(self):
+        os.utime(self.dest / 'photo.jpg', (1262304000, 1262304000))  # 2010
+        self.assertEqual(deliver.purge(str(self.dest), 30, now=self.now), 0)
+        self.assertIn('photo.jpg', self.names())
+
+    def test_zero_keeps_everything(self):
+        self.assertEqual(deliver.purge(str(self.dest), 0, now=self.now + 9999 * 86400), 0)
+        self.assertEqual(len(self.names()), 5)
+
+    def test_a_link_is_deleted_not_followed(self):
+        outside = Path(self.tmp.name) / 'outside.txt'
+        outside.write_text('keep')
+        try:
+            (self.dest / 'link').symlink_to(outside)
+        except OSError:
+            self.skipTest('cannot create a symbolic link here')
+        deliver.purge(str(self.dest), 30, now=self.now + 31 * 86400)
+        self.assertTrue(outside.exists())
+        self.assertNotIn('link', self.names())
 
 if __name__ == '__main__':
     unittest.main()

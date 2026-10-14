@@ -639,7 +639,9 @@ cmd_start() {
   if [ "$secs" -gt 0 ]; then echo $(( $(date +%s) + secs )) > "$RUN/until"; else echo 0 > "$RUN/until"; fi
   # 9>&-: children must not inherit the lock, or the long-lived ones would hold
   # it for the whole window and the next `stop` would wait forever.
-  setsid "$OWL_BIN" -i "$MON" -c "$chan" -N -S "$strategy" "${owl_extra[@]}" -v > "$OWL_LOG" 2>&1 < /dev/null 9>&- &
+  # Appended to, so the Home Assistant add-on can trim it while OWL runs.
+  : > "$OWL_LOG"
+  setsid "$OWL_BIN" -i "$MON" -c "$chan" -N -S "$strategy" "${owl_extra[@]}" -v >> "$OWL_LOG" 2>&1 < /dev/null 9>&- &
   echo $! > "$RUN/owl.pid"
   # 50 ms polls: OWL creates it in well under a second, and 0.5 s steps cost up to 0.5 s.
   for _ in $(seq 200); do ip link show "$IF" >/dev/null 2>&1 && break; sleep 0.05; done

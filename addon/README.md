@@ -70,6 +70,14 @@ announces in the first 10 s, so the sheet shows that PC's name.
 `save_folder` (default `/share/howldrop`) is where files land, and shared
 text as UTF-8 files in `text/` under it.
 
+`delete_after_days` (default 30) deletes files from `save_folder` that many
+days after they arrived there, checked hourly, so the folder doesn't fill
+up. `0` keeps everything. Age counts from arrival, not from the file's own
+date: a photo taken years ago and AirDropped today stays 30 days, and so
+does a file a PC copies into the folder. This covers everything under
+`save_folder`, including `text/` and `debug/`. Move anything you want to
+keep somewhere else.
+
 `senders` (default empty: anyone nearby can send) restricts who may send,
 like a Mac set to Contacts Only. List the phone numbers and Apple ID email
 addresses of the people allowed, one per entry (one entry with commas also
@@ -127,6 +135,10 @@ the AirDrop TCP to `save_folder/debug` (a ring: up to 160 MB and 80 MB).
 Turn it off and delete the folder when done.
 
 ## Reading the log
+
+The add-on's log is Home Assistant's: it goes to the system journal, which
+Home Assistant OS rotates. The radio's own logs inside the add-on are cut
+back to their last 2 MB once one passes 20 MB.
 
 - `Interface <name>: driver ...` and `Profile: ...` say which card runs and
   how.

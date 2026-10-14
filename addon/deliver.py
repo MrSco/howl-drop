@@ -212,11 +212,52 @@ def staged_files(staging):
             yield os.path.join(root, name)
 
 
-def run(staging, dest, fetch_links, max_bytes, interval=0.5, once=False, allow_private=False):
-    """Deliver each staging file once its size has held for two scans."""
+def purge(dest, days, now=None):
+    """Delete files under dest that arrived more than `days` days ago.
+
+    A file's age counts from when it arrived in dest: the later of its
+    modification and status-change times. A photo the phone took years ago,
+    or a file a PC copies in keeping its old date, is new here; a move
+    (deliver's rename) or a copy sets the status-change time. Symbolic links
+    are deleted, never followed. Directories left empty go too, except dest
+    and its text/. Returns how many files were deleted.
+    """
+    if days <= 0:
+        return 0
+    cutoff = (time.time() if now is None else now) - days * 86400
+    removed = 0
+    for root, dirs, files in os.walk(dest, topdown=False):
+        for name in files:
+            path = os.path.join(root, name)
+            try:
+                st = os.lstat(path)
+                if max(st.st_mtime, st.st_ctime) < cutoff:
+                    os.unlink(path)
+                    removed += 1
+            except OSError:
+                continue
+        if os.path.normpath(root) in (os.path.normpath(dest), os.path.join(os.path.normpath(dest), 'text')):
+            continue
+        try:
+            os.rmdir(root)
+        except OSError:
+            pass
+    return removed
+
+
+def run(staging, dest, fetch_links, max_bytes, interval=0.5, once=False, allow_private=False,
+        keep_days=0, purge_every=3600):
+    """Deliver each staging file once its size has held for two scans, and
+    every purge_every seconds delete what has been in dest for keep_days."""
     os.makedirs(dest, exist_ok=True)
     sizes = {}
+    next_purge = 0
     while True:
+        if keep_days > 0 and time.monotonic() >= next_purge:
+            next_purge = time.monotonic() + purge_every
+            gone = purge(dest, keep_days)
+            if gone:
+                say(f'deleted {gone} file(s) older than {keep_days} days from {dest}')
         seen = set()
         for path in staged_files(staging):
             seen.add(path)
@@ -245,10 +286,14 @@ def main():
     ap.add_argument('--dest', required=True)
     ap.add_argument('--no-fetch', action='store_true', help='leave links as .url shortcuts')
     ap.add_argument('--max-mb', type=int, default=100, help='largest linked file fetched (MB)')
+    ap.add_argument('--keep-days', type=int, default=0,
+                    help='delete files that have been in DEST this many days (0: keep)')
     a = ap.parse_args()
     say(f'delivering {a.staging} to {a.dest}; links to files are '
         f'{"left as shortcuts" if a.no_fetch else f"fetched (public hosts only, up to {a.max_mb} MB)"}')
-    run(a.staging, a.dest, not a.no_fetch, a.max_mb * 1024 * 1024)
+    say(f'files are deleted from {a.dest} {a.keep_days} days after they arrive' if a.keep_days > 0
+        else f'files in {a.dest} are kept until you delete them')
+    run(a.staging, a.dest, not a.no_fetch, a.max_mb * 1024 * 1024, keep_days=a.keep_days)
 
 
 if __name__ == '__main__':
