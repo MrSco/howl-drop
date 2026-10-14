@@ -1319,17 +1319,12 @@ if [ "${#PC_NAME}" -gt 63 ]; then
     say "The PC name is longer than 63 characters. The AirDrop sheet uses the first 63."
     PC_NAME=${PC_NAME:0:63}
 fi
-# The picture on the sheet: the phone draws it from the Mac model we report
-# (ReceiverModelName). The contact photo a Mac signed in to an Apple ID can
-# show needs an Apple-issued identity, which this add-on doesn't have.
-case "$(option device)" in
-    imac) MODEL=iMac21,1 ;;
-    mac-mini) MODEL=Macmini9,1 ;;
-    mac-studio) MODEL=Mac13,1 ;;
-    mac-pro) MODEL=MacPro7,1 ;;
-    *) MODEL=MacBookPro18,3 ;;
-esac
-say "The iPhone share sheet will show: ${PC_NAME}, as a Mac (${MODEL})."
+# The Mac model we report (ReceiverModelName). An iPhone draws a plain contact
+# silhouette under Other Devices whatever it is: Macmini9,1 looked the same as
+# MacBookPro18,3 (iOS, 2026-10-14). A contact photo needs an Apple-issued
+# identity, which this add-on doesn't have.
+MODEL=MacBookPro18,3
+say "The iPhone share sheet will show: ${PC_NAME}"
 
 mkdir -p "$INBOX/text" "$STAGING/text" /data/omdrop/keys /run/omdrop-owl || {
     say "Could not create ${INBOX}."
