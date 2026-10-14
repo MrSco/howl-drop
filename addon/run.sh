@@ -1319,7 +1319,17 @@ if [ "${#PC_NAME}" -gt 63 ]; then
     say "The PC name is longer than 63 characters. The AirDrop sheet uses the first 63."
     PC_NAME=${PC_NAME:0:63}
 fi
-say "The iPhone share sheet will show: ${PC_NAME}"
+# The picture on the sheet: the phone draws it from the Mac model we report
+# (ReceiverModelName). The contact photo a Mac signed in to an Apple ID can
+# show needs an Apple-issued identity, which this add-on doesn't have.
+case "$(option device)" in
+    imac) MODEL=iMac21,1 ;;
+    mac-mini) MODEL=Macmini9,1 ;;
+    mac-studio) MODEL=Mac13,1 ;;
+    mac-pro) MODEL=MacPro7,1 ;;
+    *) MODEL=MacBookPro18,3 ;;
+esac
+say "The iPhone share sheet will show: ${PC_NAME}, as a Mac (${MODEL})."
 
 mkdir -p "$INBOX/text" "$STAGING/text" /data/omdrop/keys /run/omdrop-owl || {
     say "Could not create ${INBOX}."
@@ -1459,7 +1469,7 @@ vsay "AirDrop receiver on awdl0, saving into ${STAGING}; finished items move to 
 RECEIVER_LOG=INFO
 [ "$VERBOSE" != true ] || RECEIVER_LOG=DEBUG
 HOWLDROP_LOG_LEVEL=$RECEIVER_LOG PYTHONWARNINGS=ignore::DeprecationWarning \
-python3 "$RECEIVER" --iface awdl0 --port 8771 --name "$PC_NAME" --model MacBookPro18,3 \
+python3 "$RECEIVER" --iface awdl0 --port 8771 --name "$PC_NAME" --model "$MODEL" \
     --outdir "$STAGING" --keys "${HOWLDROP_KEYS_DIR:-/data/omdrop}" &
 SERVE_PID=$!
 sleep 2

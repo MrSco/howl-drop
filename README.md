@@ -37,7 +37,7 @@ packaging removed (upstream has it).
 | `howldrop/` | `howldrop.exe` (the Windows listener) and `howldrop-bridge` (the forwarder in the add-on), C++17, one CMake tree. |
 | `userspace/` | `omdrop-discoverable`, the radio helper, and `owl-profiles`, its per-driver table. |
 | `patches/`, `pins` | OWL's pinned upstream commit and the patches applied to it; `tools/build-owl.sh` applies them. |
-| `tools/` | `build-owl.sh` and `stage.sh` build the radio stack (inside the add-on image); `stage-addon.sh` assembles the add-on folder; `build-howldrop.ps1` builds `howldrop.exe`. |
+| `tools/` | `build-owl.sh` and `stage.sh` build the radio stack (inside the add-on image); `stage-addon.sh` assembles the add-on folder; `build-howldrop.ps1` builds `howldrop.exe`; `make-icons.py` draws the add-on's icon and logo. |
 | `tests/` | The helper, the add-on's radio choice, delivery and the allow list, against command doubles and local sockets: no radio needed. |
 
 ## Develop

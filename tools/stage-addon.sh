@@ -21,7 +21,7 @@ DEST=${1:-}
 
 rm -rf "$OUT"
 mkdir -p "$OUT/omdrop-owl/tools" "$OUT/howldrop"
-cp "$ROOT"/addon/config.yaml "$ROOT"/addon/Dockerfile "$ROOT"/addon/run.sh "$ROOT"/addon/deliver.py "$ROOT"/addon/senders.py "$ROOT"/addon/patch_receiver.py "$ROOT"/addon/README.md "$OUT/"
+cp "$ROOT"/addon/config.yaml "$ROOT"/addon/Dockerfile "$ROOT"/addon/run.sh "$ROOT"/addon/deliver.py "$ROOT"/addon/senders.py "$ROOT"/addon/patch_receiver.py "$ROOT"/addon/README.md "$ROOT"/addon/icon.png "$ROOT"/addon/logo.png "$OUT/"
 cp -r "$ROOT/pins" "$ROOT/patches" "$ROOT/userspace" "$OUT/omdrop-owl/"
 cp "$ROOT/tools/build-owl.sh" "$ROOT/tools/stage.sh" "$OUT/omdrop-owl/tools/"
 cp -r "$ROOT/howldrop/CMakeLists.txt" "$ROOT/howldrop/src" "$ROOT/howldrop/tests" "$OUT/howldrop/"

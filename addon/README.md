@@ -64,7 +64,14 @@ add-on when you want AirDrop. Stopping it gives the card back.
 Every option can stay at its default.
 
 `pc_name` (default `HowlDrop`) is the name on the share sheet, at most 63
-characters. Empty with `forward_to_pc` on: the name a running `howldrop.exe`
+characters.
+
+`device` (default `macbook`) is the Mac the add-on says it is: `macbook`,
+`imac`, `mac-mini`, `mac-studio` or `mac-pro`. The iPhone draws the
+picture on the sheet from it. A contact photo, which a Mac signed in to an
+Apple ID can show, isn't possible: the phone takes it from its own Contacts,
+and only for a receiver with an Apple-issued AirDrop identity, which this
+add-on doesn't have. Senders list it under Other Devices. Empty with `forward_to_pc` on: the name a running `howldrop.exe`
 announces in the first 10 s, so the sheet shows that PC's name.
 
 `save_folder` (default `/share/howldrop`) is where files land, and shared
