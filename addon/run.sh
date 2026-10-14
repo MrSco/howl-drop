@@ -1047,6 +1047,7 @@ stop_stack() {
     if [ -n "$DELIVER_PID" ]; then kill "$DELIVER_PID" 2>/dev/null || true; fi
     if [ -n "$TCPFLOW_PID" ]; then kill "$TCPFLOW_PID" 2>/dev/null || true; fi
     pkill -f "tcpdump -i awdl0" 2>/dev/null || true
+    pkill -f "tcpdump -i mon0 -s 256" 2>/dev/null || true
     pkill -f "$DELIVER" 2>/dev/null || true
     if [ -n "$SERVE_PID" ]; then kill "$SERVE_PID" 2>/dev/null || true; fi
     if [ -n "$BLE_PID" ]; then kill "$BLE_PID" 2>/dev/null || true; fi
@@ -1155,6 +1156,11 @@ esac
 FETCH_MB=$(option fetch_max_mb)
 case "$FETCH_MB" in
     ""|*[!0-9]*) FETCH_MB=100 ;;
+esac
+CAPTURE=$(option debug_capture)
+case "$CAPTURE" in
+    True|true|1|yes) CAPTURE=true ;;
+    *) CAPTURE=false ;;
 esac
 FORWARD=$(option forward_to_pc)
 case "$FORWARD" in
@@ -1357,6 +1363,18 @@ else
 fi
 
 say "Window is up. Stop this add-on to leave the cell and return ${IFACE} to a station."
+# debug_capture: what the radio and the AirDrop TCP carried, as pcap files in
+# save_folder/debug, a new pair every minute, ten minutes at most. mon0 keeps
+# each frame's first 256 bytes (radiotap, 802.11, LLC, IPv6, TCP headers), so
+# a stalled upload can be followed frame by frame: two photo uploads stopped
+# 3 KB from the end with every byte ACKed and the phone still sending
+# (2026-10-14).
+if [ "$CAPTURE" = true ]; then
+    mkdir -p "$INBOX/debug"
+    tcpdump -i mon0 -s 256 -G 60 -W 10 -w "$INBOX/debug/mon0-%H%M%S.pcap" >/dev/null 2>&1 &
+    tcpdump -i awdl0 -s 256 -G 60 -W 10 -w "$INBOX/debug/awdl0-%H%M%S.pcap" 'tcp port 8771' >/dev/null 2>&1 &
+    say "debug_capture: writing pcap files to ${INBOX}/debug (mon0 and awdl0, one per minute, ten minutes)."
+fi
 frames_heard 3
 tcp_flow &
 TCPFLOW_PID=$!
