@@ -641,6 +641,10 @@ cmd_start() {
   # patches/owl-01-tx-rate.patch), e.g. 24 or mcs3; OWL's default is legacy 12.
   tx_rate=$(knob tx-rate)
   [ -n "$tx_rate" ] && owl_extra+=(-R "$tx_rate")
+  # $CONF/aggregation 1: accept the phone's Block Ack session requests (owl
+  # -A, patches/owl-10-addba-accept.patch), so it may send A-MPDUs. Whether
+  # the card then answers each burst with a Block Ack is up to its hardware.
+  [ "$(knob aggregation)" = 1 ] && owl_extra+=(-A)
 
   # mt76_pm: runtime PM off for the window, restored by stop.
   mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug 2>/dev/null
