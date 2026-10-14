@@ -406,9 +406,8 @@ bring_up() {
 
 freq_name() {
     case "$1" in
-        5220) printf '%s\n' "5220 MHz (channel 44)" ;;
-        5745) printf '%s\n' "5745 MHz (channel 149)" ;;
         24[1-7][27]) printf '%s\n' "$1 MHz (channel $(( ($1 - 2407) / 5 )))" ;;
+        5[0-9][0-9][05]) printf '%s\n' "$1 MHz (channel $(( ($1 - 5000) / 5 )))" ;;
         *) printf '%s\n' "$1 MHz" ;;
     esac
 }
@@ -420,11 +419,12 @@ want_freqs() {
     local c out=
     for c in $1; do
         case "$c" in
+            36) out="$out 5180" ;;
             44) out="$out 5220" ;;
             149) out="$out 5745" ;;
             # Any 2.4 GHz channel (owl-11): the phone's own 2.4 GHz network's.
             [1-9]|1[0-3]) out="$out $((2407 + 5 * c))" ;;
-            *) say "Ignoring channel ${c}: use 1-13 (2.4 GHz), 44 or 149." >&2 ;;
+            *) say "Ignoring channel ${c}: use 1-13 (2.4 GHz), 36, 44 or 149." >&2 ;;
         esac
     done
     printf '%s\n' "${out# }"
@@ -785,6 +785,46 @@ frames_heard() {  # SECS
     say "AWDL senders: ${senders:-none with a source address}."
 }
 
+# Where the phone is. Before the window, listen on each of FREQS for a few
+# seconds and count AWDL frames from anyone but us; print FREQS back, the
+# busiest first, ties in the order given. Receive only, with the station as
+# a single passive monitor, which tunes this stick (an active monitor alone
+# does not, pull request 13). An iPhone uses AWDL most while its share sheet
+# is open. 0.5.1 on 44 heard only its own frames with the phone on 5 GHz
+# Wi-Fi (2026-10-14): its channels are not fixed. Messages go to stderr, so
+# the caller's $(...) gets only the frequencies.
+survey_freqs() {  # IFACE FREQ...
+    local dev=$1 f cap n senders own heard scores=
+    shift
+    own=$(cat "/sys/class/net/$dev/address" 2>/dev/null)
+    ip link set "$dev" down 2>/dev/null
+    if ! iw dev "$dev" set type monitor 2>/dev/null; then
+        say "Survey: ${dev} would not become a monitor; keeping the default order." >&2
+        printf '%s\n' "$*"
+        return 0
+    fi
+    iw dev "$dev" set monitor none 2>/dev/null
+    ip link set "$dev" up 2>/dev/null
+    for f in "$@"; do
+        if ! iw dev "$dev" set freq "$f" HT20 2>/dev/null; then
+            say "Survey: $(freq_name "$f") would not tune." >&2
+            scores="${scores}0 $f"$'\n'
+            continue
+        fi
+        sleep 0.5
+        cap=$(timeout 4 tcpdump -i "$dev" -n -e -l 2>/dev/null)
+        senders=$(printf '%s\n' "$cap" | grep -i "$BSSID" | grep -oiE 'SA:[0-9a-f:]{17}' | cut -c4- \
+            | tr 'A-F' 'a-f' | grep -vx "${own:-none}" | sort | uniq -c | sort -rn)
+        n=$(printf '%s\n' "$senders" | awk 'NF { s += $1 } END { print s + 0 }')
+        heard=$(printf '%s\n' "$senders" | head -n 3 | awk 'NF { printf "%s%s x%s", (NR > 1 ? ", " : ""), $2, $1 }')
+        say "Survey: $(freq_name "$f"): $(printf '%s\n' "$cap" | grep -c 'MHz') frames, ${n} AWDL from others${heard:+ (${heard})}." >&2
+        scores="${scores}${n} $f"$'\n'
+    done
+    ip link set "$dev" down 2>/dev/null
+    iw dev "$dev" set type managed 2>/dev/null
+    printf '%s' "$scores" | awk 'NF' | sort -s -k1,1nr | awk '{ print $2 }' | paste -sd' ' -
+}
+
 kernel_radio_log() {
     local pattern='iwlwifi|iwlmvm|ieee80211|mac80211|cfg80211|wlp|mon0|awdl'
     local out
@@ -1030,10 +1070,14 @@ esac
 PC_HOST=$(option pc_host)
 PC_NAME=$(option pc_name)
 CHANNELS=$(option channels)
-# Empty: the 8260 holds only 6; the stick goes where the phone mostly is.
-if [ -z "${CHANNELS// /}" ]; then
-    if [ "$RADIO_KIND" = usb ]; then CHANNELS="44 149 6"; else CHANNELS=6; fi
-fi
+# Empty or auto: the 8260 holds only 6; the stick surveys 44, 149, 36 and 6
+# for the phone before the window, and starts where it heard it most.
+SURVEY=0
+case "${CHANNELS// /}" in
+    ""|auto)
+        if [ "$RADIO_KIND" = usb ]; then CHANNELS="44 149 36 6"; SURVEY=1; else CHANNELS=6; fi
+        ;;
+esac
 WANT_FREQS=$(want_freqs "$CHANNELS")
 if [ -z "$WANT_FREQS" ]; then
     say "The channels option has no channel this add-on can use. Using channel 6."
@@ -1122,12 +1166,17 @@ if [ "$RADIO_KIND" = intel ]; then
     esac
     echo 1 > /etc/omdrop/keep-cell
 else
+    if [ "$SURVEY" = 1 ]; then
+        say "Surveying $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g') for the phone, about 5 s each. Keep the iPhone's share sheet open."
+        SURVEYED=$(survey_freqs "$IFACE" $WANT_FREQS)
+        [ -n "$SURVEYED" ] && WANT_FREQS=$SURVEYED
+        say "Channels to try after the survey, in order: $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g')."
+    fi
     # The helper makes the active monitor itself and tunes it to the first of
     # these the stick may transmit on (exclusive_monitor_up).
     for f in $WANT_FREQS; do
         case "$f" in
-            5220) printf '44 ' ;;
-            5745) printf '149 ' ;;
+            5[0-9][0-9][05]) printf '%s ' $(( (f - 5000) / 5 )) ;;
             *) printf '%s ' $(( (f - 2407) / 5 )) ;;
         esac
     done > /etc/omdrop/exclusive-channels

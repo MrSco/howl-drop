@@ -142,7 +142,7 @@ tx_channels() {  # PHY
   [ -n "${order//[[:space:]]/}" ] || order="44 149 6"
   for c in $order; do
     # 1-13: any 2.4 GHz channel (owl-11), for a phone on a 2.4 GHz network.
-    case "$c" in 44) c=5220 ;; 149) c=5745 ;; [1-9]|1[0-3]) c=$((2407 + 5 * c)) ;; *) continue ;; esac
+    case "$c" in 36) c=5180 ;; 44) c=5220 ;; 149) c=5745 ;; [1-9]|1[0-3]) c=$((2407 + 5 * c)) ;; *) continue ;; esac
     grep -qx "$c" <<< "$ok" && echo "$c"
   done
 }
@@ -537,7 +537,7 @@ cmd_start() {
   fi
   chan=
   case "$ap" in
-    2437) chan=6 ;; 5220) chan=44 ;; 5745) chan=149 ;;
+    2437) chan=6 ;; 5180) chan=36 ;; 5220) chan=44 ;; 5745) chan=149 ;;
   esac
   # An exclusive cell may sit on any 2.4 GHz channel ($CONF/exclusive-channels):
   # an iPhone on a 2.4 GHz network lists that network's channel in its
