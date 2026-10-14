@@ -71,6 +71,7 @@ RUN cmake -S /src/owldrop -B /tmp/owldrop-build -DCMAKE_BUILD_TYPE=Release \
     && install -m 755 /tmp/owldrop-build/owldrop-bridge /usr/local/bin/owldrop-bridge \
     && rm -rf /tmp/owldrop-build
 
+COPY deliver.py /deliver.py
 COPY run.sh /run.sh
 RUN chmod 755 /run.sh
 

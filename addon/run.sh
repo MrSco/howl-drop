@@ -13,12 +13,17 @@ BRIDGE=/usr/local/bin/owldrop-bridge
 # Where the phone's files and text land: save_folder, in Home Assistant's
 # share folder by default, which its Samba share shows to every PC.
 INBOX=/share/owldrop
+# The receiver writes here; deliver.py moves each finished item to INBOX,
+# fetching the file behind a link when the link points at one.
+STAGING=/data/staging
+DELIVER=/deliver.py
 BSSID=00:25:00:ff:94:73
 IFACE=
 
 BLE_PID=
 SERVE_PID=
 BRIDGE_PID=
+DELIVER_PID=
 MON_IF=mon0
 WATCH_PID=
 RADIO=0
@@ -990,6 +995,8 @@ stop_stack() {
     if [ -n "$WATCH_PID" ]; then kill "$WATCH_PID" 2>/dev/null || true; fi
     if [ -n "$BRIDGE_PID" ]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
     pkill -f "$BRIDGE watch" 2>/dev/null || true
+    if [ -n "$DELIVER_PID" ]; then kill "$DELIVER_PID" 2>/dev/null || true; fi
+    pkill -f "$DELIVER" 2>/dev/null || true
     if [ -n "$SERVE_PID" ]; then kill "$SERVE_PID" 2>/dev/null || true; fi
     if [ -n "$BLE_PID" ]; then kill "$BLE_PID" 2>/dev/null || true; fi
     if [ "$RADIO" = 1 ]; then
@@ -1089,6 +1096,15 @@ case "${SAVE_FOLDER:-/share/owldrop}" in
     /*) INBOX=${SAVE_FOLDER:-/share/owldrop} ;;
     *) say "save_folder must be an absolute path such as /share/owldrop; using /share/owldrop." ;;
 esac
+FETCH=$(option fetch_links)
+case "$FETCH" in
+    False|false|0|no) FETCH=false ;;
+    *) FETCH=true ;;
+esac
+FETCH_MB=$(option fetch_max_mb)
+case "$FETCH_MB" in
+    ""|*[!0-9]*) FETCH_MB=100 ;;
+esac
 FORWARD=$(option forward_to_pc)
 case "$FORWARD" in
     False|false|0|no) FORWARD=false ;;
@@ -1114,7 +1130,7 @@ if [ "${#PC_NAME}" -gt 63 ]; then
 fi
 say "The iPhone share sheet will show: ${PC_NAME}"
 
-mkdir -p /etc/omdrop "$INBOX/text" /data/omdrop/keys /run/omdrop-owl || {
+mkdir -p /etc/omdrop "$INBOX/text" "$STAGING/text" /data/omdrop/keys /run/omdrop-owl || {
     say "Could not create ${INBOX}."
     exit 1
 }
@@ -1245,9 +1261,15 @@ if ! ensure_identity || ! ensure_awdl_ipv6; then
     exit 1
 fi
 fast_awdl_retransmit
-say "AirDrop receiver on awdl0, saving into ${INBOX}."
+# Delivery first, so an item the receiver saves is moved as soon as it is
+# whole. Anything left in staging by an earlier run goes too.
+DELIVER_ARGS=(--staging "$STAGING" --dest "$INBOX" --max-mb "$FETCH_MB")
+[ "$FETCH" = true ] || DELIVER_ARGS+=(--no-fetch)
+python3 "$DELIVER" "${DELIVER_ARGS[@]}" 2>&1 | sed -u 's/^/Deliver: /' &
+DELIVER_PID=$!
+say "AirDrop receiver on awdl0, saving into ${STAGING}; finished items move to ${INBOX}."
 python3 "$RECEIVER" --iface awdl0 --port 8771 --name "$PC_NAME" --model MacBookPro18,3 \
-    --outdir "$INBOX" --keys "${OWLDROP_KEYS_DIR:-/data/omdrop}" &
+    --outdir "$STAGING" --keys "${OWLDROP_KEYS_DIR:-/data/omdrop}" &
 SERVE_PID=$!
 sleep 2
 if ! kill -0 "$SERVE_PID" 2>/dev/null; then
