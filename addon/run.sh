@@ -17,6 +17,9 @@ INBOX=/share/owldrop
 # fetching the file behind a link when the link points at one.
 STAGING=/data/staging
 DELIVER=/deliver.py
+# Who may send: the senders option, as the receiver's Contacts Only files.
+SENDERS=/senders.py
+SENDERS_CONFIG=${XDG_CONFIG_HOME:-${HOME:-/root}/.config}/omdrop
 BSSID=00:25:00:ff:94:73
 IFACE=
 
@@ -1329,6 +1332,13 @@ DELIVER_ARGS=(--staging "$STAGING" --dest "$INBOX" --max-mb "$FETCH_MB")
 [ "$FETCH" = true ] || DELIVER_ARGS+=(--no-fetch)
 python3 "$DELIVER" "${DELIVER_ARGS[@]}" 2>&1 | sed -u 's/^/Deliver: /' &
 DELIVER_PID=$!
+# Before the receiver starts: it reads visibility once, when it builds its
+# TLS context. A failure here stops the add-on rather than open it to everyone.
+if ! python3 "$SENDERS" --config "$SENDERS_CONFIG"; then
+    say "Could not apply the senders option."
+    stop_stack
+    exit 1
+fi
 say "AirDrop receiver on awdl0, saving into ${STAGING}; finished items move to ${INBOX}."
 python3 "$RECEIVER" --iface awdl0 --port 8771 --name "$PC_NAME" --model MacBookPro18,3 \
     --outdir "$STAGING" --keys "${OWLDROP_KEYS_DIR:-/data/omdrop}" &

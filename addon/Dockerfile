@@ -77,6 +77,7 @@ RUN cmake -S /src/owldrop -B /tmp/owldrop-build -DCMAKE_BUILD_TYPE=Release \
     && rm -rf /tmp/owldrop-build
 
 COPY deliver.py /deliver.py
+COPY senders.py /senders.py
 COPY run.sh /run.sh
 RUN chmod 755 /run.sh
 

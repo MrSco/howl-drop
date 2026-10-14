@@ -1,5 +1,5 @@
 name: OwlDrop
-version: "0.6.5"
+version: "0.7.0"
 slug: owldrop
 description: AirDrop on an MT7612U USB stick or the NUC's Intel Wireless-AC 8260, forwarded over Ethernet to owldrop.exe
 url: https://github.com/MrSco/howl-drop
@@ -33,6 +33,7 @@ options:
   channels: ""
   unicast_copies: 3
   heard_window_tu: 16
+  senders: []
 schema:
   pc_host: str
   pc_name: str
@@ -45,4 +46,6 @@ schema:
   channels: "str?"
   unicast_copies: "int(1,5)?"
   heard_window_tu: "int(0,64)?"
+  senders:
+    - "str?"
 panel_icon: "mdi:wifi"
