@@ -33,8 +33,8 @@ configuration:
     name: Channels
     description: Channels to try, in order, from 6, 36, 44 and 149. Empty picks for the card (5 GHz first where it can transmit there).
   aggregation:
-    name: Aggregation (experimental)
-    description: Let the phone send in aggregated bursts, which can be several times faster. Depends on the Wi-Fi card; if transfers fail with it on, turn it off.
+    name: Aggregation
+    description: Let the phone send in aggregated bursts, several times faster. auto turns it on for the MT7612U, where it's tested, and off for other cards; on and off force it. If transfers fail with it on, turn it off.
   verbose:
     name: Verbose log
     description: Log the radio in detail, for troubleshooting.
