@@ -1,5 +1,5 @@
 name: OwlDrop
-version: "0.6.3"
+version: "0.6.4"
 slug: owldrop
 description: AirDrop on an MT7612U USB stick or the NUC's Intel Wireless-AC 8260, forwarded over Ethernet to owldrop.exe
 url: https://github.com/MrSco/howl-drop

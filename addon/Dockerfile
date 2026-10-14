@@ -56,6 +56,11 @@ RUN git clone https://github.com/brentkearney/omdrop-plugin.git /tmp/omdrop-plug
     && test -s /opt/omdrop-receiver/apple-ca/apple-aai-ca.pem \
     && rm -rf /tmp/omdrop-plugin
 
+# A stalled upload logs where its unread bytes are (patch_receiver.py).
+COPY patch_receiver.py /tmp/patch_receiver.py
+RUN python3 /tmp/patch_receiver.py /opt/omdrop-receiver/airdrop-serve.py \
+    && rm /tmp/patch_receiver.py
+
 # The helper and its profiles, with omdrop-awdl's radio-independent tools,
 # laid out as /usr/lib/omdrop.
 COPY omdrop-owl/tools/stage.sh /src/omdrop-owl/tools/stage.sh
