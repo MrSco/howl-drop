@@ -71,7 +71,8 @@ announces in the first 10 s, so the sheet shows that PC's name.
 text as UTF-8 files in `text/` under it.
 
 `delete_after_days` (default 30) deletes files from `save_folder` that many
-days after they arrived there, checked hourly, so the folder doesn't fill
+days after they arrived there, checked when the add-on starts and then
+once a day, so the folder doesn't fill
 up. `0` keeps everything. Age counts from arrival, not from the file's own
 date: a photo taken years ago and AirDropped today stays 30 days, and so
 does a file a PC copies into the folder. This covers everything under

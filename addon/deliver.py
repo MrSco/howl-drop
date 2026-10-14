@@ -246,9 +246,10 @@ def purge(dest, days, now=None):
 
 
 def run(staging, dest, fetch_links, max_bytes, interval=0.5, once=False, allow_private=False,
-        keep_days=0, purge_every=3600):
-    """Deliver each staging file once its size has held for two scans, and
-    every purge_every seconds delete what has been in dest for keep_days."""
+        keep_days=0, purge_every=86400):
+    """Deliver each staging file once its size has held for two scans, and at
+    start and every purge_every seconds (a day) delete what has been in dest
+    for keep_days."""
     os.makedirs(dest, exist_ok=True)
     sizes = {}
     next_purge = 0
