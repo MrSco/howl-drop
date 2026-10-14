@@ -1362,7 +1362,18 @@ if [ "$BACKEND" != shared ]; then
     release_supplicant
 fi
 
-rm -f /etc/omdrop/exclusive-channels /etc/omdrop/keep-cell /etc/omdrop/tx-rate
+rm -f /etc/omdrop/exclusive-channels /etc/omdrop/keep-cell /etc/omdrop/tx-rate /etc/omdrop/aggregation
+# aggregation (experimental): accept the phone's Block Ack session requests,
+# so it may send its frames in aggregated bursts (A-MPDU) rather than one by
+# one. An iPhone asked 61 times in a 30 MB upload and, unanswered, sent all
+# 21,941 frames singly (2026-10-14). Whether the card acknowledges a burst
+# with a Block Ack is up to its hardware: if it can't, transfers fail.
+case "$(option aggregation)" in
+    True|true|1|yes)
+        echo 1 > /etc/omdrop/aggregation
+        say "aggregation is on (experimental): the phone may send aggregated bursts. If transfers fail, turn it off."
+        ;;
+esac
 if [ "$BACKEND" = ibss ]; then
     if ! prepare_cell || ! ready_cell; then
         "$DISCOVERABLE" stop >/dev/null 2>&1 || true

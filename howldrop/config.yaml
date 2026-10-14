@@ -1,5 +1,5 @@
 name: HowlDrop
-version: "0.9.14"
+version: "0.9.15"
 image: "ghcr.io/mrsco/howldrop-{arch}"
 slug: howldrop
 description: AirDrop from iPhones to Home Assistant OS. Files and text land in the share folder; any Wi-Fi card omdrop-owl supports.
@@ -35,6 +35,7 @@ options:
   interface: auto
   allow_untested: false
   channels: ""
+  aggregation: false
   verbose: false
   debug_capture: false
 schema:
@@ -50,6 +51,7 @@ schema:
   interface: "str?"
   allow_untested: "bool?"
   channels: "str?"
+  aggregation: "bool?"
   verbose: "bool?"
   debug_capture: "bool?"
 panel_icon: "mdi:wifi"

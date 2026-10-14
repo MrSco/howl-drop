@@ -135,6 +135,14 @@ share sheet open) and starts on 5 GHz, where the phone was heard if anywhere,
 else 149; an IBSS card uses 6. Shared mode ignores this: it runs on its
 network's channel.
 
+`aggregation` (default off, experimental) lets the phone send in aggregated
+bursts (A-MPDU) instead of one frame at a time, which is how Wi-Fi normally
+reaches its speed. The iPhone asks for this (a Block Ack session) dozens of
+times per transfer; with this on, the add-on says yes. Each burst then has to
+be answered with a Block Ack by the card itself, which an active monitor may
+not do. If transfers get faster, keep it; if they fail or crawl, turn it off.
+Without it a 30 MB video takes about 47 s on an MT7612U.
+
 `verbose` (default off) logs the radio in detail: every request's headers,
 OWL's peer schedule changes, each TCP connection, frame counts on the
 monitor, mDNS and announcer lines, and a radio check every 30 s. Without it
