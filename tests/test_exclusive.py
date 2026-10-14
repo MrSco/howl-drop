@@ -206,10 +206,16 @@ exclusive_down && exit 11
 [[ -e "$RUN/exclusive" && -e "$RUN/exclusive-station-type" ]] || exit 12
 ''')
 
+    # awdlibss0 reports joined only once a join was issued: keep-cell looks at
+    # it first and must find nothing, and a join that never reports would
+    # leave exclusive_up polling 200 times, over the 10 s limit on a busy
+    # Windows machine.
     JOINED_ON = r'''
 iw() {
   echo "iw $*" >> "$RUN/commands"
   if [[ "$*" == 'dev wlan0 link' ]]; then printf '%%s\n' 'Joined IBSS 00:25:00:ff:94:73 (on wlan0)' '	freq: %s'; fi
+  if [[ "$*" == *'ibss join'* ]]; then : > "$RUN/joined"; fi
+  if [[ "$*" == 'dev awdlibss0 link' && -e "$RUN/joined" ]]; then echo 'Joined IBSS 00:25:00:ff:94:73'; fi
 }
 '''
 

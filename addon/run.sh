@@ -1364,16 +1364,18 @@ fi
 
 say "Window is up. Stop this add-on to leave the cell and return ${IFACE} to a station."
 # debug_capture: what the radio and the AirDrop TCP carried, as pcap files in
-# save_folder/debug, a new pair every minute, ten minutes at most. mon0 keeps
-# each frame's first 256 bytes (radiotap, 802.11, LLC, IPv6, TCP headers), so
-# a stalled upload can be followed frame by frame: two photo uploads stopped
-# 3 KB from the end with every byte ACKed and the phone still sending
-# (2026-10-14).
+# save_folder/debug. mon0 keeps each frame's first 256 bytes (radiotap,
+# 802.11, LLC, IPv6, TCP headers), so a stalled upload can be followed frame
+# by frame: two photo uploads stopped 3 KB from the end with every byte ACKed
+# and the phone still sending (2026-10-14). A ring of 20 MB files, the oldest
+# overwritten, for the whole window. -Z root: Debian's tcpdump otherwise
+# drops to its own user after the first file and dies at the next one, which
+# left one minute of capture and missed the transfer (0.6.2).
 if [ "$CAPTURE" = true ]; then
     mkdir -p "$INBOX/debug"
-    tcpdump -i mon0 -s 256 -G 60 -W 10 -w "$INBOX/debug/mon0-%H%M%S.pcap" >/dev/null 2>&1 &
-    tcpdump -i awdl0 -s 256 -G 60 -W 10 -w "$INBOX/debug/awdl0-%H%M%S.pcap" 'tcp port 8771' >/dev/null 2>&1 &
-    say "debug_capture: writing pcap files to ${INBOX}/debug (mon0 and awdl0, one per minute, ten minutes)."
+    tcpdump -Z root -i mon0 -s 256 -C 20 -W 8 -w "$INBOX/debug/mon0.pcap" >/dev/null 2>&1 &
+    tcpdump -Z root -i awdl0 -s 256 -C 20 -W 4 -w "$INBOX/debug/awdl0.pcap" 'tcp port 8771' >/dev/null 2>&1 &
+    say "debug_capture: writing pcap files to ${INBOX}/debug (mon0 up to 160 MB, awdl0 up to 80 MB, newest kept)."
 fi
 frames_heard 3
 tcp_flow &
