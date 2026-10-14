@@ -5,3 +5,4 @@
 __pycache__
 # Prebuilt binaries: build them from owldrop/.
 *.exe
+owl-test-*

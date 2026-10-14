@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bats and shellcheck
+        run: sudo apt-get update && sudo apt-get install -y bats shellcheck
+      - name: shellcheck
+        # --severity=warning skips info-level notes the helper relies on
+        # intentionally (word-splitting an argument string and a list).
+        run: |
+          shellcheck --severity=warning \
+            userspace/omdrop-discoverable \
+            tools/build-owl.sh tools/stage.sh tools/run-tests.sh tools/stage-addon.sh \
+            tests/helpers.bash
+      - name: Unit tests
+        run: tools/run-tests.sh

@@ -1,6 +1,5 @@
-# The upstream commits omdrop-owl builds from. tools/build-owl.sh and
-# tools/stage.sh read these; PKGBUILD repeats them (makepkg needs literals) and
-# checks in prepare() that the two agree.
+# The upstream commits the add-on builds from. tools/build-owl.sh and
+# tools/stage.sh read these.
 #
 # OWL, from the airdrop-mt7921 fork: its -S channel-sequence strategies and
 # its fixes for iOS 26. patches/owl-*.patch apply to this commit.
