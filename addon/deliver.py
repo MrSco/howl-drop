@@ -16,6 +16,10 @@ public addresses only (no LAN, loopback or link-local, so no reaching Home
 Assistant or the router), a size cap, and a timeout. A refused or failed fetch
 leaves the shortcut.
 
+Text the phone shares (from Notes, say) arrives as a file of its own named
+like text-430B-AD01-9A-0.txt. It goes to save_folder's text/, apart from
+photos, which is also where howldrop-bridge takes text for a PC's clipboard.
+
   deliver.py --staging DIR --dest DIR [--no-fetch] [--max-mb N]
 """
 import argparse
@@ -185,10 +189,16 @@ def move_in(src, dest_dir):
     return final
 
 
+# What iOS names shared text (text-430B-AD01-9A-0.txt, 2026-10-14).
+SHARED_TEXT = re.compile(r'text-[0-9A-Za-z]+(?:-[0-9A-Za-z]+)*\.txt')
+
+
 def deliver(path, staging, dest, fetch_links, max_bytes, allow_private=False):
     """Deliver one settled staging file; return a line for the log."""
     rel = os.path.relpath(path, staging)
     target_dir = os.path.join(dest, os.path.dirname(rel))
+    if os.path.dirname(rel) == '' and SHARED_TEXT.fullmatch(os.path.basename(path)):
+        target_dir = os.path.join(dest, 'text')
     if fetch_links and path.endswith('.url'):
         url = url_of_shortcut(path)
         if url:

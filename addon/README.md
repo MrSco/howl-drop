@@ -74,8 +74,8 @@ and only for a receiver with an Apple-issued AirDrop identity, which this
 add-on doesn't have. Senders list it under Other Devices. Empty with `forward_to_pc` on: the name a running `howldrop.exe`
 announces in the first 10 s, so the sheet shows that PC's name.
 
-`save_folder` (default `/share/howldrop`) is where files land, and shared
-text as UTF-8 files in `text/` under it.
+`save_folder` (default `/share/howldrop`) is where files land. Text you
+share (from Notes, say) lands as a `.txt` file in `text/` under it.
 
 `delete_after_days` (default 30) deletes files from `save_folder` that many
 days after they arrived there, checked when the add-on starts and then

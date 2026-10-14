@@ -116,6 +116,13 @@ class DeliverTests(unittest.TestCase):
         self.assertEqual((self.dest / 'photo-1.heic').read_bytes(), b'heic')
         self.assertEqual(sorted(p.name for p in self.staging.rglob('*') if p.is_file()), [])
 
+    def test_shared_text_goes_to_the_text_folder(self):
+        (self.staging / 'text-430B-AD01-9A-0.txt').write_text('a note', encoding='utf-8')
+        (self.staging / 'notes.txt').write_text('a file', encoding='utf-8')
+        (self.staging / 'text-message.txt.heic').write_bytes(b'heic')
+        self.run_once(allow_private=True)
+        self.assertEqual(self.listing(), ['notes.txt', 'text-message.txt.heic', 'text/text-430B-AD01-9A-0.txt'])
+
     def test_non_http_schemes_are_refused(self):
         with self.assertRaises(deliver.Refused):
             deliver.fetch('file:///etc/passwd', str(self.dest), 1000)
