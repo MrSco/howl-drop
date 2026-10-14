@@ -5,7 +5,7 @@
 #include <mutex>
 #include <string>
 
-namespace owldrop {
+namespace howldrop {
 
 struct ClipRead {
     enum class Status { Text, NoText, Busy };
@@ -37,4 +37,4 @@ private:
 
 std::unique_ptr<Clipboard> make_system_clipboard();
 
-}  // namespace owldrop
+}  // namespace howldrop

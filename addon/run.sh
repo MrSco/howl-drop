@@ -1,7 +1,7 @@
 #!/bin/bash
 # AirDrop on Home Assistant OS: omdrop-owl's radio helper on a Wi-Fi card the
 # host kernel already drives, omdrop-plugin's receiver, delivery into
-# save_folder, and an optional forwarder to owldrop.exe on a PC.
+# save_folder, and an optional forwarder to howldrop.exe on a PC.
 # Which card and how it runs come from owl-profiles, as on any omdrop-owl
 # machine: exclusive mode (an IBSS cell, or an active monitor) on a card
 # that is not Home Assistant's uplink, or shared mode on one that is.
@@ -11,10 +11,10 @@ LIB=/usr/lib/omdrop
 DISCOVERABLE=$LIB/omdrop-discoverable
 BLE=$LIB/ble-airdrop-adv.py
 RECEIVER=/opt/omdrop-receiver/airdrop-serve.py
-BRIDGE=/usr/local/bin/owldrop-bridge
+BRIDGE=/usr/local/bin/howldrop-bridge
 # Where the phone's files and text land: save_folder, in Home Assistant's
 # share folder by default, which its Samba share shows to every PC.
-INBOX=/share/owldrop
+INBOX=/share/howldrop
 # The receiver writes here; deliver.py moves each finished item to INBOX,
 # fetching the file behind a link when the link points at one.
 STAGING=/data/staging
@@ -220,13 +220,13 @@ list_ifaces() {
 # before any radio command runs. The exclusive IBSS profile is unchanged.
 join_host_netns() {
     local self host
-    [ "${OWLDROP_JOINED_HOST_NETNS:-}" = 1 ] && return 0
+    [ "${HOWLDROP_JOINED_HOST_NETNS:-}" = 1 ] && return 0
     [ -e /proc/1/ns/net ] || return 0
     self=$(readlink /proc/self/ns/net 2>/dev/null || true)
     host=$(readlink /proc/1/ns/net 2>/dev/null || true)
     [ -n "$self" ] && [ -n "$host" ] && [ "$self" != "$host" ] || return 0
     command -v nsenter >/dev/null 2>&1 || return 0
-    export OWLDROP_JOINED_HOST_NETNS=1
+    export HOWLDROP_JOINED_HOST_NETNS=1
     say "This container is not in the host network namespace. Joining the host network namespace."
     exec nsenter -t 1 -n -- "$0"
     say "Joining the host network namespace failed."
@@ -390,8 +390,8 @@ prepare_cell() {
     phy=$(basename "$(readlink -f "/sys/class/net/$IFACE/phy80211")")
     CELL=$IFACE
     if [ ! -d /sys/class/net/awdlibss0 ]; then
-        if ! iw phy "$phy" interface add awdlibss0 type ibss 2>/tmp/owldrop-iw.err; then
-            [ -s /tmp/owldrop-iw.err ] && cat /tmp/owldrop-iw.err
+        if ! iw phy "$phy" interface add awdlibss0 type ibss 2>/tmp/howldrop-iw.err; then
+            [ -s /tmp/howldrop-iw.err ] && cat /tmp/howldrop-iw.err
             if [ -d /sys/class/net/awdlibss0 ]; then
                 drop_stale_vif
             fi
@@ -403,9 +403,9 @@ prepare_cell() {
         fi
         ip link set awdlibss0 down 2>/dev/null || true
         ip link set "$IFACE" down 2>/dev/null || true
-        ip link set awdlibss0 address "$(cat "/sys/class/net/$IFACE/address" 2>/dev/null)" 2>/tmp/owldrop-addr.err || true
-        if [ -s /tmp/owldrop-addr.err ]; then
-            cat /tmp/owldrop-addr.err
+        ip link set awdlibss0 address "$(cat "/sys/class/net/$IFACE/address" 2>/dev/null)" 2>/tmp/howldrop-addr.err || true
+        if [ -s /tmp/howldrop-addr.err ]; then
+            cat /tmp/howldrop-addr.err
         fi
     fi
     if [ -d /sys/class/net/awdlibss0 ]; then
@@ -703,7 +703,7 @@ explain_join_failure() {
 # (self-signed-missing). The pair lives in the add-on data, which persists.
 ensure_identity() {
     local base cert key tmp err
-    base=${OWLDROP_KEYS_DIR:-/data/omdrop}
+    base=${HOWLDROP_KEYS_DIR:-/data/omdrop}
     mkdir -p "$base/keys" || {
         say "Could not create ${base}/keys."
         return 1
@@ -1035,7 +1035,7 @@ watch_radio() {
     # Without verbose, OWL's lines are peers coming and going and failures.
     local pattern='add peer|remove peer|error|fail|fatal|refus'
     [ "$VERBOSE" != true ] || pattern='peer|error|fail|warn|fatal|refus'
-    while [ -f /tmp/owldrop-running ]; do
+    while [ -f /tmp/howldrop-running ]; do
         sleep 1
         tick=$((tick + 1))
         # Discover connections last a second or few, so this is per tick.
@@ -1115,7 +1115,7 @@ watch_radio() {
 }
 
 stop_stack() {
-    rm -f /tmp/owldrop-running
+    rm -f /tmp/howldrop-running
     if [ -n "$WATCH_PID" ]; then kill "$WATCH_PID" 2>/dev/null || true; fi
     if [ -n "$BRIDGE_PID" ]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
     pkill -f "$BRIDGE watch" 2>/dev/null || true
@@ -1137,9 +1137,9 @@ trap 'stop_stack; exit 0' TERM INT
 
 join_host_netns
 
-say "OwlDrop add-on"
+say "HowlDrop add-on"
 say "It uses a Wi-Fi card the host kernel already drives and loads no driver or firmware of its own."
-say "Files and text from the phone are kept in save_folder (default /share/owldrop). owldrop.exe, when a PC runs it, gets them too."
+say "Files and text from the phone are kept in save_folder (default /share/howldrop). howldrop.exe, when a PC runs it, gets them too."
 say ""
 
 if ! dbus_host; then
@@ -1238,9 +1238,9 @@ if [ "$BACKEND" != shared ]; then
     say "Channels to try, in order: $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g')."
 fi
 SAVE_FOLDER=$(option save_folder)
-case "${SAVE_FOLDER:-/share/owldrop}" in
-    /*) INBOX=${SAVE_FOLDER:-/share/owldrop} ;;
-    *) say "save_folder must be an absolute path such as /share/owldrop; using /share/owldrop." ;;
+case "${SAVE_FOLDER:-/share/howldrop}" in
+    /*) INBOX=${SAVE_FOLDER:-/share/howldrop} ;;
+    *) say "save_folder must be an absolute path such as /share/howldrop; using /share/howldrop." ;;
 esac
 FETCH=$(option fetch_links)
 case "$FETCH" in
@@ -1261,18 +1261,18 @@ case "$FORWARD" in
     False|false|0|no) FORWARD=false ;;
     *) FORWARD=true ;;
 esac
-# The sheet name: pc_name, else the name a running owldrop.exe announces,
-# else OwlDrop. No PC is not a reason to stop: the files still land in
+# The sheet name: pc_name, else the name a running howldrop.exe announces,
+# else HowlDrop. No PC is not a reason to stop: the files still land in
 # save_folder.
 PC_BEACON=
 if [ -z "$PC_NAME" ]; then
-    say "Listening for owldrop.exe on UDP 47631 for up to 10 s, for the share-sheet name."
+    say "Listening for howldrop.exe on UDP 47631 for up to 10 s, for the share-sheet name."
     if PC_BEACON=$("$BRIDGE" name --timeout 10 2>/dev/null) && [ -n "$PC_BEACON" ]; then
         PC_NAME=$PC_BEACON
     else
         PC_BEACON=
-        PC_NAME=OwlDrop
-        say "No owldrop.exe answered. The sheet shows OwlDrop; set pc_name to choose the name."
+        PC_NAME=HowlDrop
+        say "No howldrop.exe answered. The sheet shows HowlDrop; set pc_name to choose the name."
     fi
 fi
 if [ "${#PC_NAME}" -gt 63 ]; then
@@ -1378,18 +1378,18 @@ else
 fi
 nmcli device set awdl0 managed no 2>/dev/null || true
 
-touch /tmp/owldrop-running
+touch /tmp/howldrop-running
 vsay "Bluetooth wake: company id 0x004C, type 0x05, through the host bluetoothd on D-Bus."
 vsay "A Bluetooth 4.2 controller often has one advertising slot. If Home Assistant is already advertising on it, registration fails and the log says REGISTER FAILED. The window still stays up."
 (
-    while [ -f /tmp/owldrop-running ]; do
+    while [ -f /tmp/howldrop-running ]; do
         if [ "$VERBOSE" = true ]; then
             python3 "$BLE" --hashes 0000000000000000 --seconds 3600 --adapter hci0 || true
         else
             python3 "$BLE" --hashes 0000000000000000 --seconds 3600 --adapter hci0 2>&1 \
                 | grep --line-buffered -iE 'fail|error|refus' | sed -u 's/^/Bluetooth: /' || true
         fi
-        [ -f /tmp/owldrop-running ] || break
+        [ -f /tmp/howldrop-running ] || break
         sleep 5
     done
 ) &
@@ -1418,9 +1418,9 @@ vsay "AirDrop receiver on awdl0, saving into ${STAGING}; finished items move to 
 # upload, not every request's headers (patch_receiver.py).
 RECEIVER_LOG=INFO
 [ "$VERBOSE" != true ] || RECEIVER_LOG=DEBUG
-OWLDROP_LOG_LEVEL=$RECEIVER_LOG PYTHONWARNINGS=ignore::DeprecationWarning \
+HOWLDROP_LOG_LEVEL=$RECEIVER_LOG PYTHONWARNINGS=ignore::DeprecationWarning \
 python3 "$RECEIVER" --iface awdl0 --port 8771 --name "$PC_NAME" --model MacBookPro18,3 \
-    --outdir "$STAGING" --keys "${OWLDROP_KEYS_DIR:-/data/omdrop}" &
+    --outdir "$STAGING" --keys "${HOWLDROP_KEYS_DIR:-/data/omdrop}" &
 SERVE_PID=$!
 sleep 2
 if ! kill -0 "$SERVE_PID" 2>/dev/null; then
@@ -1443,11 +1443,11 @@ if [ "$FORWARD" = true ]; then
     if [ -n "$PC_HOST" ]; then
         BRIDGE_ARGS+=(--host "$PC_HOST")
     fi
-    say "Forwarding new files to owldrop.exe whenever a PC runs it; they stay in ${INBOX} either way. Text goes to that PC's clipboard."
+    say "Forwarding new files to howldrop.exe whenever a PC runs it; they stay in ${INBOX} either way. Text goes to that PC's clipboard."
     (
-        while [ -f /tmp/owldrop-running ]; do
+        while [ -f /tmp/howldrop-running ]; do
             "$BRIDGE" "${BRIDGE_ARGS[@]}" 2>&1 | sed -u 's/^/Forward: /'
-            [ -f /tmp/owldrop-running ] || break
+            [ -f /tmp/howldrop-running ] || break
             sleep 5
         done
     ) &

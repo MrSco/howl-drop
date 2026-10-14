@@ -7,7 +7,7 @@
 #include <set>
 #include <system_error>
 
-namespace owldrop {
+namespace howldrop {
 namespace {
 
 std::string random_id() {
@@ -117,14 +117,14 @@ bool Node::prepare(std::string& error) {
     if (!udp_.valid() || !udp_.set_reuseaddr() || !udp_.set_broadcast() || !udp_.bind_v4(0, config_.discovery_port) ||
         !udp_.set_nonblocking(true)) {
         error = "UDP port " + std::to_string(config_.discovery_port) + " is not available (" + last_socket_error() +
-                "). If OwlDrop is already running, use that window.";
+                "). If HowlDrop is already running, use that window.";
         return false;
     }
     tcp_ = Socket::tcp_v4();
     if (!tcp_.valid() || !tcp_.set_reuseaddr() || !tcp_.bind_v4(0, config_.transfer_port) || !tcp_.listen(16) ||
         !tcp_.set_nonblocking(true)) {
         error = "TCP port " + std::to_string(config_.transfer_port) + " is not available (" + last_socket_error() +
-                "). If OwlDrop is already running, use that window.";
+                "). If HowlDrop is already running, use that window.";
         return false;
     }
     if (config_.enable_control) {
@@ -133,7 +133,7 @@ bool Node::prepare(std::string& error) {
         ipv4_from_string("127.0.0.1", loopback);
         if (!control_.valid() || !control_.set_reuseaddr() || !control_.bind_v4(loopback, config_.control_port) ||
             !control_.listen(8) || !control_.set_nonblocking(true)) {
-            error = "this PC's OwlDrop control port " + std::to_string(config_.control_port) +
+            error = "this PC's HowlDrop control port " + std::to_string(config_.control_port) +
                     " is not available (" + last_socket_error() + ")";
             return false;
         }
@@ -150,7 +150,7 @@ void Node::mark_started() {
 
 void Node::fail_start(const std::string& error) {
     std::lock_guard<std::mutex> lock(start_mu_);
-    start_error_ = error.empty() ? "OwlDrop could not start" : error;
+    start_error_ = error.empty() ? "HowlDrop could not start" : error;
     started_ = true;
     start_cv_.notify_all();
 }
@@ -164,7 +164,7 @@ void Node::close_listeners() {
 void Node::loop() {
     started_at_ = Clock::now();
     next_beacon_ = started_at_;
-    log_line("OwlDrop " + std::string(kVersion) + "  " + config_.name);
+    log_line("HowlDrop " + std::string(kVersion) + "  " + config_.name);
     log_line("id " + config_.id);
     log_line("inbox " + path_to_utf8(config_.inbox));
     log_line("listening for peers");
@@ -345,7 +345,7 @@ void Node::maybe_note_waiting() {
         any = !peers_.empty();
     }
     waiting_logged_ = true;
-    if (!any) log_line("no other OwlDrop on this network yet");
+    if (!any) log_line("no other HowlDrop on this network yet");
 }
 
 void Node::handle_transfer(Socket socket) {
@@ -519,7 +519,7 @@ Status Node::send_file(const std::string& peer_query, const std::filesystem::pat
     if (!std::filesystem::is_regular_file(path, ec)) return Status::failure("that path is not a file");
     const Lookup found = lookup(peer_query);
     if (found.kind == Lookup::Kind::Ambiguous) {
-        return Status::failure("more than one PC matches \"" + peer_query + "\". Use the id from owldrop peers");
+        return Status::failure("more than one PC matches \"" + peer_query + "\". Use the id from howldrop peers");
     }
     if (found.kind != Lookup::Kind::Found) {
         return Status::failure("no PC named \"" + peer_query + "\" is visible");
@@ -620,7 +620,7 @@ Status Node::flush_clips() {
         }
     }
     if (targets.empty()) {
-        if (!any_peers) return Status::failure("no other OwlDrop PC is visible yet");
+        if (!any_peers) return Status::failure("no other HowlDrop PC is visible yet");
         return Status::success("clipboard sent");
     }
     int sent = 0;
@@ -818,4 +818,4 @@ void Node::log_line(const std::string& line) {
     std::cout << line << '\n' << std::flush;
 }
 
-}  // namespace owldrop
+}  // namespace howldrop

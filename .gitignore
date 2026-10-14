@@ -3,6 +3,6 @@
 # The assembled runtime directory and the staged add-on.
 /build/
 __pycache__
-# Prebuilt binaries: build them from owldrop/.
+# Prebuilt binaries: build them from howldrop/.
 *.exe
 owl-test-*

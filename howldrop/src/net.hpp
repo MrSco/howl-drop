@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace owldrop {
+namespace howldrop {
 
 bool startup_network();
 void shutdown_network();
@@ -69,4 +69,4 @@ struct Ready {
 
 Ready wait_readable(Socket* udp, Socket* tcp, Socket* control, int timeout_ms);
 
-}  // namespace owldrop
+}  // namespace howldrop

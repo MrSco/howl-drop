@@ -1,9 +1,9 @@
-# OwlDrop add-on
+# HowlDrop add-on
 
 AirDrop from an iPhone to Home Assistant OS. While the add-on runs, a name
 appears on the iPhone's share sheet; files and text sent to it land in
-`/share/owldrop`, which the Samba share add-on shows to every PC on the
-network. A PC running `owldrop.exe` also gets each one.
+`/share/howldrop`, which the Samba share add-on shows to every PC on the
+network. A PC running `howldrop.exe` also gets each one.
 
 Home Assistant OS stays as it is: the add-on uses a Wi-Fi card the host
 kernel already drives, and loads no driver or firmware of its own.
@@ -34,14 +34,14 @@ kernel already drives, and loads no driver or firmware of its own.
 ## Install
 
 Supervisor builds a local add-on from its own folder, so `tools/stage-addon.sh`
-assembles a self-contained one at `build/addon/owldrop/` (this folder, plus
-the radio stack and the `owldrop-bridge` source).
+assembles a self-contained one at `build/addon/howldrop/` (this folder, plus
+the radio stack and the `howldrop-bridge` source).
 
 1. Install the **Samba share** add-on (or another way onto `/addons`).
-2. From the repo root: `tools/stage-addon.sh //homeassistant/addons/owldrop`
+2. From the repo root: `tools/stage-addon.sh //homeassistant/addons/howldrop`
    (use your Home Assistant's name or address), or run it with no argument and
-   copy `build/addon/owldrop/` to `/addons/owldrop/` yourself.
-3. Settings, Add-ons, Add-on store, menu, **Check for updates**. OwlDrop
+   copy `build/addon/howldrop/` to `/addons/howldrop/` yourself.
+3. Settings, Add-ons, Add-on store, menu, **Check for updates**. HowlDrop
    appears under Local add-ons. Install it.
 4. Turn **Protection mode off**. The add-on needs the host network, the host
    PID namespace, `NET_ADMIN`, `NET_RAW`, `SYS_ADMIN`, `/dev/net/tun`, the
@@ -58,9 +58,9 @@ add-on when you want AirDrop. Stopping it gives the card back.
 Every option can stay at its default.
 
 `pc_name` is the name on the share sheet, at most 63 characters. Empty: the
-name a running `owldrop.exe` announces in the first 10 s, else `OwlDrop`.
+name a running `howldrop.exe` announces in the first 10 s, else `HowlDrop`.
 
-`save_folder` (default `/share/owldrop`) is where files land, and shared
+`save_folder` (default `/share/howldrop`) is where files land, and shared
 text as UTF-8 files in `text/` under it.
 
 `senders` (default empty: anyone nearby can send) restricts who may send,
@@ -87,8 +87,8 @@ checked again on every redirect (nothing on your LAN), up to `fetch_max_mb`
 (default 100), 30 s timeout. `Deliver:` lines say what was fetched or why
 not.
 
-`forward_to_pc` (default on) also sends each new file to `owldrop.exe` when a
-PC runs it: the file goes to that PC's `Downloads\OwlDrop` and text to its
+`forward_to_pc` (default on) also sends each new file to `howldrop.exe` when a
+PC runs it: the file goes to that PC's `Downloads\HowlDrop` and text to its
 clipboard. Files stay in `save_folder` either way. Allow UDP 47631 and TCP
 47632 from the LAN on that PC. Set `pc_host` to the PC's address only when
 its beacon does not reach Home Assistant.
@@ -132,5 +132,5 @@ Turn it off and delete the folder when done.
   storing it` is normal: the iPhone sometimes never ends its upload, and the
   receiver answers once the archive is whole
   ([hardware notes](../docs/hardware-notes.md)).
-- `Forward:` lines are the forwarder: `no OwlDrop PC answering` (files stay
+- `Forward:` lines are the forwarder: `no HowlDrop PC answering` (files stay
   put), `forwarding to <PC>`, `sent file <name>`.

@@ -28,7 +28,7 @@
 #include <unistd.h>
 #endif
 
-namespace owldrop {
+namespace howldrop {
 namespace {
 
 #ifdef _WIN32
@@ -464,4 +464,4 @@ Ready wait_readable(Socket* udp, Socket* tcp, Socket* control, int timeout_ms) {
     return ready;
 }
 
-}  // namespace owldrop
+}  // namespace howldrop

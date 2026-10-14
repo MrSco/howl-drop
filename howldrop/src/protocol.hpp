@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace owldrop {
+namespace howldrop {
 
 enum class MsgType : std::uint8_t { Hello = 1, File = 2, Clip = 3, Ack = 4 };
 
@@ -48,4 +48,4 @@ bool is_node_id(const std::string& id);
 bool valid_display_name(const std::string& name);
 bool names_equal(const std::string& a, const std::string& b);
 
-}  // namespace owldrop
+}  // namespace howldrop

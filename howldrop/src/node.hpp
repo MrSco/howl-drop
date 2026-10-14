@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-namespace owldrop {
+namespace howldrop {
 
 class Node {
 public:
@@ -156,4 +156,4 @@ private:
     Clock::time_point last_flush_{};
 };
 
-}  // namespace owldrop
+}  // namespace howldrop

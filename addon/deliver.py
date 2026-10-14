@@ -135,7 +135,7 @@ def fetch(url, dest_dir, max_bytes, allow_private=False):
         raise Refused(f'{parts.scheme or "no"} scheme')
     public_host(parts.hostname, allow_private)
     opener = urllib.request.build_opener(CheckedRedirects(allow_private))
-    req = urllib.request.Request(url, headers={'User-Agent': 'OwlDrop/1.0'})
+    req = urllib.request.Request(url, headers={'User-Agent': 'HowlDrop/1.0'})
     try:
         response = opener.open(req, timeout=TIMEOUT_S)
     except urllib.error.URLError as e:

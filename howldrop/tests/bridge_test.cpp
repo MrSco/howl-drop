@@ -30,7 +30,7 @@ std::filesystem::path temp_root() {
 #else
     const int pid = static_cast<int>(::getpid());
 #endif
-    return std::filesystem::temp_directory_path() / ("owldrop-bridge-" + std::to_string(pid));
+    return std::filesystem::temp_directory_path() / ("howldrop-bridge-" + std::to_string(pid));
 }
 
 void test_bridge() {
@@ -47,8 +47,8 @@ void test_bridge() {
     const auto control = static_cast<std::uint16_t>(discovery + 2);
     const auto listen = static_cast<std::uint16_t>(discovery + 3);
 
-    owldrop::MemoryClipboard clipboard;
-    owldrop::Node::Config config;
+    howldrop::MemoryClipboard clipboard;
+    howldrop::Node::Config config;
     config.name = "Office-PC";
     config.id = std::string(32, 'a');
     config.discovery_port = discovery;
@@ -61,11 +61,11 @@ void test_bridge() {
     config.log = false;
     config.beacon_targets.push_back({"127.0.0.1", listen});
 
-    owldrop::Node node(config, clipboard);
+    howldrop::Node node(config, clipboard);
     node.start();
 
     std::string error;
-    const auto learned = owldrop::discover_target(listen, std::chrono::seconds(2), "", error);
+    const auto learned = howldrop::discover_target(listen, std::chrono::seconds(2), "", error);
     if (!learned) std::cerr << "discover: " << error << '\n';
     CHECK(learned.has_value());
     if (learned) {
@@ -74,16 +74,16 @@ void test_bridge() {
         CHECK(learned->port == transfer);
         CHECK(learned->id == config.id);
     }
-    const owldrop::LanTarget target = learned ? *learned : owldrop::LanTarget{"127.0.0.1", transfer, "Office-PC", {}};
+    const howldrop::LanTarget target = learned ? *learned : howldrop::LanTarget{"127.0.0.1", transfer, "Office-PC", {}};
 
     const auto photo = pi_inbox / "photo.bin";
     {
         std::ofstream out(photo, std::ios::binary);
         for (int i = 0; i < 5000; ++i) out.put(static_cast<char>(i % 251));
     }
-    const auto sent_file = owldrop::take_drop(pi_inbox, photo, target);
-    if (sent_file.action != owldrop::DropAction::SentFile) std::cerr << "file: " << sent_file.message << '\n';
-    CHECK(sent_file.action == owldrop::DropAction::SentFile);
+    const auto sent_file = howldrop::take_drop(pi_inbox, photo, target);
+    if (sent_file.action != howldrop::DropAction::SentFile) std::cerr << "file: " << sent_file.message << '\n';
+    CHECK(sent_file.action == howldrop::DropAction::SentFile);
     const auto saved = pc_inbox / "photo.bin";
     CHECK(std::filesystem::is_regular_file(saved));
     CHECK(std::filesystem::file_size(saved) == 5000);
@@ -106,11 +106,11 @@ void test_bridge() {
         std::ofstream out(note, std::ios::binary);
         out << "hello from the phone";
     }
-    const auto sent_text = owldrop::take_drop(pi_inbox, note, target);
-    if (sent_text.action != owldrop::DropAction::SentText) std::cerr << "text: " << sent_text.message << '\n';
-    CHECK(sent_text.action == owldrop::DropAction::SentText);
+    const auto sent_text = howldrop::take_drop(pi_inbox, note, target);
+    if (sent_text.action != howldrop::DropAction::SentText) std::cerr << "text: " << sent_text.message << '\n';
+    CHECK(sent_text.action == howldrop::DropAction::SentText);
     const auto clip = clipboard.read();
-    CHECK(clip.status == owldrop::ClipRead::Status::Text);
+    CHECK(clip.status == howldrop::ClipRead::Status::Text);
     CHECK(clip.text == "hello from the phone");
     CHECK(!std::filesystem::exists(note));
 
@@ -119,9 +119,9 @@ void test_bridge() {
         std::ofstream out(outside);
         out << "secret";
     }
-    CHECK(owldrop::classify_inbox_file(pi_inbox, outside) == owldrop::DropKind::Skip);
-    const auto skipped = owldrop::take_drop(pi_inbox, outside, target);
-    CHECK(skipped.action == owldrop::DropAction::Skip);
+    CHECK(howldrop::classify_inbox_file(pi_inbox, outside) == howldrop::DropKind::Skip);
+    const auto skipped = howldrop::take_drop(pi_inbox, outside, target);
+    CHECK(skipped.action == howldrop::DropAction::Skip);
     CHECK(std::filesystem::exists(outside));
     CHECK(!std::filesystem::exists(pc_inbox / "secret.txt"));
 
@@ -130,7 +130,7 @@ void test_bridge() {
         std::ofstream out(blob, std::ios::binary);
         out << "hello";
     }
-    const auto hostile = owldrop::forward_file(target, blob, "..\\..\\evil.txt");
+    const auto hostile = howldrop::forward_file(target, blob, "..\\..\\evil.txt");
     if (!hostile.ok) std::cerr << "hostile: " << hostile.message << '\n';
     CHECK(hostile.ok);
     CHECK(hostile.message == "evil.txt");
@@ -150,9 +150,9 @@ void test_bridge() {
         std::ofstream out(kept, std::ios::binary);
         out << "stays in the share";
     }
-    const auto sent_kept = owldrop::take_drop(pi_inbox, kept, target, true);
-    if (sent_kept.action != owldrop::DropAction::SentFile) std::cerr << "kept: " << sent_kept.message << '\n';
-    CHECK(sent_kept.action == owldrop::DropAction::SentFile);
+    const auto sent_kept = howldrop::take_drop(pi_inbox, kept, target, true);
+    if (sent_kept.action != howldrop::DropAction::SentFile) std::cerr << "kept: " << sent_kept.message << '\n';
+    CHECK(sent_kept.action == howldrop::DropAction::SentFile);
     CHECK(std::filesystem::is_regular_file(kept));
     CHECK(std::filesystem::is_regular_file(pc_inbox / "kept.bin"));
     CHECK(!std::filesystem::exists(pi_inbox / ".forwarded" / "kept.bin"));
@@ -162,8 +162,8 @@ void test_bridge() {
         std::ofstream out(kept_note, std::ios::binary);
         out << "text kept too";
     }
-    const auto sent_kept_text = owldrop::take_drop(pi_inbox, kept_note, target, true);
-    CHECK(sent_kept_text.action == owldrop::DropAction::SentText);
+    const auto sent_kept_text = howldrop::take_drop(pi_inbox, kept_note, target, true);
+    CHECK(sent_kept_text.action == howldrop::DropAction::SentText);
     CHECK(clipboard.read().text == "text kept too");
     CHECK(std::filesystem::is_regular_file(kept_note));
 
@@ -174,7 +174,7 @@ void test_bridge() {
 }  // namespace
 
 int main() {
-    if (!owldrop::startup_network()) {
+    if (!howldrop::startup_network()) {
         std::cerr << "network startup failed\n";
         return 1;
     }
@@ -184,11 +184,11 @@ int main() {
         std::cerr << "exception " << ex.what() << '\n';
         return 1;
     }
-    owldrop::shutdown_network();
+    howldrop::shutdown_network();
     if (g_failed) {
         std::cerr << g_failed << " checks failed\n";
         return 1;
     }
-    std::cout << "owldrop-bridge-test passed\n";
+    std::cout << "howldrop-bridge-test passed\n";
     return 0;
 }

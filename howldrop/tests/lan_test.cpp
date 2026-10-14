@@ -29,45 +29,45 @@ std::filesystem::path temp_root() {
 #else
     const int pid = static_cast<int>(::getpid());
 #endif
-    return std::filesystem::temp_directory_path() / ("owldrop-test-" + std::to_string(pid));
+    return std::filesystem::temp_directory_path() / ("howldrop-test-" + std::to_string(pid));
 }
 
 void test_protocol() {
-    owldrop::Message message;
-    message.type = owldrop::MsgType::Hello;
+    howldrop::Message message;
+    message.type = howldrop::MsgType::Hello;
     message.fields.set("name", "Office");
     message.fields.set("id", std::string(32, 'a'));
     message.fields.set("port", "47632");
     std::string error;
-    auto bytes = owldrop::encode_head(message, error);
+    auto bytes = howldrop::encode_head(message, error);
     CHECK(bytes.has_value());
-    auto parsed = owldrop::parse_datagram(bytes->data(), bytes->size(), error);
+    auto parsed = howldrop::parse_datagram(bytes->data(), bytes->size(), error);
     CHECK(parsed.has_value());
     CHECK(parsed->fields.get("name") == "Office");
     CHECK(parsed->fields.get("port") == "47632");
     CHECK(parsed->body_size == 0);
 
-    message.type = owldrop::MsgType::File;
+    message.type = howldrop::MsgType::File;
     message.body_size = 100000;
     message.fields.set("file", "blob.bin");
-    bytes = owldrop::encode_head(message, error);
+    bytes = howldrop::encode_head(message, error);
     CHECK(bytes.has_value());
-    owldrop::MsgType type{};
+    howldrop::MsgType type{};
     std::uint16_t header_len = 0;
     std::uint64_t body_size = 0;
-    CHECK(owldrop::parse_prefix(bytes->data(), type, header_len, body_size, error));
-    CHECK(type == owldrop::MsgType::File);
+    CHECK(howldrop::parse_prefix(bytes->data(), type, header_len, body_size, error));
+    CHECK(type == howldrop::MsgType::File);
     CHECK(body_size == 100000);
 }
 
 void test_sanitize() {
-    CHECK(owldrop::sanitize_filename("..\\..\\evil.txt") == "evil.txt");
-    CHECK(owldrop::sanitize_filename("a/b.txt") == "b.txt");
-    CHECK(owldrop::sanitize_filename("CON.txt") == "_CON.txt");
-    CHECK(owldrop::sanitize_filename("   ") == "file");
+    CHECK(howldrop::sanitize_filename("..\\..\\evil.txt") == "evil.txt");
+    CHECK(howldrop::sanitize_filename("a/b.txt") == "b.txt");
+    CHECK(howldrop::sanitize_filename("CON.txt") == "_CON.txt");
+    CHECK(howldrop::sanitize_filename("   ") == "file");
 }
 
-bool wait_for_peer(owldrop::Node& node, const std::string& name) {
+bool wait_for_peer(howldrop::Node& node, const std::string& name) {
     for (int i = 0; i < 100; ++i) {
         for (const auto& peer : node.peers()) {
             if (peer.name == name) return true;
@@ -77,10 +77,10 @@ bool wait_for_peer(owldrop::Node& node, const std::string& name) {
     return false;
 }
 
-bool wait_for_text(owldrop::MemoryClipboard& clipboard, const std::string& text) {
+bool wait_for_text(howldrop::MemoryClipboard& clipboard, const std::string& text) {
     for (int i = 0; i < 150; ++i) {
         const auto read = clipboard.read();
-        if (read.status == owldrop::ClipRead::Status::Text && read.text == text) return true;
+        if (read.status == howldrop::ClipRead::Status::Text && read.text == text) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     return false;
@@ -92,9 +92,9 @@ void test_lan() {
     std::filesystem::create_directories(root / "a");
     std::filesystem::create_directories(root / "b");
 
-    owldrop::MemoryClipboard clip_a;
-    owldrop::MemoryClipboard clip_b;
-    owldrop::Node::Config a_cfg;
+    howldrop::MemoryClipboard clip_a;
+    howldrop::MemoryClipboard clip_b;
+    howldrop::Node::Config a_cfg;
     a_cfg.name = "pc-a";
     a_cfg.id = std::string(32, 'a');
     a_cfg.discovery_port = 41231;
@@ -107,7 +107,7 @@ void test_lan() {
     a_cfg.log = false;
     a_cfg.beacon_targets.push_back({"127.0.0.1", 41241});
 
-    owldrop::Node::Config b_cfg = a_cfg;
+    howldrop::Node::Config b_cfg = a_cfg;
     b_cfg.name = "pc-b";
     b_cfg.id = std::string(32, 'b');
     b_cfg.discovery_port = 41241;
@@ -116,8 +116,8 @@ void test_lan() {
     b_cfg.inbox = root / "b";
     b_cfg.beacon_targets = {{"127.0.0.1", 41231}};
 
-    owldrop::Node node_a(a_cfg, clip_a);
-    owldrop::Node node_b(b_cfg, clip_b);
+    howldrop::Node node_a(a_cfg, clip_a);
+    howldrop::Node node_b(b_cfg, clip_b);
     node_a.start();
     node_b.start();
     CHECK(wait_for_peer(node_a, "pc-b"));
@@ -150,22 +150,22 @@ void test_lan() {
     }
 
     {
-        owldrop::Socket socket = owldrop::Socket::tcp_v4();
+        howldrop::Socket socket = howldrop::Socket::tcp_v4();
         std::uint32_t addr = 0;
         std::string error;
-        CHECK(owldrop::ipv4_from_string("127.0.0.1", addr));
+        CHECK(howldrop::ipv4_from_string("127.0.0.1", addr));
         CHECK(socket.valid());
         CHECK(socket.connect_v4(addr, 41242, 2000, error));
-        owldrop::Message message;
-        message.type = owldrop::MsgType::File;
+        howldrop::Message message;
+        message.type = howldrop::MsgType::File;
         const std::string body = "hello";
         message.body_size = body.size();
         message.fields.set("file", "..\\..\\evil.txt");
         message.fields.set("from", std::string(32, 'a'));
-        CHECK(owldrop::write_head(socket, message, nullptr, error));
+        CHECK(howldrop::write_head(socket, message, nullptr, error));
         CHECK(socket.send_full(reinterpret_cast<const std::uint8_t*>(body.data()), body.size(), nullptr));
-        owldrop::Message ack;
-        CHECK(owldrop::read_head(socket, ack, nullptr, error));
+        howldrop::Message ack;
+        CHECK(howldrop::read_head(socket, ack, nullptr, error));
         CHECK(ack.fields.get("result") == "ok");
         CHECK(ack.fields.get("file") == "evil.txt");
         const auto evil = root / "b" / "evil.txt";
@@ -187,7 +187,7 @@ void test_lan() {
 }  // namespace
 
 int main() {
-    if (!owldrop::startup_network()) {
+    if (!howldrop::startup_network()) {
         std::cerr << "network startup failed\n";
         return 1;
     }
@@ -199,11 +199,11 @@ int main() {
         std::cerr << "exception " << ex.what() << '\n';
         return 1;
     }
-    owldrop::shutdown_network();
+    howldrop::shutdown_network();
     if (g_failed) {
         std::cerr << g_failed << " checks failed\n";
         return 1;
     }
-    std::cout << "owldrop-test passed\n";
+    std::cout << "howldrop-test passed\n";
     return 0;
 }

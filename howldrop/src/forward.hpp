@@ -10,7 +10,7 @@
 #include <string>
 #include <string_view>
 
-namespace owldrop {
+namespace howldrop {
 
 // Identity the Pi bridge puts in the "from" field. The PC does not need to
 // have discovered the Pi; it accepts the TCP transfer either way.
@@ -60,4 +60,4 @@ struct DropResult {
 DropResult take_drop(const std::filesystem::path& inbox, const std::filesystem::path& file, const LanTarget& target,
                      bool keep = false);
 
-}  // namespace owldrop
+}  // namespace howldrop

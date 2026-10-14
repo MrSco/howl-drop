@@ -47,7 +47,7 @@ DIAG = '''        except socket.timeout as e:
 # The add-on's verbose option: DEBUG logs every request's headers, which is
 # most of the log during a transfer; run.sh passes INFO without verbose.
 LOGGING = "logging.basicConfig(level=logging.DEBUG, stream=sys.stdout,\n"
-LOGGING_NEW = "logging.basicConfig(level=os.environ.get('OWLDROP_LOG_LEVEL', 'DEBUG'), stream=sys.stdout,\n"
+LOGGING_NEW = "logging.basicConfig(level=os.environ.get('HOWLDROP_LOG_LEVEL', 'DEBUG'), stream=sys.stdout,\n"
 
 EDITS = [
     ('upload timeout handler', ANCHOR, DIAG),
@@ -66,7 +66,7 @@ def main(path):
         s = s.replace(anchor, new)
     p.write_text(s)
     print(f'patched {path}: upload stalls log the kernel and TLS backlog; '
-          'the log level follows OWLDROP_LOG_LEVEL')
+          'the log level follows HOWLDROP_LOG_LEVEL')
     return 0
 
 

@@ -3,12 +3,12 @@
 AirDrop from an iPhone to Home Assistant OS. A Home Assistant add-on puts a
 name on the iPhone's share sheet; whatever the phone sends lands in Home
 Assistant's share folder, where any PC on the network can open it. A PC that
-runs `owldrop.exe` also gets each file in its Downloads and shared text on its
+runs `howldrop.exe` also gets each file in its Downloads and shared text on its
 clipboard.
 
 ```
-iPhone ──AWDL + BLE──▶ Home Assistant OS, OwlDrop add-on ──▶ /share/owldrop (Samba)
-                       OWL + omdrop-discoverable            └─▶ owldrop.exe on a PC (optional)
+iPhone ──AWDL + BLE──▶ Home Assistant OS, HowlDrop add-on ──▶ /share/howldrop (Samba)
+                       OWL + omdrop-discoverable             └─▶ howldrop.exe on a PC (optional)
                        AirDrop receiver
 ```
 
@@ -32,10 +32,10 @@ packaging removed (upstream has it).
 | Path | What |
 |---|---|
 | `addon/` | The add-on: `config.yaml`, `Dockerfile`, `run.sh`, and the Python it ships (`deliver.py`, `senders.py`, `patch_receiver.py`). |
-| `owldrop/` | `owldrop.exe` (the Windows listener) and `owldrop-bridge` (the forwarder in the add-on), C++17, one CMake tree. |
+| `howldrop/` | `howldrop.exe` (the Windows listener) and `howldrop-bridge` (the forwarder in the add-on), C++17, one CMake tree. |
 | `userspace/` | `omdrop-discoverable`, the radio helper, and `owl-profiles`, its per-driver table. |
 | `patches/`, `pins` | OWL's pinned upstream commit and the patches applied to it; `tools/build-owl.sh` applies them. |
-| `tools/` | `build-owl.sh` and `stage.sh` build the radio stack (inside the add-on image); `stage-addon.sh` assembles the add-on folder; `build-owldrop.ps1` builds `owldrop.exe`. |
+| `tools/` | `build-owl.sh` and `stage.sh` build the radio stack (inside the add-on image); `stage-addon.sh` assembles the add-on folder; `build-howldrop.ps1` builds `howldrop.exe`. |
 | `tests/` | The helper, the add-on's radio choice, delivery and the allow list, against command doubles and local sockets: no radio needed. |
 
 ## Develop
@@ -49,17 +49,17 @@ add-on into Home Assistant's `/addons` share and bump `version` in
 `addon/config.yaml` for every deploy, or Supervisor keeps the old image:
 
 ```bash
-tools/stage-addon.sh //homeassistant/addons/owldrop
+tools/stage-addon.sh //homeassistant/addons/howldrop
 ```
 
-In Home Assistant: Add-on store, menu, Check for updates, update OwlDrop,
+In Home Assistant: Add-on store, menu, Check for updates, update HowlDrop,
 start it, and read its log.
 
-`owldrop.exe` builds with CMake, Ninja and a MinGW-w64 g++ (Strawberry Perl
+`howldrop.exe` builds with CMake, Ninja and a MinGW-w64 g++ (Strawberry Perl
 ships all three):
 
 ```powershell
-tools\build-owldrop.ps1 -Run
+tools\build-howldrop.ps1 -Run
 ```
 
 What runs in the add-on is Linux shell and Python, so `.gitattributes` keeps

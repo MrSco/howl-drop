@@ -50,7 +50,7 @@ std::string computer_name() {
     wchar_t buf[256];
     DWORD n = 256;
     if (!GetComputerNameW(buf, &n) || n == 0) return "windows";
-    std::string name = owldrop::utf8_from_wide(std::wstring(buf, n));
+    std::string name = howldrop::utf8_from_wide(std::wstring(buf, n));
     if (name.empty()) return "windows";
     if (name.size() > 64) name.resize(64);
     return name;
@@ -73,12 +73,12 @@ std::filesystem::path state_dir() {
     if (local.empty()) {
         const std::wstring profile = env_w(L"USERPROFILE");
         if (profile.empty()) return {};
-        return std::filesystem::path(profile) / L"AppData" / L"Local" / L"OwlDrop";
+        return std::filesystem::path(profile) / L"AppData" / L"Local" / L"HowlDrop";
     }
-    return std::filesystem::path(local) / L"OwlDrop";
+    return std::filesystem::path(local) / L"HowlDrop";
 #else
-    if (const char* home = std::getenv("HOME")) return std::filesystem::path(home) / ".local" / "share" / "owldrop";
-    return std::filesystem::temp_directory_path() / "owldrop";
+    if (const char* home = std::getenv("HOME")) return std::filesystem::path(home) / ".local" / "share" / "howldrop";
+    return std::filesystem::temp_directory_path() / "howldrop";
 #endif
 }
 
@@ -86,10 +86,10 @@ std::filesystem::path inbox_dir() {
 #ifdef _WIN32
     const std::wstring profile = env_w(L"USERPROFILE");
     if (profile.empty()) return {};
-    return std::filesystem::path(profile) / L"Downloads" / L"OwlDrop";
+    return std::filesystem::path(profile) / L"Downloads" / L"HowlDrop";
 #else
-    if (const char* home = std::getenv("HOME")) return std::filesystem::path(home) / "Downloads" / "OwlDrop";
-    return std::filesystem::temp_directory_path() / "OwlDrop";
+    if (const char* home = std::getenv("HOME")) return std::filesystem::path(home) / "Downloads" / "HowlDrop";
+    return std::filesystem::temp_directory_path() / "HowlDrop";
 #endif
 }
 
@@ -134,16 +134,16 @@ std::string load_id() {
 
 void usage() {
     std::cout
-        << "OwlDrop " << owldrop::kVersion << "\n"
-        << "Send a file or clipboard text to another OwlDrop PC on this network.\n"
+        << "HowlDrop " << howldrop::kVersion << "\n"
+        << "Send a file or clipboard text to another HowlDrop PC on this network.\n"
         << "Ethernet is enough. A Wi-Fi card is not required.\n\n"
-        << "  owldrop                 Start and leave this window open\n"
-        << "  owldrop peers            List PCs that are currently visible\n"
-        << "  owldrop send NAME FILE   Send FILE to the PC named NAME\n"
-        << "  owldrop clip             Send the current clipboard text now\n"
-        << "  owldrop stop             Stop OwlDrop on this PC\n\n"
-        << "Received files are saved to Downloads\\OwlDrop.\n"
-        << "Text you copy while OwlDrop is running is sent to those PCs.\n";
+        << "  howldrop                 Start and leave this window open\n"
+        << "  howldrop peers            List PCs that are currently visible\n"
+        << "  howldrop send NAME FILE   Send FILE to the PC named NAME\n"
+        << "  howldrop clip             Send the current clipboard text now\n"
+        << "  howldrop stop             Stop HowlDrop on this PC\n\n"
+        << "Received files are saved to Downloads\\HowlDrop.\n"
+        << "Text you copy while HowlDrop is running is sent to those PCs.\n";
 }
 
 struct Reply {
@@ -170,12 +170,12 @@ std::vector<std::string> split_lines(const std::string& text) {
 
 Reply control_request(const std::string& command) {
     Reply reply;
-    owldrop::Socket socket = owldrop::Socket::tcp_v4();
+    howldrop::Socket socket = howldrop::Socket::tcp_v4();
     std::uint32_t addr = 0;
     std::string error;
-    if (!owldrop::ipv4_from_string("127.0.0.1", addr) || !socket.valid() ||
-        !socket.connect_v4(addr, owldrop::kControlPort, 1000, error)) {
-        reply.detail = "OwlDrop is not running on this PC. Start it and leave that window open.";
+    if (!howldrop::ipv4_from_string("127.0.0.1", addr) || !socket.valid() ||
+        !socket.connect_v4(addr, howldrop::kControlPort, 1000, error)) {
+        reply.detail = "HowlDrop is not running on this PC. Start it and leave that window open.";
         return reply;
     }
     socket.set_recv_timeout_ms(2000);
@@ -183,7 +183,7 @@ Reply control_request(const std::string& command) {
     std::string wire = command;
     wire.push_back('\n');
     if (!socket.send_full(reinterpret_cast<const std::uint8_t*>(wire.data()), wire.size(), nullptr, 3)) {
-        reply.detail = "could not talk to the running OwlDrop";
+        reply.detail = "could not talk to the running HowlDrop";
         return reply;
     }
     std::string all;
@@ -235,7 +235,7 @@ int cmd_peers() {
         return 1;
     }
     if (reply.lines.empty()) {
-        std::cout << "no other OwlDrop PCs are visible\n";
+        std::cout << "no other HowlDrop PCs are visible\n";
         return 0;
     }
     for (const auto& line : reply.lines) {
@@ -261,7 +261,7 @@ int cmd_send(const std::string& peer, const std::filesystem::path& file) {
         std::cerr << "could not resolve that path\n";
         return 1;
     }
-    const std::string path = owldrop::path_to_utf8(absolute);
+    const std::string path = howldrop::path_to_utf8(absolute);
     if (path.find('\n') != std::string::npos || path.find('\r') != std::string::npos) {
         std::cerr << "that path cannot be sent\n";
         return 1;
@@ -286,7 +286,7 @@ int cmd_simple(const std::string& command) {
 }
 
 int cmd_serve() {
-    if (!owldrop::startup_network()) {
+    if (!howldrop::startup_network()) {
         std::cerr << "could not start networking\n";
         return 1;
     }
@@ -295,12 +295,12 @@ int cmd_serve() {
         std::cerr << "could not find Downloads\n";
         return 1;
     }
-    auto clipboard = owldrop::make_system_clipboard();
-    owldrop::Node::Config config;
+    auto clipboard = howldrop::make_system_clipboard();
+    howldrop::Node::Config config;
     config.name = computer_name();
     config.id = load_id();
     config.inbox = inbox;
-    owldrop::Node node(std::move(config), *clipboard);
+    howldrop::Node node(std::move(config), *clipboard);
     try {
         node.start();
     } catch (const std::exception& ex) {
@@ -330,7 +330,7 @@ int main() {
     if (!wargv) return 1;
     std::vector<std::string> args;
     args.reserve(static_cast<std::size_t>(argc));
-    for (int i = 0; i < argc; ++i) args.push_back(owldrop::utf8_from_wide(wargv[i] ? wargv[i] : L""));
+    for (int i = 0; i < argc; ++i) args.push_back(howldrop::utf8_from_wide(wargv[i] ? wargv[i] : L""));
     LocalFree(wargv);
 #else
 int main(int argc, char** argv) {
@@ -338,7 +338,7 @@ int main(int argc, char** argv) {
     args.reserve(static_cast<std::size_t>(argc));
     for (int i = 0; i < argc; ++i) args.emplace_back(argv[i] ? argv[i] : "");
 #endif
-    if (!owldrop::startup_network()) {
+    if (!howldrop::startup_network()) {
         std::cerr << "could not start networking\n";
         return 1;
     }
@@ -362,7 +362,7 @@ int main(int argc, char** argv) {
                 path.push_back(' ');
                 path += args[i];
             }
-            return cmd_send(args[2], owldrop::path_from_utf8(path));
+            return cmd_send(args[2], howldrop::path_from_utf8(path));
         }
     } catch (const std::exception& ex) {
         std::cerr << ex.what() << '\n';

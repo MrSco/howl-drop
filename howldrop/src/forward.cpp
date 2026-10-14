@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace owldrop {
+namespace howldrop {
 namespace {
 
 bool retryable(const Status& status) {
@@ -138,7 +138,7 @@ std::optional<LanTarget> discover_target(std::uint16_t discovery_port, std::chro
             continue;
         }
         if (found->id != target->id) {
-            error = "more than one OwlDrop PC is visible (" + found->name + ", " + target->name + "). Pass --name";
+            error = "more than one HowlDrop PC is visible (" + found->name + ", " + target->name + "). Pass --name";
             return std::nullopt;
         }
         found->host = target->host;
@@ -146,8 +146,8 @@ std::optional<LanTarget> discover_target(std::uint16_t discovery_port, std::chro
         found->name = target->name;
     }
     if (!found) {
-        error = name_filter.empty() ? "no OwlDrop PC answered"
-                                    : "no OwlDrop PC named \"" + name_filter + "\" answered";
+        error = name_filter.empty() ? "no HowlDrop PC answered"
+                                    : "no HowlDrop PC named \"" + name_filter + "\" answered";
         return std::nullopt;
     }
     return found;
@@ -283,4 +283,4 @@ DropResult take_drop(const std::filesystem::path& inbox, const std::filesystem::
     return DropResult{action, status.message};
 }
 
-}  // namespace owldrop
+}  // namespace howldrop

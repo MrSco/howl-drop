@@ -14,7 +14,7 @@
 
 #include <cstring>
 
-namespace owldrop {
+namespace howldrop {
 
 ClipRead MemoryClipboard::read() {
     std::lock_guard<std::mutex> lock(mu_);
@@ -98,4 +98,4 @@ std::unique_ptr<Clipboard> make_system_clipboard() { return std::make_unique<Mem
 
 #endif
 
-}  // namespace owldrop
+}  // namespace howldrop

@@ -73,11 +73,11 @@ RUN bash /src/omdrop-owl/tools/stage.sh \
     && cp -a /src/omdrop-owl/build/lib/. /usr/lib/omdrop/ \
     && rm -rf /src/omdrop-owl/build /usr/lib/omdrop/__pycache__
 
-COPY owldrop/ /src/owldrop/
-RUN cmake -S /src/owldrop -B /tmp/owldrop-build -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build /tmp/owldrop-build --target owldrop-bridge -j"$(nproc)" \
-    && install -m 755 /tmp/owldrop-build/owldrop-bridge /usr/local/bin/owldrop-bridge \
-    && rm -rf /tmp/owldrop-build
+COPY howldrop/ /src/howldrop/
+RUN cmake -S /src/howldrop -B /tmp/howldrop-build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/howldrop-build --target howldrop-bridge -j"$(nproc)" \
+    && install -m 755 /tmp/howldrop-build/howldrop-bridge /usr/local/bin/howldrop-bridge \
+    && rm -rf /tmp/howldrop-build
 
 COPY deliver.py /deliver.py
 COPY senders.py /senders.py

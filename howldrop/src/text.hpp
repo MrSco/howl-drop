@@ -17,7 +17,7 @@
 #include <windows.h>
 #endif
 
-namespace owldrop {
+namespace howldrop {
 
 inline std::optional<std::wstring> wide_from_utf8(std::string_view utf8) {
 #ifdef _WIN32
@@ -81,4 +81,4 @@ inline std::string filename_utf8(const std::filesystem::path& path) {
     return path_to_utf8(path.filename());
 }
 
-}  // namespace owldrop
+}  // namespace howldrop

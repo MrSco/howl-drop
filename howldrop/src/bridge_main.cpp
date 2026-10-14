@@ -16,14 +16,14 @@ namespace {
 
 void usage() {
     std::cout
-        << "OwlDrop bridge\n"
-        << "Forwards an AirDrop file or shared text from this Pi to owldrop.exe on the Windows PC.\n"
-        << "The PC is found from its OwlDrop hello on UDP 47631. Files and text go to TCP 47632.\n\n"
-        << "  owldrop-bridge name                 Print the Windows PC's name\n"
-        << "  owldrop-bridge discover             Print name, address, id, and transfer port\n"
-        << "  owldrop-bridge watch --inbox DIR    Forward new files in DIR, and text in DIR/text\n"
-        << "  owldrop-bridge file [--host IP] FILE\n"
-        << "  owldrop-bridge text [--host IP] TEXT\n\n"
+        << "HowlDrop bridge\n"
+        << "Forwards an AirDrop file or shared text from this Pi to howldrop.exe on the Windows PC.\n"
+        << "The PC is found from its HowlDrop hello on UDP 47631. Files and text go to TCP 47632.\n\n"
+        << "  howldrop-bridge name                 Print the Windows PC's name\n"
+        << "  howldrop-bridge discover             Print name, address, id, and transfer port\n"
+        << "  howldrop-bridge watch --inbox DIR    Forward new files in DIR, and text in DIR/text\n"
+        << "  howldrop-bridge file [--host IP] FILE\n"
+        << "  howldrop-bridge text [--host IP] TEXT\n\n"
         << "  --host IP       PC address. Without it, wait for a hello beacon\n"
         << "  --port N        PC transfer port (default 47632) when --host is set\n"
         << "  --name NAME     Which PC, when more than one answers\n"
@@ -157,15 +157,15 @@ bool parse_args(const std::vector<std::string>& args, Options& opt, std::string&
     return true;
 }
 
-std::optional<owldrop::LanTarget> resolve_target(const Options& opt, std::string& error) {
+std::optional<howldrop::LanTarget> resolve_target(const Options& opt, std::string& error) {
     if (!opt.host.empty()) {
-        owldrop::LanTarget target;
+        howldrop::LanTarget target;
         target.host = opt.host;
-        target.port = opt.port == 0 ? owldrop::kTransferPort : opt.port;
+        target.port = opt.port == 0 ? howldrop::kTransferPort : opt.port;
         target.name = opt.name.empty() ? opt.host : opt.name;
         return target;
     }
-    return owldrop::discover_target(owldrop::kDiscoveryPort, std::chrono::seconds(opt.timeout_s), opt.name, error);
+    return howldrop::discover_target(howldrop::kDiscoveryPort, std::chrono::seconds(opt.timeout_s), opt.name, error);
 }
 
 int fail(const std::string& message) {
@@ -195,7 +195,7 @@ constexpr int kGoneAfterRetries = 20;
 // Forward what settles in inbox until the PC looks gone (only when it can be
 // looked for again) . handled holds what keep mode has already dealt with,
 // across returns: forwarded, refused, or there before the bridge started.
-void watch_loop(const owldrop::LanTarget& target, const std::filesystem::path& inbox, bool keep, bool can_rediscover,
+void watch_loop(const howldrop::LanTarget& target, const std::filesystem::path& inbox, bool keep, bool can_rediscover,
                 std::set<std::string>& handled) {
     std::filesystem::create_directories(inbox / "text");
     std::cout << "forwarding to " << target.name << " at " << target.host << ":" << target.port << '\n';
@@ -230,9 +230,9 @@ void watch_loop(const owldrop::LanTarget& target, const std::filesystem::path& i
             }
             ++stamp.seen;
             if (stamp.seen < 2) continue;
-            const owldrop::DropResult result = owldrop::take_drop(inbox, file, target, keep);
+            const howldrop::DropResult result = howldrop::take_drop(inbox, file, target, keep);
             stamps.erase(key);
-            if (result.action == owldrop::DropAction::Retry) {
+            if (result.action == howldrop::DropAction::Retry) {
                 std::cerr << file.filename().string() << ": " << result.message << '\n';
                 if (can_rediscover && ++retries >= kGoneAfterRetries) {
                     std::cerr << target.name << " stopped answering; looking for a PC again\n";
@@ -242,14 +242,14 @@ void watch_loop(const owldrop::LanTarget& target, const std::filesystem::path& i
             }
             retries = 0;
             if (keep) handled.insert(key);
-            if (result.action == owldrop::DropAction::Rejected) {
+            if (result.action == howldrop::DropAction::Rejected) {
                 gave_up.insert(key);
                 std::cerr << file.filename().string() << ": " << result.message << '\n';
                 continue;
             }
-            if (result.action == owldrop::DropAction::SentFile) {
+            if (result.action == howldrop::DropAction::SentFile) {
                 std::cout << "sent file " << result.message << std::endl;
-            } else if (result.action == owldrop::DropAction::SentText) {
+            } else if (result.action == howldrop::DropAction::SentText) {
                 std::cout << "sent text" << std::endl;
             }
         }
@@ -265,8 +265,8 @@ int run_watch(const Options& opt) {
     std::string error;
     std::filesystem::path inbox = opt.inbox;
     if (inbox.empty()) {
-        if (const char* home = std::getenv("HOME")) inbox = std::filesystem::path(home) / "OwlDrop" / "incoming";
-        else inbox = std::filesystem::path("OwlDrop") / "incoming";
+        if (const char* home = std::getenv("HOME")) inbox = std::filesystem::path(home) / "HowlDrop" / "incoming";
+        else inbox = std::filesystem::path("HowlDrop") / "incoming";
     }
     std::error_code ec;
     std::filesystem::create_directories(inbox / "text", ec);
@@ -282,9 +282,9 @@ int run_watch(const Options& opt) {
     bool looking = false;
     while (true) {
         if (!target) {
-            if (!opt.wait) return fail(error.empty() ? "no OwlDrop PC answered" : error);
+            if (!opt.wait) return fail(error.empty() ? "no HowlDrop PC answered" : error);
             if (!looking) {
-                std::cout << "no OwlDrop PC answering; files stay in " << inbox << ", still looking" << std::endl;
+                std::cout << "no HowlDrop PC answering; files stay in " << inbox << ", still looking" << std::endl;
                 looking = true;
             }
             std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -312,12 +312,12 @@ int main(int argc, char** argv) {
         usage();
         return 0;
     }
-    if (!owldrop::startup_network()) return fail("could not start networking");
+    if (!howldrop::startup_network()) return fail("could not start networking");
 
     if (opt.command == "name" || opt.command == "discover") {
-        const auto target = owldrop::discover_target(owldrop::kDiscoveryPort, std::chrono::seconds(opt.timeout_s),
+        const auto target = howldrop::discover_target(howldrop::kDiscoveryPort, std::chrono::seconds(opt.timeout_s),
                                                      opt.name, error);
-        if (!target) return fail(error.empty() ? "no OwlDrop PC answered" : error);
+        if (!target) return fail(error.empty() ? "no HowlDrop PC answered" : error);
         if (opt.command == "name") {
             std::cout << target->name << '\n';
         } else {
@@ -329,10 +329,10 @@ int main(int argc, char** argv) {
     if (opt.command == "watch") return run_watch(opt);
 
     const auto target = resolve_target(opt, error);
-    if (!target) return fail(error.empty() ? "no OwlDrop PC answered" : error);
+    if (!target) return fail(error.empty() ? "no HowlDrop PC answered" : error);
 
     if (opt.command == "file") {
-        const owldrop::Status status = owldrop::forward_file(*target, opt.file, {});
+        const howldrop::Status status = howldrop::forward_file(*target, opt.file, {});
         if (!status.ok) return fail(status.message);
         std::cout << "sent " << status.message << " to " << target->name << '\n';
         return 0;
@@ -344,11 +344,11 @@ int main(int argc, char** argv) {
             char buf[4096];
             while (std::cin.read(buf, sizeof(buf)) || std::cin.gcount() > 0) {
                 chunk.append(buf, static_cast<std::size_t>(std::cin.gcount()));
-                if (chunk.size() > owldrop::kMaxClipBytes) return fail("too large");
+                if (chunk.size() > howldrop::kMaxClipBytes) return fail("too large");
             }
             text = std::move(chunk);
         }
-        const owldrop::Status status = owldrop::forward_text(*target, text);
+        const howldrop::Status status = howldrop::forward_text(*target, text);
         if (!status.ok) return fail(status.message);
         std::cout << "sent text to " << target->name << '\n';
         return 0;

@@ -5,7 +5,7 @@
 #include <cctype>
 #include <cstring>
 
-namespace owldrop {
+namespace howldrop {
 namespace {
 
 void put_u16(std::uint8_t* p, std::uint16_t v) {
@@ -128,7 +128,7 @@ std::optional<std::vector<std::uint8_t>> encode_head(const Message& message, std
 bool parse_prefix(const std::uint8_t prefix[16], MsgType& type, std::uint16_t& header_len, std::uint64_t& body_size,
                   std::string& error) {
     if (prefix[0] != 'O' || prefix[1] != 'D' || prefix[2] != '1' || prefix[3] != '\n') {
-        error = "not an OwlDrop message";
+        error = "not an HowlDrop message";
         return false;
     }
     const auto raw = prefix[4];
@@ -257,4 +257,4 @@ bool names_equal(const std::string& a, const std::string& b) {
     return true;
 }
 
-}  // namespace owldrop
+}  // namespace howldrop
