@@ -54,19 +54,52 @@ EDITS = [
     ('the logging setup', LOGGING, LOGGING_NEW),
 ]
 
+# contacts.py, beside the receiver: Contacts Only refused an iPhone on the
+# senders list with "the validation record does not belong to the presented
+# certificate" (2026-10-14). The certificate was Apple's and verified; the
+# account was read from `openssl x509 -subject` by searching for "CN=", and
+# Debian 12's OpenSSL 3.0 prints "CN = ". Read commonName one attribute per
+# line instead, which every OpenSSL prints the same.
+SUBJECT = '''        subject = subprocess.run(["openssl", "x509", "-in", str(leaf), "-noout", "-subject"],
+                                 capture_output=True).stdout.decode(errors="replace")
+    if "CN=" not in subject:
+        return ""
+    cn = subject.split("CN=", 1)[1].strip()
+'''
+SUBJECT_NEW = '''        # howl-drop: one attribute per line; OpenSSL 3.0 prints "CN = value".
+        subject = subprocess.run(["openssl", "x509", "-in", str(leaf), "-noout", "-subject",
+                                  "-nameopt", "multiline"],
+                                 capture_output=True).stdout.decode(errors="replace")
+    cn = ""
+    for line in subject.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "commonName":
+            cn = value.strip()
+'''
 
-def main(path):
+CONTACTS_EDITS = [
+    ("the certificate's account", SUBJECT, SUBJECT_NEW),
+]
+
+
+def apply(path, edits):
     p = Path(path)
     s = p.read_text()
-    for what, anchor, new in EDITS:
+    for what, anchor, new in edits:
         if new in s:
             continue
         if s.count(anchor) != 1:
             sys.exit(f'{path}: {what} not found; the receiver changed')
         s = s.replace(anchor, new)
     p.write_text(s)
+
+
+def main(path):
+    apply(path, EDITS)
+    apply(Path(path).with_name('contacts.py'), CONTACTS_EDITS)
     print(f'patched {path}: upload stalls log the kernel and TLS backlog; '
-          'the log level follows HOWLDROP_LOG_LEVEL')
+          'the log level follows HOWLDROP_LOG_LEVEL; contacts.py reads the '
+          'certificate account on OpenSSL 3.0')
     return 0
 
 
