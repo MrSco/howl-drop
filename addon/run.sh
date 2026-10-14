@@ -828,13 +828,18 @@ survey_freqs() {  # IFACE FREQ...
     done
     ip link set "$dev" down 2>/dev/null
     iw dev "$dev" set type managed 2>/dev/null
-    # Heard there at all, in the order given (5 GHz first); then the rest.
-    # Not ranked by count: idle-time counts are a handful of frames, and
-    # during a transfer the phone gives 149 far more slots than 6. A survey
-    # that heard 10 on 6 and 7 on 149 picked 6, and an upload crawled at
-    # ~0.5 Mbit/s where on 149 it had run at ~4 (2026-10-14).
-    printf '%s' "$scores" | awk 'NF && $1 > 0 { print $2 }' | paste -sd' ' -
-    printf '%s' "$scores" | awk 'NF && $1 == 0 { print $2 }' | paste -sd' ' -
+    # 5 GHz before 2.4 GHz whatever was heard; within a band, heard first,
+    # in the order given. Not ranked by count: idle-time counts are a
+    # handful of frames, and the phone runs a transfer on 5 GHz, giving 149
+    # most of its slots and 6 a few. A survey that heard 10 on 6 and 7 on
+    # 149 picked 6 (an upload crawled at ~0.5 Mbit/s against ~4 on 149), and
+    # one that missed the phone on 149 altogether picked 6 too: a 1.1 MB
+    # photo took 27 s there and two photos stalled, where on 149 the photo
+    # crossed in about a second (2026-10-14).
+    printf '%s' "$scores" | awk 'NF && $1 > 0 && $2 > 5000 { print $2 }' | paste -sd' ' -
+    printf '%s' "$scores" | awk 'NF && $1 == 0 && $2 > 5000 { print $2 }' | paste -sd' ' -
+    printf '%s' "$scores" | awk 'NF && $1 > 0 && $2 < 5000 { print $2 }' | paste -sd' ' -
+    printf '%s' "$scores" | awk 'NF && $1 == 0 && $2 < 5000 { print $2 }' | paste -sd' ' -
 }
 
 # The AirDrop TCP conversation on awdl0 (what OWL hands the kernel and what
@@ -1134,7 +1139,7 @@ CHANNELS=$(option channels)
 SURVEY=0
 case "${CHANNELS// /}" in
     ""|auto)
-        if [ "$RADIO_KIND" = usb ]; then CHANNELS="44 149 36 6"; SURVEY=1; else CHANNELS=6; fi
+        if [ "$RADIO_KIND" = usb ]; then CHANNELS="149 44 36 6"; SURVEY=1; else CHANNELS=6; fi
         ;;
 esac
 WANT_FREQS=$(want_freqs "$CHANNELS")
