@@ -1,10 +1,11 @@
 name: OwlDrop
-version: "0.7.1"
+version: "0.8.0"
 slug: owldrop
-description: AirDrop on an MT7612U USB stick or the NUC's Intel Wireless-AC 8260, forwarded over Ethernet to owldrop.exe
+description: AirDrop from iPhones to Home Assistant OS, on any Wi-Fi card omdrop-owl supports. Files land in the share folder.
 url: https://github.com/MrSco/howl-drop
 arch:
   - amd64
+  - aarch64
 init: false
 startup: application
 boot: manual
@@ -22,30 +23,34 @@ apparmor: false
 map:
   - share:rw
 options:
-  pc_host: ""
   pc_name: ""
   save_folder: /share/owldrop
-  forward_to_pc: true
+  senders: []
   fetch_links: true
   fetch_max_mb: 100
-  debug_capture: false
-  radio: auto
+  forward_to_pc: true
+  pc_host: ""
+  interface: auto
+  allow_untested: false
   channels: ""
-  unicast_copies: 3
-  heard_window_tu: 16
-  senders: []
+  unicast_copies: 1
+  heard_window_tu: 0
+  verbose: false
+  debug_capture: false
 schema:
-  pc_host: str
   pc_name: str
   save_folder: "str?"
-  forward_to_pc: "bool?"
+  senders:
+    - "str?"
   fetch_links: "bool?"
   fetch_max_mb: "int(1,2000)?"
-  debug_capture: "bool?"
-  radio: "list(auto|usb|intel)?"
+  forward_to_pc: "bool?"
+  pc_host: str
+  interface: "str?"
+  allow_untested: "bool?"
   channels: "str?"
   unicast_copies: "int(1,5)?"
   heard_window_tu: "int(0,64)?"
-  senders:
-    - "str?"
+  verbose: "bool?"
+  debug_capture: "bool?"
 panel_icon: "mdi:wifi"

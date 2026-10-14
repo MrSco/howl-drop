@@ -1,66 +1,142 @@
-# Install OwlDrop on this Home Assistant OS NUC
+# OwlDrop add-on
 
-The NUC keeps Home Assistant OS. This folder is a local add-on. It does not replace the operating system and it does not patch Intel firmware. The image builds OWL and the radio helper from this repo (`userspace/`, `patches/`, `pins`), whose `iwlwifi` line is exclusive IBSS. Pull request 13 is not checked out. A USB Wi-Fi stick is not used.
+AirDrop from an iPhone to Home Assistant OS. While the add-on runs, a name
+appears on the iPhone's share sheet; files and text sent to it land in
+`/share/owldrop`, which the Samba share add-on shows to every PC on the
+network. A PC running `owldrop.exe` also gets each one.
 
-Ethernet on the I219-LM stays the uplink. Wi-Fi stays unused in the Home Assistant interface. The add-on takes the host's Intel iwlwifi PCI radio only while it is running. On this NUC that interface is usually `wlp2s0`. The name `wlan0` is not required.
+Home Assistant OS stays as it is: the add-on uses a Wi-Fi card the host
+kernel already drives, and loads no driver or firmware of its own.
 
-## Copy the folder onto the NUC
+## What it needs
 
-Supervisor builds an add-on from its own folder only, so `tools/stage-addon.sh` assembles a self-contained one at `build/addon/owldrop/` (this folder, plus the radio stack and the `owldrop-bridge` source).
+- **A Wi-Fi card with an omdrop-owl profile** (`userspace/owl-profiles`),
+  within AirDrop range of the phone. The add-on picks one by itself:
+  - a card that is **not** Home Assistant's network uplink runs **exclusive
+    mode** for as long as the add-on runs (it leaves any Wi-Fi network). Best
+    is a card with an active-monitor profile, such as a USB **MediaTek
+    MT7612U** (Alfa AWUS036ACM): it follows the phone onto 5 GHz, where the
+    iPhone runs its transfers. Cards with an IBSS profile (Intel AX2xx,
+    Realtek RTL8822BE) hold channel 6 only and are slow.
+  - a card that **is** the uplink, connected on channel 6, 44 or 149, can run
+    **shared mode** if its profile says so. That keeps the connection, and is
+    untried on Home Assistant OS.
 
-1. On the NUC, open Settings, Add-ons, Add-on store, and install either Samba share or Advanced SSH & Web Terminal if you do not already have a way onto the disk.
-2. The local add-on directory is `/addons`. The Samba share of that name is the same directory.
-3. From the repo root in Git Bash, stage and copy in one step: `tools/stage-addon.sh //homeassistant/addons/owldrop` (use the NUC's name or IP if `homeassistant` does not resolve). Or run it with no argument and copy `build/addon/owldrop/` there yourself. The path on the NUC is `/addons/owldrop/`.
-4. In the add-on store, open the menu and choose Check for updates. That reloads local add-ons. Open OwlDrop and install the update (the version is in `config.yaml`; bump it for every change you deploy, or Supervisor keeps the old image). Start it after the update finishes. Restarting the previous container keeps the old image.
+  A USB card needs no passthrough: the host's driver makes the interface and
+  the add-on shares the host network. [docs/hardware-notes.md](../docs/hardware-notes.md)
+  has what was measured.
+- **Bluetooth on the host** (`hci0`): the add-on advertises through the
+  host's `bluetoothd` so a phone wakes AirDrop for it.
+- An amd64 machine (tested) or aarch64 (builds the same way, untested). The
+  first install compiles OWL, which needs a network path to GitHub and takes a
+  while.
 
-The first install compiles OWL inside the image. The supervisor build needs a network path to GitHub and takes a while. Later builds reuse that layer unless `pins` or `patches/` changed.
+## Install
 
-## Turn protection mode off
+Supervisor builds a local add-on from its own folder, so `tools/stage-addon.sh`
+assembles a self-contained one at `build/addon/owldrop/` (this folder, plus
+the radio stack and the `owldrop-bridge` source).
 
-Open the OwlDrop add-on. Protection mode has to be off before it will start. The manifest asks for the host network, the host PID namespace, `NET_ADMIN`, `NET_RAW`, `SYS_ADMIN`, `/dev/net/tun`, the host D-Bus, and AppArmor off. The supervisor refuses those while protection mode is on. Host network is what puts the 8260 in this container. The host PID namespace and `SYS_ADMIN` are how the script enters that namespace when Supervisor left the container on the hassio bridge.
+1. Install the **Samba share** add-on (or another way onto `/addons`).
+2. From the repo root: `tools/stage-addon.sh //homeassistant/addons/owldrop`
+   (use your Home Assistant's name or address), or run it with no argument and
+   copy `build/addon/owldrop/` to `/addons/owldrop/` yourself.
+3. Settings, Add-ons, Add-on store, menu, **Check for updates**. OwlDrop
+   appears under Local add-ons. Install it.
+4. Turn **Protection mode off**. The add-on needs the host network, the host
+   PID namespace, `NET_ADMIN`, `NET_RAW`, `SYS_ADMIN`, `/dev/net/tun`, the
+   host D-Bus and AppArmor off, which Supervisor refuses while protection mode
+   is on. Leave full access off: it is not needed.
+5. Start it, and open the share sheet on the phone.
 
-Leave full access off. The add-on does not request it, and it does not bind the Bluetooth USB device.
+To deploy a change, bump `version` in `config.yaml` and stage again; without
+a new version Supervisor keeps the old image. Boot is manual: start the
+add-on when you want AirDrop. Stopping it gives the card back.
 
 ## Options
 
-`pc_name`, `pc_host` and `channels` can stay empty, and `radio` at `auto`.
+Every option can stay at its default.
 
-`radio` picks the AirDrop radio. `auto` uses a MediaTek MT7612U USB stick (Alfa AWUS036ACM, `0e8d:7612`, driver `mt76x2u`) when one is plugged in, and the NUC's built-in Intel Wireless-AC 8260 otherwise; `usb` and `intel` force one. The 8260 is soldered to the NUC6i7KYK and its firmware resets the card on 5 GHz, so it holds only 2.4 GHz channels, where an iPhone on 5 GHz Wi-Fi spends one slot in sixteen; it showed the tile and never finished a transfer. The stick runs t4t5/omdrop-owl pull request 13's active-monitor profile (ported into this repo's helper): no IBSS cell, an active monitor that acknowledges the phone itself, and it can transmit on 44 and 149. Home Assistant OS ships its driver (`CONFIG_MT76x2U`) and firmware (`mediatek/mt7662.bin`, the `MT76X2E` firmware package). Plug it into the NUC; the add-on needs no USB passthrough, because the host's driver makes the interface and the add-on shares the host network.
+`pc_name` is the name on the share sheet, at most 63 characters. Empty: the
+name a running `owldrop.exe` announces in the first 10 s, else `OwlDrop`.
 
-`save_folder` (default `/share/owldrop`) is where the phone's files land, and its shared text as UTF-8 files in `text/` under it. `/share` is Home Assistant's share folder, which the Samba share add-on exposes as `share`, so any PC on the network can open `\\homeassistant\share\owldrop`. No PC has to be running anything.
+`save_folder` (default `/share/owldrop`) is where files land, and shared
+text as UTF-8 files in `text/` under it.
 
-`fetch_links` (default on): sharing a picture you are viewing in Safari or Chrome sends its web address, not the picture (the sheet still says "PNG Image"), and the receiver stores an address as a `.url` shortcut. With this on, a shortcut whose address serves a file (anything but a web page) is replaced by the file, fetched by the NUC; a web page stays a shortcut. Fetching is fenced, because in Everyone mode anyone nearby can send a link: http and https only, public internet addresses only, checked again on every redirect (nothing on your LAN, the router, or Home Assistant), up to `fetch_max_mb` (default 100 MB), 30 s timeout. Lines starting `Deliver:` say what was fetched or why not.
+`senders` (default empty: anyone nearby can send) restricts who may send,
+like a Mac set to Contacts Only. List the phone numbers and Apple ID email
+addresses of the people allowed, one per entry (one entry with commas also
+works). Write phone numbers with the country code, e.g. `+1 555 123 4567`:
+Apple compares the number with its country code, so `555 123 4567` never
+matches. With any sender listed, a transfer is accepted only from an iPhone
+that proves, with Apple's signature, that it belongs to an Apple ID with one
+of those numbers or addresses, over a connection whose certificate Apple
+issued to that same Apple ID; anyone else gets "declined" and nothing is
+saved. The add-on also stays off the share sheet of a phone it can identify
+as someone else's. The sender must be signed in to iCloud. The log says
+`Senders: Contacts Only` and how many are listed (never the numbers), then
+`ask accepted` or `ask REFUSED (contacts only)` with the reason. Being on
+your Wi-Fi does not matter: AirDrop does not use your network.
 
-`senders` (default empty: anyone nearby can send) restricts who may send, like a Mac set to Contacts Only. List the phone numbers and Apple ID email addresses of the people allowed, one per entry (the add-on UI shows a list; one entry with commas also works). Write phone numbers with the country code, e.g. `+1 555 123 4567`: Apple compares the number with its country code, so `555 123 4567` never matches. With any sender listed, the receiver accepts a transfer only from an iPhone that proves, with Apple's signature, that it belongs to an Apple ID with one of those numbers or addresses, and that its connection's certificate was issued to that same Apple ID; everyone else gets "declined" and nothing is saved. It also stays off the share sheet of a phone it can identify as someone else's. The sender's phone must be signed in to iCloud. The log says `Senders: Contacts Only` with how many are listed (never the numbers themselves), `ask accepted` for an allowed sender and `ask REFUSED (contacts only)` with the reason for anyone else. Being on the same Wi-Fi does not matter: AirDrop does not use your network, so the network cannot tell who is sending.
+`fetch_links` (default on): sharing a picture from Safari or Chrome sends its
+web address, not the picture, and an address is stored as a `.url` shortcut.
+With this on, a shortcut whose address serves a file (anything but a web
+page) is replaced by the file. Fetching is fenced, because anyone allowed to
+send can send a link: http and https only, public internet addresses only,
+checked again on every redirect (nothing on your LAN), up to `fetch_max_mb`
+(default 100), 30 s timeout. `Deliver:` lines say what was fetched or why
+not.
 
-`forward_to_pc` (default on) also sends each new file to `owldrop.exe` when a PC runs it: the file goes to that PC's `Downloads\OwlDrop` and text to its clipboard. The file stays in `save_folder` either way, files already there when the add-on starts are not sent, and a file that arrives while no PC answers is sent once one does (while the add-on runs). Allow UDP 47631 and TCP 47632 from the LAN on that PC. Build `owldrop.exe` with `tools\build-owldrop.ps1`.
+`forward_to_pc` (default on) also sends each new file to `owldrop.exe` when a
+PC runs it: the file goes to that PC's `Downloads\OwlDrop` and text to its
+clipboard. Files stay in `save_folder` either way. Allow UDP 47631 and TCP
+47632 from the LAN on that PC. Set `pc_host` to the PC's address only when
+its beacon does not reach Home Assistant.
 
-`pc_name` is the name on the iPhone share sheet. Empty: the name a running `owldrop.exe` announces in the first 10 s, else `OwlDrop`. At most 63 characters. Set `pc_host` to the PC's address only when its beacon does not reach the NUC.
+`interface` (default `auto`) names the Wi-Fi interface to use, e.g.
+`wlan1`. `auto` picks one: an exclusive-mode card that is not the uplink
+(active monitor first), else a shared-mode card that is. When none fits, the
+log lists every Wi-Fi interface and why it was passed over.
 
-`channels` is the channels to try, in order, separated by spaces: any 2.4 GHz channel `1`-`13`, or `36`, `44` or `149`. Empty (or `auto`) means `6` for the 8260; for the USB stick it means a survey before the window: about 5 s each on 149, 44, 36 and 6, counting AWDL frames from anyone but the stick (keep the share sheet open). The window starts on 5 GHz whenever the stick may transmit there, where the phone was heard if anywhere, else 149: an iPhone runs transfers on 5 GHz (a photo crossed in a second on 149 and took 27 s on 6). With the iPhone on 5 GHz Wi-Fi, leave it at `6`: the phone visits 6 one slot in sixteen. With the iPhone on a 2.4 GHz network, set it to that network's channel (shown on the phone's schedule in the log, e.g. `5,0,149,0,0,149,5,5,6,...` is channel 5): the phone is there about 5 slots in 16 (`patches/owl-12-any-24ghz-channel.patch`). On this 8260, 0.1.12 and 0.1.13 unlocked 5 GHz and joined channel 44; the log said `Joined IBSS` and the iPhone never listed the PC. On channel 6 (0.1.11) the tile appeared. Do not use 44: on 0.2.3 the cell joined there, OWL rejected the phone's frames, and about 13 s in the 8260's firmware stopped answering and iwlwifi removed and re-probed the card (kernel log in `docs/8260-ibss-join.md`). The add-on now stops itself when that happens.
+`allow_untested` (default off) lets the add-on use a card whose profile is
+untested, including the catch-all line for drivers the table does not name.
+If you try one, the omdrop-owl README says how to report it.
 
-`unicast_copies` (1–5, default 3) is how many times OWL sends each packet to the phone while the phone is on channel 6 (`owl -U`, `patches/owl-10-fixed-radio-copies.patch`). OWL sends unicast without waiting for an acknowledgement, and an iPhone on 5 GHz Wi-Fi visits channel 6 one slot in sixteen, so a lost packet otherwise waits a whole schedule period. 1 is the original behaviour.
+`channels` (exclusive mode) is the channels to try, in order, separated by
+spaces: `1`-`13`, `36`, `44` or `149`. Empty or `auto`: an active-monitor
+card listens about 5 s each on 149, 44, 36 and 6 for the phone (keep the
+share sheet open) and starts on 5 GHz, where the phone was heard if anywhere,
+else 149; an IBSS card uses 6. With an IBSS card and the iPhone on a 2.4 GHz
+network, that network's channel can do better than 6. Shared mode ignores
+this: it runs on its network's channel.
 
-Boot is manual. Start the add-on when you want the window. Stopping it runs `omdrop-discoverable stop`, which leaves the IBSS cell and returns the station interface to a station.
+`unicast_copies` (1-5, default 1) and `heard_window_tu` (0-64, default 0)
+are for a card stuck on a channel the phone rarely visits: OWL sends each
+frame to the phone that many times while the phone is there (`owl -U`), and
+answers within that many TU of hearing the phone rather than in the slot its
+clock gives it (`owl -H`). The defaults are OWL's own behaviour.
 
-## What the log says first
+`verbose` (default off) logs the radio in detail: every request's headers,
+OWL's peer schedule changes, each TCP connection, frame counts on the
+monitor, mDNS and announcer lines, and a radio check every 30 s. Without it
+the log keeps the start-up, each transfer, deliveries and failures.
 
-The log starts with the Wireless-AC 8260. It names the released exclusive profile and BSSID `00:25:00:ff:94:73`, then the channels it will try (`Channels to try, in order: 2437 MHz (channel 6).` by default). Then it prints the interface name the host assigned, the driver, the PCI id, and the firmware version `ethtool` read from that interface.
+`debug_capture` (default off) writes pcap files of the monitor interface and
+the AirDrop TCP to `save_folder/debug` (a ring: up to 160 MB and 80 MB).
+Turn it off and delete the folder when done.
 
-Before the join, the add-on marks the interface unmanaged and stops the host `wpa_supplicant` from holding it. `nmcli` unmanaged alone leaves that process attached. The interface that will be joined is set to type ibss while it is down. The log line `Set <name> to type ibss while it was down.` is that step. The interface is brought up after that. IPv6 is turned off on that cell so the kernel does not answer on the AirDrop BSSID. Only when `channels` names 44 or 149: before that join, an unset regulatory domain is set to US and the card scans while it is still a station, and again after the IBSS interface is up, because taking the station down can close 5 GHz again. The log line `5220 MHz (channel 44) is usable after the cell scan.` means that lock opened. The join is then tried on each channel in order: HT20, fixed frequency, BSSID `00:25:00:ff:94:73`, beacon interval 10000. A frequency the card marks disabled or No IR is skipped, and the log says so. The log line `Joined IBSS on 2437 MHz (channel 6), HT20, BSSID 00:25:00:ff:94:73.` is the default cell. The add-on then writes that channel to `/etc/omdrop/exclusive-channels` and `1` to `/etc/omdrop/keep-cell`, so `omdrop-discoverable` keeps this cell instead of taking it down to join again, and pins OWL to the same channel. If `awdlibss0` cannot be type ibss, it is deleted first and the same steps run on the station alone. Other interfaces on that phy, including a P2P device NetworkManager left up, are deleted before the bring-up. One IBSS interface can come up only when it is the only interface running on the phy. A join that comes up logs that cell. If the join itself returns operation not supported after the interface is up and the supplicant has released it, the log says so in one sentence. The add-on does not switch to active monitor and does not patch Intel firmware. The unmanaged flag is a runtime `nmcli` on the host bus. A NetworkManager restart clears it until the next start. The add-on does not write the host `/etc`; `/etc/omdrop` is the container's.
+## Reading the log
 
-The receiver will not create its certificate while it is root. The first start writes a self-signed pair into the add-on data and reuses it after that. `awdl0` needs a link-local address that is not still tentative. The log line `awdl0 IPv6 address is <addr> and it is ready.` is that step. A tentative address is added again without duplicate-address detection. The image also installs the plugin's Apple root at `/opt/share/certs/apple_root_ca.pem`, which is the path the receiver checks. The log line `The AirDrop receiver is listening on awdl0 port 8771.` means that bind succeeded.
-
-Files the phone sends land in `save_folder`. Lines starting `Forward:` are the forwarder: `no OwlDrop PC answering` (files stay put), `forwarding to <PC>`, `sent file <name>`.
-
-## After the window is up
-
-Before the receiver starts, `awdl0`'s route gets a 20 ms TCP retransmit floor instead of 200 ms (`TCP on awdl0 resends after 20 ms`). OWL sends each unicast frame once and the phone visits channel 6 only briefly, so lost segments are normal there; the default floor stretched the `/Discover` TLS handshake to seconds and the phone hung up before the answer arrived.
-
-Then the log follows the radio, because OWL's and the announcer's own logs stay inside the container:
-
-- `OWL: ... add peer <mac>` means OWL synced with a phone. None at all means the radio never heard it.
-- `<time> TCP <state> [<phone>]:<port>: rto:â€¦ rtt:â€¦ retrans:â€¦` is an AirDrop connection, printed when it changes. High `rto`, `retrans` or `bytes_retrans` is loss on the air.
-- `Radio check:` every 30 s, with the peer count, the helper's status, and the announcer's last lines.
-
-A `POST /Discover ... 200` with no tile on the phone, and `retrans` on that connection, means the answer did not reach the phone in time.
+- `Interface <name>: driver ...` and `Profile: ...` say which card runs and
+  how.
+- `Window is up on <name>` means the phone can see the name now.
+- `ask from <phone>` and `upload ...: stored <file>`, then
+  `Deliver: delivered <file>`, are a transfer.
+- `OWL: ... add peer <mac>` means OWL synced with a phone. None at all, with
+  the share sheet open, means the radio never heard it: check the card's
+  channel and distance.
+- `upload ...: archive complete ..., answering without it` is normal: the
+  iPhone sometimes never ends its upload, and the add-on answers once the
+  archive is whole ([hardware notes](../docs/hardware-notes.md)).
+- `Forward:` lines are the forwarder: `no OwlDrop PC answering` (files stay
+  put), `forwarding to <PC>`, `sent file <name>`.

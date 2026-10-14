@@ -22,14 +22,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         routes = {
-            '/img/skullcanyon.png': ('image/png', PNG),
+            '/img/sunset.png': ('image/png', PNG),
             '/page': ('text/html; charset=utf-8', b'<html>hi</html>'),
             '/big.bin': ('application/octet-stream', b'x' * 5000),
             '/noext': ('image/jpeg', b'\xff\xd8\xff' + b'j' * 100),
         }
         if self.path == '/moved':
             self.send_response(302)
-            self.send_header('Location', '/img/skullcanyon.png')
+            self.send_header('Location', '/img/sunset.png')
             self.end_headers()
             return
         ctype, body = routes.get(self.path, ('text/plain', b''))
@@ -71,21 +71,21 @@ class DeliverTests(unittest.TestCase):
         return sorted(str(p.relative_to(self.dest)).replace('\\', '/') for p in self.dest.rglob('*') if p.is_file())
 
     def test_a_local_address_is_refused_by_default(self):
-        self.shortcut('a.url', self.base + '/img/skullcanyon.png')
+        self.shortcut('a.url', self.base + '/img/sunset.png')
         self.run_once(allow_private=False)
         self.assertEqual(self.listing(), ['a.url'])
 
     def test_a_link_to_a_file_becomes_the_file(self):
-        self.shortcut('www.example-skullcanyon.png.url', self.base + '/img/skullcanyon.png')
+        self.shortcut('www.example-sunset.png.url', self.base + '/img/sunset.png')
         self.run_once(allow_private=True)
-        self.assertEqual(self.listing(), ['skullcanyon.png'])
-        self.assertEqual((self.dest / 'skullcanyon.png').read_bytes(), PNG)
+        self.assertEqual(self.listing(), ['sunset.png'])
+        self.assertEqual((self.dest / 'sunset.png').read_bytes(), PNG)
         self.assertEqual(list(self.staging.glob('*.url')), [])
 
     def test_a_redirect_is_followed(self):
         self.shortcut('moved.url', self.base + '/moved')
         self.run_once(allow_private=True)
-        self.assertEqual(self.listing(), ['skullcanyon.png'])
+        self.assertEqual(self.listing(), ['sunset.png'])
 
     def test_a_web_page_stays_a_shortcut(self):
         self.shortcut('page.url', self.base + '/page')

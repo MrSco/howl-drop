@@ -1,7 +1,7 @@
 # Local Home Assistant add-on. Home Assistant OS stays installed.
 # Built from the folder tools/stage-addon.sh assembles: the radio stack comes
 # from this repo (omdrop-owl/), not a clone, so helper edits ship with it.
-# It does not ship Intel firmware.
+# It ships no Wi-Fi driver or firmware: the host kernel drives the card.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive

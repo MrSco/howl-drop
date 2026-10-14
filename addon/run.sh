@@ -1,8 +1,10 @@
 #!/bin/bash
-# AirDrop receiver and owldrop-bridge on Home Assistant OS.
-# Ethernet stays the uplink. The Intel Wireless-AC 8260 is whichever host
-# interface is iwlwifi on PCI (often wlp2s0). It is used only for the
-# released omdrop-owl iwlwifi exclusive window.
+# AirDrop on Home Assistant OS: omdrop-owl's radio helper on a Wi-Fi card the
+# host kernel already drives, omdrop-plugin's receiver, delivery into
+# save_folder, and an optional forwarder to owldrop.exe on a PC.
+# Which card and how it runs come from owl-profiles, as on any omdrop-owl
+# machine: exclusive mode (an IBSS cell, or an active monitor) on a card
+# that is not Home Assistant's uplink, or shared mode on one that is.
 set -uo pipefail
 
 LIB=/usr/lib/omdrop
@@ -33,6 +35,9 @@ WATCH_PID=
 RADIO=0
 
 say() { printf '%s\n' "$*"; }
+# Detail for debugging a radio, printed only with the verbose option on.
+VERBOSE=false
+vsay() { [ "$VERBOSE" != true ] || say "$@"; }
 
 option() {
     python3 - "$1" <<'PY'
@@ -78,48 +83,25 @@ firmware_of() {
     ethtool -i "$1" 2>/dev/null | awk -F': ' '/^firmware-version:/ { print $2; exit }'
 }
 
-# 8260 PCI ids. A lone iwlwifi PCI radio is still accepted when the id
-# is a later firmware revision of the same card.
-radio_is_8260() {
-    case "$(pci_of "$1")" in
-        8086:24f3|8086:24f4|8086:24f5|8086:24f6) return 0 ;;
-    esac
-    return 1
+# owl-profiles as the helper reads it (load_profile): this driver's line,
+# else the "*" line. Prints status, mode, mon_mac, reconnect, mt76_pm and
+# backend; a line without the backend field is ibss.
+PROFILES=$LIB/owl-profiles
+profile_of() {  # DRIVER
+    local line
+    line=$(awk -v d="$1" '!/^#/ && NF >= 6 && $1 == d { print; exit }' "$PROFILES" 2>/dev/null)
+    [ -n "$line" ] || line=$(awk '!/^#/ && NF >= 6 && $1 == "*" { print; exit }' "$PROFILES" 2>/dev/null)
+    [ -n "$line" ] || return 1
+    printf '%s\n' "$line" | awk '{ print $2, $3, $4, $5, $6, ($7 == "active-monitor" ? $7 : "ibss") }'
 }
 
-find_radio() {
-    local d name drv sub chosen="" only="" count=0
-    for d in /sys/class/net/*; do
-        [ -d "$d/phy80211" ] || continue
-        name=$(basename "$d")
-        case "$name" in
-            awdl0|mon0|awdlibss0) continue ;;
-        esac
-        drv=$(driver_of "$name")
-        [ "$drv" = iwlwifi ] || continue
-        sub=$(basename "$(readlink -f "$d/device/subsystem" 2>/dev/null)" 2>/dev/null || true)
-        [ "$sub" = pci ] || continue
-        count=$((count + 1))
-        only=$name
-        if [ -z "$chosen" ] && radio_is_8260 "$name"; then
-            chosen=$name
-        fi
-    done
-    if [ -n "$chosen" ]; then
-        printf '%s\n' "$chosen"
-        return 0
-    fi
-    if [ "$count" -eq 1 ]; then
-        printf '%s\n' "$only"
-        return 0
-    fi
-    return 1
+# Interfaces with a default route: Home Assistant's own network.
+uplinks() {
+    { ip -4 route show default; ip -6 route show default; } 2>/dev/null \
+        | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1) }' | sort -u
 }
 
-# The MT7612U USB stick (mt76x2u), run as pull request 13's active monitor.
-# The 8260 is soldered to this NUC, so a USB radio is how it gets one that
-# can transmit on 44 and 149, where an iPhone on 5 GHz Wi-Fi mostly is.
-find_usb_radio() {
+wifi_ifaces() {
     local d name
     for d in /sys/class/net/*; do
         [ -d "$d/phy80211" ] || continue
@@ -127,11 +109,87 @@ find_usb_radio() {
         case "$name" in
             awdl0|mon0|awdlibss0) continue ;;
         esac
-        [ "$(driver_of "$name")" = mt76x2u ] || continue
         printf '%s\n' "$name"
-        return 0
     done
-    return 1
+}
+
+supports_active_monitor() {
+    iw phy "$(phy_of "$1")" info 2>/dev/null | grep -q 'Device supports active monitor'
+}
+
+# Can IFACE carry the window? Prints "RANK BACKEND STATUS", lower ranks
+# better, or "- REASON". Exclusive mode takes the card off any network, so
+# never Home Assistant's uplink; shared mode stays associated, so it needs a
+# card that is connected, which here means the uplink. An active monitor
+# can follow the phone onto 5 GHz; the IBSS cards measured so far start no
+# 5 GHz cell, so they rank after it.
+judge_iface() {  # IFACE
+    local name=$1 drv prof status mode backend up=no rank
+    drv=$(driver_of "$name")
+    prof=$(profile_of "$drv") || { echo "- no-profile"; return; }
+    read -r status mode _ _ _ backend <<< "$prof"
+    uplinks | grep -qx "$name" && up=yes
+    case "$mode" in
+        exclusive)
+            [ "$up" = no ] || { echo "- uplink"; return; }
+            if [ "$backend" = active-monitor ]; then
+                supports_active_monitor "$name" || { echo "- no-active-monitor"; return; }
+                rank=0
+            else
+                rank=1
+            fi
+            ;;
+        shared)
+            [ "$up" = yes ] || { echo "- not-connected"; return; }
+            rank=2
+            backend=shared
+            ;;
+        *) echo "- mode"; return ;;
+    esac
+    if [ "$status" != tested ]; then
+        [ "$ALLOW_UNTESTED" = true ] || { echo "- untested"; return; }
+        rank=$((rank + 3))
+    fi
+    echo "$rank $backend $status"
+}
+
+why_not() {
+    case "$1" in
+        no-profile) echo "owl-profiles has no line for its driver" ;;
+        uplink) echo "it carries Home Assistant's network, and exclusive mode would take that away" ;;
+        no-active-monitor) echo "its profile needs an active monitor, and this driver offers none" ;;
+        not-connected) echo "its profile is shared mode, which needs it connected to a Wi-Fi network" ;;
+        untested) echo "its profile is untested; turn allow_untested on to try it" ;;
+        *) echo "its profile asks for a mode omdrop-owl does not implement" ;;
+    esac
+}
+
+# The best interface: prints "IFACE BACKEND STATUS", or nothing.
+pick_radio() {
+    local name verdict rank best= best_rank=99
+    for name in $(wifi_ifaces); do
+        verdict=$(judge_iface "$name")
+        rank=${verdict%% *}
+        [ "$rank" = - ] && continue
+        if [ "$rank" -lt "$best_rank" ]; then
+            best_rank=$rank
+            best="$name ${verdict#* }"
+        fi
+    done
+    [ -z "$best" ] || printf '%s\n' "$best"
+}
+
+explain_radios() {
+    local name verdict
+    say "Wi-Fi interfaces here:"
+    for name in $(wifi_ifaces); do
+        verdict=$(judge_iface "$name")
+        if [ "${verdict%% *}" = - ]; then
+            say "  ${name} (driver $(driver_of "$name"), $(bus_id_of "$name")): not usable, $(why_not "${verdict#* }")."
+        else
+            say "  ${name} (driver $(driver_of "$name"), $(bus_id_of "$name")): usable, ${verdict#* }."
+        fi
+    done
 }
 
 usb_id_of() {
@@ -140,12 +198,20 @@ usb_id_of() {
     printf '%s:%s' "$(cat "$dev/../idVendor" 2>/dev/null)" "$(cat "$dev/../idProduct" 2>/dev/null)"
 }
 
+bus_id_of() {
+    case "$(basename "$(readlink -f "/sys/class/net/$1/device/subsystem" 2>/dev/null)" 2>/dev/null)" in
+        pci) printf 'PCI %s' "$(pci_of "$1")" ;;
+        usb) printf 'USB %s' "$(usb_id_of "$1")" ;;
+        *) printf 'bus unknown' ;;
+    esac
+}
+
 list_ifaces() {
     local d name
     for d in /sys/class/net/*; do
         [ -e "$d" ] || continue
         name=$(basename "$d")
-        say "  ${name}: driver $(driver_of "$name"), PCI $(pci_of "$name")"
+        say "  ${name}: driver $(driver_of "$name"), $(bus_id_of "$name")"
     done
 }
 
@@ -264,9 +330,9 @@ mark_station_converted() {
     printf '%s\n' "$ipv6" > /run/omdrop-owl/converted
 }
 
-# iwlmvm advertises IBSS, but its interface combinations do not list it.
-# mac80211 allows the bring-up only when this netdev is the only one running
-# on the phy. A live P2P device or a second vif makes `ip link set up`
+# A driver can advertise IBSS without listing it in its interface
+# combinations (iwlmvm does). mac80211 then allows the bring-up only when this
+# netdev is the only one running on the phy. A live P2P device or a second vif makes `ip link set up`
 # return EBUSY.
 drop_other_ifaces() {
     local keep="${1:-}" phy name d
@@ -421,9 +487,7 @@ freq_name() {
     esac
 }
 
-# The channels option ("6" by default) as frequencies, in its order. On this
-# 8260 a cell on 44 reports Joined IBSS and the iPhone never lists it; on 6
-# the tile appears. 5 GHz stays available for experiments ("44 149 6").
+# The channels option as frequencies, in its order.
 want_freqs() {
     local c out=
     for c in $1; do
@@ -544,15 +608,15 @@ report_5ghz() {
     for freq in 5220 5745; do
         label=$(freq_name "$freq")
         if printf '%s\n' "$allowed" | grep -qx "$freq"; then
-            say "${label} is usable ${when}."
+            vsay "${label} is usable ${when}."
         else
             say "${label} is disabled or No IR ${when}."
         fi
     done
 }
 
-# Hear a 5 GHz network. Intel keeps those channels receive-only until one
-# is heard. The join arguments are not involved.
+# Hear a 5 GHz network. Some cards (Intel's) keep those channels
+# receive-only until one is heard. The join arguments are not involved.
 scan_for_5ghz() {
     local err rc
     if ! iface_is_up "$1"; then
@@ -580,9 +644,9 @@ allow_5ghz() {
     local phy country allowed err
     phy=$(phy_of "$1")
     country=$(reg_country)
-    say "Regulatory domain: ${country:-unread}."
+    vsay "Regulatory domain: ${country:-unread}."
     if iw reg get 2>/dev/null | grep -q 'self-managed'; then
-        say "This radio keeps its own regulatory domain."
+        vsay "This radio keeps its own regulatory domain."
     fi
     case "${country:-00}" in
         00|99|"")
@@ -649,7 +713,7 @@ ensure_identity() {
     cert=$base/keys/certificate.self-signed.pem
     key=$base/keys/key.self-signed.pem
     if [ -f "$cert" ] && [ -f "$key" ]; then
-        say "Using the self-signed AirDrop identity already in the add-on data."
+        vsay "Using the self-signed AirDrop identity already in the add-on data."
         return 0
     fi
     if [ -e "$cert" ] || [ -e "$key" ]; then
@@ -717,7 +781,7 @@ ensure_awdl_ipv6() {
 $(awdl_linklocal)
 EOF
     if [ "${state:-}" = ready ] && [ -n "${addr:-}" ]; then
-        say "awdl0 IPv6 address is ${addr} and it is ready."
+        vsay "awdl0 IPv6 address is ${addr} and it is ready."
         return 0
     fi
     sysctl -qw net.ipv6.conf.awdl0.accept_dad=0 2>/dev/null || true
@@ -740,7 +804,7 @@ EOF
         say "awdl0 still has no usable IPv6 address, so the AirDrop receiver will not bind."
         return 1
     fi
-    say "awdl0 IPv6 address is ${addr} and it is ready."
+    vsay "awdl0 IPv6 address is ${addr} and it is ready."
     return 0
 }
 
@@ -759,8 +823,8 @@ fast_awdl_retransmit() {
     for opts in "rto_min 20ms quickack 1" "rto_min 20ms"; do
         # shellcheck disable=SC2086
         if err=$(ip -6 route add fe80::/64 dev awdl0 metric 128 $opts 2>&1); then
-            say "TCP on awdl0 resends after 20 ms instead of 200 ms ($opts)."
-            ip -6 route show dev awdl0 2>/dev/null | sed 's/^/  awdl0 route: /'
+            vsay "TCP on awdl0 resends after 20 ms instead of 200 ms ($opts)."
+            [ "$VERBOSE" != true ] || ip -6 route show dev awdl0 2>/dev/null | sed 's/^/  awdl0 route: /'
             return 0
         fi
         say "ip -6 route add fe80::/64 dev awdl0 metric 128 ${opts}: ${err}"
@@ -776,7 +840,7 @@ fast_awdl_retransmit() {
 # carries AWDL's BSSID. iw's channel report is not proof: on the MT7612U an
 # active monitor alone "accepted" channel changes and kept receiving on
 # channel 1 (pull request 13), and on Home Assistant OS iw reported no channel
-# at all while the stick heard nothing on 44 (2026-10-14).
+# at all while the card heard nothing on 44 (2026-10-14).
 frames_heard() {  # SECS
     local secs=$1 cap freqs awdl total own senders
     command -v tcpdump >/dev/null 2>&1 || return 0
@@ -789,16 +853,17 @@ frames_heard() {  # SECS
     # Whose: a monitor interface also captures what it sends, and OWL sends
     # all the time, so AWDL frames alone do not prove the phone is heard.
     own=$(cat "/sys/class/net/${MON_IF}/address" 2>/dev/null)
-    senders=$(printf '%s
-' "$cap" | grep -i "$BSSID" | grep -oiE 'SA:[0-9a-f:]{17}' | cut -c4-         | tr 'A-F' 'a-f' | sort | uniq -c | sort -rn | head -n 5         | awk -v own="$own" '{ printf "%s%s x%s%s", (NR > 1 ? ", " : ""), $2, $1, ($2 == own ? " (us)" : "") }')
+    senders=$(printf '%s\n' "$cap" | grep -i "$BSSID" | grep -oiE 'SA:[0-9a-f:]{17}' | cut -c4- \
+        | tr 'A-F' 'a-f' | sort | uniq -c | sort -rn | head -n 5 \
+        | awk -v own="$own" '{ printf "%s%s x%s%s", (NR > 1 ? ", " : ""), $2, $1, ($2 == own ? " (us)" : "") }')
     say "AWDL senders: ${senders:-none with a source address}."
 }
 
 # Where the phone is. Before the window, listen on each of FREQS for a few
 # seconds and count AWDL frames from anyone but us; print FREQS back, the
 # busiest first, ties in the order given. Receive only, with the station as
-# a single passive monitor, which tunes this stick (an active monitor alone
-# does not, pull request 13). An iPhone uses AWDL most while its share sheet
+# a single passive monitor, which tunes the card (on the MT7612U an active
+# monitor alone does not, pull request 13). An iPhone uses AWDL most while its share sheet
 # is open. 0.5.1 on 44 heard only its own frames with the phone on 5 GHz
 # Wi-Fi (2026-10-14): its channels are not fixed. Messages go to stderr, so
 # the caller's $(...) gets only the frequencies.
@@ -826,7 +891,7 @@ survey_freqs() {  # IFACE FREQ...
             | tr 'A-F' 'a-f' | grep -vx "${own:-none}" | sort | uniq -c | sort -rn)
         n=$(printf '%s\n' "$senders" | awk 'NF { s += $1 } END { print s + 0 }')
         heard=$(printf '%s\n' "$senders" | head -n 3 | awk 'NF { printf "%s%s x%s", (NR > 1 ? ", " : ""), $2, $1 }')
-        say "Survey: $(freq_name "$f"): $(printf '%s\n' "$cap" | grep -c 'MHz') frames, ${n} AWDL from others${heard:+ (${heard})}." >&2
+        vsay "Survey: $(freq_name "$f"): $(printf '%s\n' "$cap" | grep -c 'MHz') frames, ${n} AWDL from others${heard:+ (${heard})}." >&2
         scores="${scores}${n} $f"$'\n'
     done
     ip link set "$dev" down 2>/dev/null
@@ -932,7 +997,7 @@ neighbor_for() {  # IPV6 (as tcp6_8771 prints it)
     state=$(printf '%s\n' "$entry" | awk 'NF { print $NF; exit }')
     case "$state" in
         PERMANENT|REACHABLE|STALE|DELAY|PROBE)
-            say "Half-open connection from ${addr}: its neighbour entry is ${entry}. The SYN-ACK has a MAC to go to."
+            vsay "Half-open connection from ${addr}: its neighbour entry is ${entry}. The SYN-ACK has a MAC to go to."
             NEIGH_FIXED="$NEIGH_FIXED$addr "
             return 0 ;;
     esac
@@ -963,11 +1028,14 @@ neighbor_for() {  # IPV6 (as tcp6_8771 prints it)
 watch_radio() {
     local owl=/run/omdrop-owl/owl.log ann=/run/omdrop-owl/announce.log mdns=/run/omdrop-owl/mdns.log
     local seen=0 total tick=0 peers tcp last_tcp= fault= mseen=0 mtotal
-    say "OWL's first lines:"
-    head -n 15 "$owl" 2>/dev/null | sed 's/^/OWL: /'
+    vsay "OWL's first lines:"
+    [ "$VERBOSE" != true ] || head -n 15 "$owl" 2>/dev/null | sed 's/^/OWL: /'
     seen=$(wc -l < "$owl" 2>/dev/null || echo 0)
-    say "Interfaces on this phy:"
-    iw dev 2>/dev/null | grep -E 'Interface|type|channel|addr' | sed 's/^[[:space:]]*/  /'
+    vsay "Interfaces on this phy:"
+    [ "$VERBOSE" != true ] || iw dev 2>/dev/null | grep -E 'Interface|type|channel|addr' | sed 's/^[[:space:]]*/  /'
+    # Without verbose, OWL's lines are peers coming and going and failures.
+    local pattern='add peer|remove peer|error|fail|fatal|refus'
+    [ "$VERBOSE" != true ] || pattern='peer|error|fail|warn|fatal|refus'
     while [ -f /tmp/owldrop-running ]; do
         sleep 1
         tick=$((tick + 1))
@@ -986,7 +1054,7 @@ watch_radio() {
         # mawk (Debian's awk) has no strtonum, hence hex().
         [ -n "$tcp" ] || tcp=$(tcp6_8771 | awk '{
                 printf "TCP state %s, peer [%s]:%d, tx:rx queue %s, retransmits %d\n", $1, $2, $3, $4, $5 }')
-        if [ -n "$tcp" ] && [ "$tcp" != "$last_tcp" ]; then
+        if [ "$VERBOSE" = true ] && [ -n "$tcp" ] && [ "$tcp" != "$last_tcp" ]; then
             printf '%s %s\n' "$(date +%H:%M:%S)" "$tcp"
         fi
         last_tcp=$tcp
@@ -1004,17 +1072,17 @@ watch_radio() {
         mtotal=$(wc -l < "$mdns" 2>/dev/null || echo 0)
         [ "$mtotal" -lt "$mseen" ] && mseen=0
         if [ "$mtotal" -gt "$mseen" ]; then
-            sed -n "$((mseen + 1)),${mtotal}p" "$mdns" | tail -n 5 | sed 's/^/mDNS: /'
+            [ "$VERBOSE" != true ] || sed -n "$((mseen + 1)),${mtotal}p" "$mdns" | tail -n 5 | sed 's/^/mDNS: /'
             mseen=$mtotal
         fi
         total=$(wc -l < "$owl" 2>/dev/null || echo 0)
         [ "$total" -lt "$seen" ] && seen=0
         if [ "$total" -gt "$seen" ]; then
-            # A run of one message (the 8260 on channel 44 logged
+            # A run of one message (an Intel 8260 on channel 44 logged
             # "unhandled frame" dozens of times a second) is one line and a
             # count, timestamp aside.
             sed -n "$((seen + 1)),${total}p" "$owl" \
-                | grep -iE 'peer|error|fail|warn|fatal|refus' \
+                | grep -iE "$pattern" \
                 | awk '{ t = $1; $1 = ""; msg = $0 }
                        msg == last { n++; next }
                        { if (n) print "OWL: (" n " more of that)"; print "OWL: " t msg; last = msg; n = 0 }
@@ -1027,18 +1095,18 @@ watch_radio() {
                 say "OWL cannot send any more. Interfaces now:"
                 iw dev 2>/dev/null | grep -E 'Interface|type|channel' | sed 's/^[[:space:]]*/  /'
                 kernel_radio_log
-                # On channel 44 the 8260's firmware stopped answering (-5 on
-                # every command) and iwlwifi removed and re-probed the card,
-                # taking every interface with it (2026-10-12). Nothing
+                # An Intel 8260's firmware stopped answering on channel 44 (-5
+                # on every command) and iwlwifi removed and re-probed the
+                # card, taking every interface with it (2026-10-12). Nothing
                 # recovers a window from that, so end it plainly.
                 if [ ! -d /sys/class/net/mon0 ]; then
-                    say "The card was reset under this window (mon0 is gone). On channel 44 that is the 8260's firmware failing; set channels to 6. Stopping."
+                    say "The card was reset under this window (mon0 is gone): its firmware failed, often on a channel it cannot hold. Try the channels option set to 6. Stopping."
                     kill -TERM $$
                 fi
             fi
             seen=$total
         fi
-        if [ $((tick % 30)) -eq 0 ]; then
+        if [ "$VERBOSE" = true ] && [ $((tick % 30)) -eq 0 ]; then
             peers=$(grep -c 'add peer' "$owl" 2>/dev/null)
             say "Radio check: ${peers:-0} peer adds in OWL's log so far ($total lines). Helper: $("$DISCOVERABLE" status 2>/dev/null)."
             frames_heard 2
@@ -1071,10 +1139,8 @@ trap 'stop_stack; exit 0' TERM INT
 join_host_netns
 
 say "OwlDrop add-on"
-say "Home Assistant OS stays installed. This add-on does not load iwlwifi and does not replace the firmware blob."
-say ""
-say "Ethernet stays the uplink. The AirDrop radio is a MediaTek MT7612U USB stick when one is plugged in (radio option auto or usb), else the NUC's Intel Wireless-AC 8260."
-say "Files and text from the phone are kept in save_folder (default /share/owldrop, the share folder's owldrop). owldrop.exe, when a PC runs it, gets them too."
+say "It uses a Wi-Fi card the host kernel already drives and loads no driver or firmware of its own."
+say "Files and text from the phone are kept in save_folder (default /share/owldrop). owldrop.exe, when a PC runs it, gets them too."
 say ""
 
 if ! dbus_host; then
@@ -1082,67 +1148,86 @@ if ! dbus_host; then
     exit 1
 fi
 
-RADIO_OPT=$(option radio)
-case "${RADIO_OPT:-auto}" in
-    usb) IFACE=$(find_usb_radio || true) ;;
-    intel) IFACE=$(find_radio || true) ;;
-    *) IFACE=$(find_usb_radio || find_radio || true) ;;
+case "$(option verbose)" in
+    True|true|1|yes) VERBOSE=true ;;
 esac
-if [ -z "$IFACE" ] && [ "${RADIO_OPT:-auto}" = usb ]; then
-    say "radio is usb, and no MT7612U (mt76x2u) interface is visible. Plug the stick in, or set radio to auto."
-    say "Interfaces here:"
-    list_ifaces
-    exit 1
-fi
+ALLOW_UNTESTED=false
+case "$(option allow_untested)" in
+    True|true|1|yes) ALLOW_UNTESTED=true ;;
+esac
+
+# The interface option names the card; empty or auto picks the best one here.
+WANT_IFACE=$(option interface)
+IFACE=
+BACKEND=
+CARD_STATUS=
+case "${WANT_IFACE:-auto}" in
+    auto)
+        read -r IFACE BACKEND CARD_STATUS <<< "$(pick_radio)"
+        ;;
+    *)
+        if [ ! -d "/sys/class/net/${WANT_IFACE}/phy80211" ]; then
+            say "The interface option is ${WANT_IFACE}, and no Wi-Fi interface here has that name."
+            explain_radios
+            exit 1
+        fi
+        VERDICT=$(judge_iface "$WANT_IFACE")
+        if [ "${VERDICT%% *}" = - ]; then
+            say "${WANT_IFACE} cannot carry the AirDrop window: $(why_not "${VERDICT#* }")."
+            exit 1
+        fi
+        IFACE=$WANT_IFACE
+        read -r _ BACKEND CARD_STATUS <<< "$VERDICT"
+        ;;
+esac
 if [ -z "$IFACE" ]; then
-    say "No MT7612U USB stick and no Intel iwlwifi PCI interface is visible in this network namespace."
-    say "Interfaces here:"
-    list_ifaces
+    say "No Wi-Fi interface here can carry the AirDrop window."
+    explain_radios
     self_ns=$(readlink /proc/self/ns/net 2>/dev/null || true)
     host_ns=$(readlink /proc/1/ns/net 2>/dev/null || true)
     if [ -n "$self_ns" ] && [ -n "$host_ns" ] && [ "$self_ns" != "$host_ns" ]; then
         say "This container is still not in the host network namespace. Turn protection mode off so host_network, host_pid, and SYS_ADMIN apply, then update this add-on so Supervisor creates a new container."
     elif ! compgen -G '/sys/class/net/*/phy80211' >/dev/null; then
-        say "No wireless phy is visible. The 8260 stays on the host until this container shares the host network namespace. Protection mode has to be off, and this version has to be installed so Supervisor recreates the container with host_network."
-    else
-        say "A wireless interface is visible, and it is not the Intel iwlwifi PCI radio. This add-on will not use another radio."
+        say "No Wi-Fi card is visible. Plug one in (a USB adapter needs no passthrough: the host's driver makes the interface), or check that Home Assistant OS has a driver for it."
     fi
     exit 1
 fi
 
 DRV=$(driver_of "$IFACE")
 FW=$(firmware_of "$IFACE")
-case "$DRV" in
-    mt76x2u)
-        RADIO_KIND=usb
-        say "Interface ${IFACE}: driver mt76x2u, USB $(usb_id_of "$IFACE"), firmware ${FW:-unread}."
-        say "The radio profile is pull request 13's mt76x2u line: exclusive mode, an active monitor that ACKs the phone itself, with ${IFACE} as a passive monitor for the window. No IBSS cell."
-        if ! iw phy "$(phy_of "$IFACE")" info 2>/dev/null | grep -q 'Device supports active monitor'; then
-            say "This driver does not offer active monitor on ${IFACE}, so the window cannot start."
-            exit 1
-        fi
+say "Interface ${IFACE}: driver ${DRV}, $(bus_id_of "$IFACE"), firmware ${FW:-unread}."
+case "$BACKEND" in
+    active-monitor)
+        say "Profile: exclusive mode with an active monitor that acknowledges the phone itself; ${IFACE} is a passive monitor for the window. It can follow the phone onto 5 GHz."
         ;;
-    iwlwifi)
-        RADIO_KIND=intel
-        say "Interface ${IFACE}: driver iwlwifi, PCI $(pci_of "$IFACE"), firmware ${FW:-unread}."
-        say "The radio profile is the released omdrop-owl iwlwifi line: exclusive mode, IBSS, BSSID ${BSSID}, HT20, fixed frequency, beacon interval 10000 TU."
-        say "On this 8260, channel 44 joins but OWL rejects the phone's frames there (2 stray bytes each) and the firmware resets the card within seconds (2026-10-12). Channel 6 works, but an iPhone on 5 GHz Wi-Fi visits it one slot in sixteen."
+    ibss)
+        say "Profile: exclusive mode, an IBSS cell on AWDL's BSSID ${BSSID}, HT20, fixed frequency. ${IFACE} leaves any network for the window."
         ;;
-    *)
-        say "${IFACE} is ${DRV:-missing}, so this window will not start. This add-on runs the iwlwifi (IBSS) and mt76x2u (active monitor) profiles."
-        exit 1
+    shared)
+        say "Profile: shared mode. ${IFACE} stays on its Wi-Fi network and AWDL runs beside it on that network's channel, which should be 6, 44 or 149. Not yet tried on Home Assistant OS."
         ;;
 esac
+mkdir -p /etc/omdrop
+if [ "$CARD_STATUS" = tested ]; then
+    rm -f /etc/omdrop/allow-untested
+else
+    say "This card's profile is untested; allow_untested is on. Reports of how it goes help: github.com/t4t5/omdrop-owl, README, \"Adding your card\"."
+    echo 1 > /etc/omdrop/allow-untested
+fi
 
 PC_HOST=$(option pc_host)
 PC_NAME=$(option pc_name)
 CHANNELS=$(option channels)
-# Empty or auto: the 8260 holds only 6; the stick surveys 44, 149, 36 and 6
-# for the phone before the window, and starts where it heard it most.
+# Empty or auto: an active monitor surveys 149, 44, 36 and 6 for the phone
+# before the window; an IBSS cell holds 6, since no IBSS card measured so far
+# starts a 5 GHz cell. Shared mode runs on its network's channel.
 SURVEY=0
 case "${CHANNELS// /}" in
     ""|auto)
-        if [ "$RADIO_KIND" = usb ]; then CHANNELS="149 44 36 6"; SURVEY=1; else CHANNELS=6; fi
+        case "$BACKEND" in
+            active-monitor) CHANNELS="149 44 36 6"; SURVEY=1 ;;
+            *) CHANNELS=6 ;;
+        esac
         ;;
 esac
 WANT_FREQS=$(want_freqs "$CHANNELS")
@@ -1150,7 +1235,9 @@ if [ -z "$WANT_FREQS" ]; then
     say "The channels option has no channel this add-on can use. Using channel 6."
     WANT_FREQS=2437
 fi
-say "Channels to try, in order: $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g')."
+if [ "$BACKEND" != shared ]; then
+    say "Channels to try, in order: $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g')."
+fi
 SAVE_FOLDER=$(option save_folder)
 case "${SAVE_FOLDER:-/share/owldrop}" in
     /*) INBOX=${SAVE_FOLDER:-/share/owldrop} ;;
@@ -1195,14 +1282,14 @@ if [ "${#PC_NAME}" -gt 63 ]; then
 fi
 say "The iPhone share sheet will show: ${PC_NAME}"
 
-mkdir -p /etc/omdrop "$INBOX/text" "$STAGING/text" /data/omdrop/keys /run/omdrop-owl || {
+mkdir -p "$INBOX/text" "$STAGING/text" /data/omdrop/keys /run/omdrop-owl || {
     say "Could not create ${INBOX}."
     exit 1
 }
 printf '%s\n' "$IFACE" > /etc/omdrop/infra-iface
 
 TYPE=$(iface_type "$IFACE")
-if [ "$RADIO_KIND" = intel ] && type_is_ibss "$TYPE"; then
+if [ "$BACKEND" = ibss ] && type_is_ibss "$TYPE"; then
     say "${IFACE} is still an IBSS cell from an earlier window. Switching it back to a station before the profile runs."
     ip link set "$IFACE" down || true
     iw dev "$IFACE" set type managed || true
@@ -1210,19 +1297,22 @@ if [ "$RADIO_KIND" = intel ] && type_is_ibss "$TYPE"; then
 fi
 iw dev mon0 del 2>/dev/null || true
 
-if wants_5ghz; then
-    allow_5ghz "$IFACE"
+# Exclusive mode: the card leaves NetworkManager and wpa_supplicant for the
+# window. Shared mode keeps both; the helper injects beside the association.
+if [ "$BACKEND" != shared ]; then
+    if wants_5ghz; then
+        allow_5ghz "$IFACE"
+    fi
+    vsay "Marking ${IFACE} unmanaged so NetworkManager leaves it alone for the window."
+    nmcli device disconnect "$IFACE" >/dev/null 2>&1 || true
+    nmcli device set "$IFACE" managed no || true
+    vsay "A NetworkManager restart clears that runtime flag. The flag is set again the next time this add-on starts. This container does not write the host's /etc."
+    vsay "Stopping host wpa_supplicant from holding ${IFACE}."
+    release_supplicant
 fi
 
-say "Marking ${IFACE} unmanaged so the supervisor leaves it out of the uplink."
-nmcli device disconnect "$IFACE" >/dev/null 2>&1 || true
-nmcli device set "$IFACE" managed no || true
-say "A NetworkManager restart clears that runtime flag. The flag is set again the next time this add-on starts. This container does not write the host's /etc."
-say "Stopping host wpa_supplicant from holding ${IFACE}."
-release_supplicant
-
 rm -f /etc/omdrop/exclusive-channels /etc/omdrop/keep-cell
-if [ "$RADIO_KIND" = intel ]; then
+if [ "$BACKEND" = ibss ]; then
     if ! prepare_cell || ! ready_cell; then
         "$DISCOVERABLE" stop >/dev/null 2>&1 || true
         nmcli device set "$IFACE" managed yes >/dev/null 2>&1 || true
@@ -1246,7 +1336,7 @@ if [ "$RADIO_KIND" = intel ]; then
         24[1-7][27]) echo $(( (JOINED_FREQ - 2407) / 5 )) > /etc/omdrop/exclusive-channels ;;
     esac
     echo 1 > /etc/omdrop/keep-cell
-else
+elif [ "$BACKEND" = active-monitor ]; then
     if [ "$SURVEY" = 1 ]; then
         say "Surveying $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g') for the phone, about 5 s each. Keep the iPhone's share sheet open."
         SURVEYED=$(survey_freqs "$IFACE" $WANT_FREQS | paste -sd' ' -)
@@ -1254,7 +1344,7 @@ else
         say "Channels to try after the survey, in order: $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g')."
     fi
     # The helper makes the active monitor itself and tunes it to the first of
-    # these the stick may transmit on (exclusive_monitor_up).
+    # these the card may transmit on (exclusive_monitor_up).
     for f in $WANT_FREQS; do
         case "$f" in
             5[0-9][0-9][05]) printf '%s ' $(( (f - 5000) / 5 )) ;;
@@ -1262,41 +1352,43 @@ else
         esac
     done > /etc/omdrop/exclusive-channels
     echo >> /etc/omdrop/exclusive-channels
-    say "The helper will tune the active monitor to the first of: $(cat /etc/omdrop/exclusive-channels)that the stick may transmit on."
+    vsay "The helper will tune the active monitor to the first of: $(cat /etc/omdrop/exclusive-channels)that the card may transmit on."
 fi
-# OWL sends unicast once, unacknowledged, and the phone is on channel 6 one
-# slot in sixteen: 0.2.5's /Discover TLS handshake took 2.1 s and the phone
-# hung up before the answer. Each frame now goes out this many times while
-# the phone is there (owl -U).
+# OWL sends unicast once, unacknowledged. For a phone that visits our
+# channel rarely (an IBSS cell on 6, with the phone on 5 GHz Wi-Fi: one slot
+# in sixteen) each frame can go out this many times while the phone is there
+# (owl -U). 1 is OWL's own behaviour.
 COPIES=$(option unicast_copies)
 case "$COPIES" in
     [1-5]) ;;
-    *) COPIES=3 ;;
+    *) COPIES=1 ;;
 esac
 echo "$COPIES" > /etc/omdrop/unicast-copies
-# The phone is on our channel when we hear it, and that is when replies to
-# it are made. 0.2.7 held them for the slot OWL's clock gave the phone, and
-# five copies of each mDNS answer then went unheard: OWL sends a reply
-# within this many TU of hearing the phone (owl -H). 0 turns it off.
+# The phone is on our channel when we hear it. OWL holds a reply for the
+# slot its clock gives the phone; with this set, it sends one within this
+# many TU of hearing the phone instead (owl -H), which helped an IBSS cell on
+# 6 get mDNS answers through. 0, the default, is OWL's own behaviour.
 HEARD=$(option heard_window_tu)
 case "$HEARD" in
-    ""|*[!0-9]*) HEARD=16 ;;
+    ""|*[!0-9]*) HEARD=0 ;;
 esac
 [ "$HEARD" -le 64 ] || HEARD=64
 echo "$HEARD" > /etc/omdrop/heard-window
-say "Replies to the phone go out within ${HEARD} TU of hearing it (0: only in the slot OWL's clock gives it)."
-say "Each unicast frame to the phone goes out ${COPIES} time(s) per visit to our channel."
-say "Starting the released exclusive window (until this add-on stops)."
+vsay "Replies to the phone go out within ${HEARD} TU of hearing it (0: only in the slot OWL's clock gives it)."
+vsay "Each unicast frame to the phone goes out ${COPIES} time(s) per visit to our channel."
+say "Starting the AirDrop window on ${IFACE} (until this add-on stops)."
 if ! "$DISCOVERABLE" start 0; then
-    say "The released window did not finish starting (radio ${RADIO_KIND})."
+    say "The AirDrop window did not finish starting (${BACKEND} on ${IFACE})."
     stop_stack
     exit 1
 fi
 RADIO=1
 
 CHAN=$(awk '/ on ch/ { chan=$0 } END { print chan }' /run/omdrop-owl/log 2>/dev/null || true)
-say "Radio log: ${CHAN:-the helper wrote no channel line}"
-if [ "$RADIO_KIND" = usb ]; then
+vsay "Radio log: ${CHAN:-the helper wrote no channel line}"
+if [ "$VERBOSE" != true ] || [ "$BACKEND" = shared ]; then
+    :
+elif [ "$BACKEND" = active-monitor ]; then
     say "Active monitor:"
     iw dev mon0 info 2>/dev/null | grep -E 'type|channel|addr' | sed 's/^[[:space:]]*/  /'
 elif iw dev awdlibss0 link 2>/dev/null | grep -q 'Joined IBSS'; then
@@ -1310,11 +1402,16 @@ fi
 nmcli device set awdl0 managed no 2>/dev/null || true
 
 touch /tmp/owldrop-running
-say "Bluetooth wake: company id 0x004C, type 0x05, through the host bluetoothd on D-Bus. The USB function stays on the host."
-say "A Bluetooth 4.2 controller often has one advertising slot. If Home Assistant is already advertising on it, registration fails and the log says REGISTER FAILED. The window still stays up."
+vsay "Bluetooth wake: company id 0x004C, type 0x05, through the host bluetoothd on D-Bus."
+vsay "A Bluetooth 4.2 controller often has one advertising slot. If Home Assistant is already advertising on it, registration fails and the log says REGISTER FAILED. The window still stays up."
 (
     while [ -f /tmp/owldrop-running ]; do
-        python3 "$BLE" --hashes 0000000000000000 --seconds 3600 --adapter hci0 || true
+        if [ "$VERBOSE" = true ]; then
+            python3 "$BLE" --hashes 0000000000000000 --seconds 3600 --adapter hci0 || true
+        else
+            python3 "$BLE" --hashes 0000000000000000 --seconds 3600 --adapter hci0 2>&1 \
+                | grep --line-buffered -iE 'fail|error|refus' | sed -u 's/^/Bluetooth: /' || true
+        fi
         [ -f /tmp/owldrop-running ] || break
         sleep 5
     done
@@ -1339,7 +1436,12 @@ if ! python3 "$SENDERS" --config "$SENDERS_CONFIG"; then
     stop_stack
     exit 1
 fi
-say "AirDrop receiver on awdl0, saving into ${STAGING}; finished items move to ${INBOX}."
+vsay "AirDrop receiver on awdl0, saving into ${STAGING}; finished items move to ${INBOX}."
+# Without verbose the receiver logs from INFO up: each connection, Ask and
+# upload, not every request's headers (patch_receiver.py).
+RECEIVER_LOG=INFO
+[ "$VERBOSE" != true ] || RECEIVER_LOG=DEBUG
+OWLDROP_LOG_LEVEL=$RECEIVER_LOG PYTHONWARNINGS=ignore::DeprecationWarning \
 python3 "$RECEIVER" --iface awdl0 --port 8771 --name "$PC_NAME" --model MacBookPro18,3 \
     --outdir "$STAGING" --keys "${OWLDROP_KEYS_DIR:-/data/omdrop}" &
 SERVE_PID=$!
@@ -1377,7 +1479,7 @@ else
     say "forward_to_pc is off. Files and text stay in ${INBOX}."
 fi
 
-say "Window is up. Stop this add-on to leave the cell and return ${IFACE} to a station."
+say "Window is up on ${IFACE}. Stopping this add-on gives the card back."
 # debug_capture: what the radio and the AirDrop TCP carried, as pcap files in
 # save_folder/debug. mon0 keeps each frame's first 256 bytes (radiotap,
 # 802.11, LLC, IPv6, TCP headers), so a stalled upload can be followed frame
@@ -1392,9 +1494,11 @@ if [ "$CAPTURE" = true ]; then
     tcpdump -Z root -i awdl0 -s 256 -C 20 -W 4 -w "$INBOX/debug/awdl0.pcap" 'tcp port 8771' >/dev/null 2>&1 &
     say "debug_capture: writing pcap files to ${INBOX}/debug (mon0 up to 160 MB, awdl0 up to 80 MB, newest kept)."
 fi
-frames_heard 3
-tcp_flow &
-TCPFLOW_PID=$!
+if [ "$VERBOSE" = true ]; then
+    frames_heard 3
+    tcp_flow &
+    TCPFLOW_PID=$!
+fi
 watch_radio &
 WATCH_PID=$!
 wait "$SERVE_PID" || true

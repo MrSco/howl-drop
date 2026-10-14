@@ -58,8 +58,14 @@ READ_NEW = '''                wire_bytes = howl_upload.read(
                     sys.modules[__name__])
 '''
 
+# The add-on's verbose option: DEBUG logs every request's headers, which is
+# most of the log during a transfer; run.sh passes INFO without verbose.
+LOGGING = "logging.basicConfig(level=logging.DEBUG, stream=sys.stdout,\n"
+LOGGING_NEW = "logging.basicConfig(level=os.environ.get('OWLDROP_LOG_LEVEL', 'DEBUG'), stream=sys.stdout,\n"
+
 EDITS = [
     ('upload timeout handler', ANCHOR, DIAG),
+    ('the logging setup', LOGGING, LOGGING_NEW),
     ('sibling imports', IMPORT, IMPORT_NEW),
     ("handle_upload's body read", READ, READ_NEW),
 ]

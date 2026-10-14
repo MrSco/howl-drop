@@ -12,7 +12,7 @@ owldrop stop            stop OwlDrop on this PC
 
 Received files land in `Downloads\OwlDrop`. Clipboard text replaces the PC clipboard.
 
-A Raspberry Pi beside the iPhone runs the AirDrop radio and `owldrop-bridge`, which forwards each received file or shared text to this program. The PC does not need a Wi-Fi card, and this program does not create one. See the Pi setup notes that ship with OwlDrop.
+The OwlDrop Home Assistant add-on (`addon/` in this repo) runs the AirDrop radio and `owldrop-bridge`, which forwards each file or shared text an iPhone sends to this program. The PC does not need a Wi-Fi card, and this program does not create one.
 
 Build with CMake and Visual Studio, or with MinGW:
 

@@ -5,14 +5,14 @@
 #
 #   tools/stage-addon.sh [DEST]
 #
-# DEST, when given, is where the folder is copied as well: the NUC's add-on
+# DEST, when given, is where the folder is copied as well: Home Assistant's add-on
 # share, e.g. //homeassistant/addons/owldrop from Git Bash on Windows
 # (Samba share add-on), or /addons/owldrop from the SSH add-on. Its generated
 # omdrop-owl/ and owldrop/ are replaced whole; other files are overwritten.
 #
 # The image builds OWL and the radio helper from this checkout (pins,
 # patches/, tools/, userspace/), and owldrop-bridge from owldrop/, so what
-# is edited here is what runs on the NUC.
+# is edited here is what runs in Home Assistant.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
