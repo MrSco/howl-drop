@@ -769,7 +769,7 @@ fast_awdl_retransmit() {
 # channel 1 (pull request 13), and on Home Assistant OS iw reported no channel
 # at all while the stick heard nothing on 44 (2026-10-14).
 frames_heard() {  # SECS
-    local secs=$1 cap freqs awdl total
+    local secs=$1 cap freqs awdl total own senders
     command -v tcpdump >/dev/null 2>&1 || return 0
     cap=$(timeout "$secs" tcpdump -i "$MON_IF" -n -e -l 2>/dev/null)
     total=$(printf '%s\n' "$cap" | grep -c 'MHz')
@@ -777,6 +777,12 @@ frames_heard() {  # SECS
     freqs=$(printf '%s\n' "$cap" | grep -oE '[0-9]{4} MHz' | sort | uniq -c | sort -rn | head -n 4 \
         | awk '{ printf "%s%s %s x%s", (NR > 1 ? ", " : ""), $2, $3, $1 }')
     say "Frames on ${MON_IF} in ${secs} s: ${total:-0} (${freqs:-none}); ${awdl:-0} with AWDL's BSSID."
+    # Whose: a monitor interface also captures what it sends, and OWL sends
+    # all the time, so AWDL frames alone do not prove the phone is heard.
+    own=$(cat "/sys/class/net/${MON_IF}/address" 2>/dev/null)
+    senders=$(printf '%s
+' "$cap" | grep -i "$BSSID" | grep -oiE 'SA:[0-9a-f:]{17}' | cut -c4-         | tr 'A-F' 'a-f' | sort | uniq -c | sort -rn | head -n 5         | awk -v own="$own" '{ printf "%s%s x%s%s", (NR > 1 ? ", " : ""), $2, $1, ($2 == own ? " (us)" : "") }')
+    say "AWDL senders: ${senders:-none with a source address}."
 }
 
 kernel_radio_log() {
