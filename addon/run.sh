@@ -24,6 +24,7 @@ BLE_PID=
 SERVE_PID=
 BRIDGE_PID=
 DELIVER_PID=
+TCPFLOW_PID=
 MON_IF=mon0
 WATCH_PID=
 RADIO=0
@@ -827,7 +828,55 @@ survey_freqs() {  # IFACE FREQ...
     done
     ip link set "$dev" down 2>/dev/null
     iw dev "$dev" set type managed 2>/dev/null
-    printf '%s' "$scores" | awk 'NF' | sort -s -k1,1nr | awk '{ print $2 }' | paste -sd' ' -
+    # Heard there at all, in the order given (5 GHz first); then the rest.
+    # Not ranked by count: idle-time counts are a handful of frames, and
+    # during a transfer the phone gives 149 far more slots than 6. A survey
+    # that heard 10 on 6 and 7 on 149 picked 6, and an upload crawled at
+    # ~0.5 Mbit/s where on 149 it had run at ~4 (2026-10-14).
+    printf '%s' "$scores" | awk 'NF && $1 > 0 { print $2 }' | paste -sd' ' -
+    printf '%s' "$scores" | awk 'NF && $1 == 0 { print $2 }' | paste -sd' ' -
+}
+
+# The AirDrop TCP conversation on awdl0 (what OWL hands the kernel and what
+# the kernel sends back), every 2 s with traffic: segments and new bytes in
+# from the phone, its resends, and our ACKs out. Uploads stalled with
+# "nothing arrived for 30 s" after 1.1 MB and after 0.46 MB (2026-10-14):
+# this says whether the phone went quiet or kept resending what our lost ACKs
+# never confirmed. Sequence numbers are tcpdump's, relative per connection.
+tcp_flow() {
+    command -v tcpdump >/dev/null 2>&1 || return 0
+    tcpdump -i awdl0 -n -tt -l 'tcp port 8771' 2>/dev/null | awk '
+        function flush() {
+            if (inp || outp)
+                printf "TCP flow t+%ds: in %d seg, +%d new bytes, %d resent | out %d, last ack %s%s\n",
+                    bucket * 2 - t0, inp, newb, resent, outp, lastack, (syn ? ", SYN" : "") (fin ? ", FIN" : "")
+            inp = outp = newb = resent = syn = fin = 0
+        }
+        {
+            ts = int($1)
+            if (!started) { t0 = int(ts / 2) * 2; started = 1 }
+            b = int(ts / 2)
+            if (b != bucket) { flush(); bucket = b }
+            src = $3; dst = $5; sub(/:$/, "", dst)
+            out = (src ~ /\.8771$/)
+            if ($0 ~ /Flags \[S/) syn = 1
+            if ($0 ~ /Flags \[[^]]*F/) fin = 1
+            if (out) {
+                outp++
+                if (match($0, /ack [0-9]+/)) lastack = substr($0, RSTART + 4, RLENGTH - 4)
+            } else {
+                inp++
+                conn = src
+                if (match($0, /seq [0-9]+:[0-9]+/)) {
+                    split(substr($0, RSTART + 4, RLENGTH - 4), r, ":")
+                    a = r[1] + 0; e = r[2] + 0
+                    if (e <= maxseq[conn]) resent++
+                    else { newb += e - (a > maxseq[conn] ? a : maxseq[conn]); maxseq[conn] = e }
+                }
+            }
+            fflush()
+        }
+        END { flush() }'
 }
 
 kernel_radio_log() {
@@ -996,6 +1045,8 @@ stop_stack() {
     if [ -n "$BRIDGE_PID" ]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
     pkill -f "$BRIDGE watch" 2>/dev/null || true
     if [ -n "$DELIVER_PID" ]; then kill "$DELIVER_PID" 2>/dev/null || true; fi
+    if [ -n "$TCPFLOW_PID" ]; then kill "$TCPFLOW_PID" 2>/dev/null || true; fi
+    pkill -f "tcpdump -i awdl0" 2>/dev/null || true
     pkill -f "$DELIVER" 2>/dev/null || true
     if [ -n "$SERVE_PID" ]; then kill "$SERVE_PID" 2>/dev/null || true; fi
     if [ -n "$BLE_PID" ]; then kill "$BLE_PID" 2>/dev/null || true; fi
@@ -1184,8 +1235,8 @@ if [ "$RADIO_KIND" = intel ]; then
 else
     if [ "$SURVEY" = 1 ]; then
         say "Surveying $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g') for the phone, about 5 s each. Keep the iPhone's share sheet open."
-        SURVEYED=$(survey_freqs "$IFACE" $WANT_FREQS)
-        [ -n "$SURVEYED" ] && WANT_FREQS=$SURVEYED
+        SURVEYED=$(survey_freqs "$IFACE" $WANT_FREQS | paste -sd' ' -)
+        [ -n "${SURVEYED// /}" ] && WANT_FREQS=$SURVEYED
         say "Channels to try after the survey, in order: $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g')."
     fi
     # The helper makes the active monitor itself and tunes it to the first of
@@ -1307,6 +1358,8 @@ fi
 
 say "Window is up. Stop this add-on to leave the cell and return ${IFACE} to a station."
 frames_heard 3
+tcp_flow &
+TCPFLOW_PID=$!
 watch_radio &
 WATCH_PID=$!
 wait "$SERVE_PID" || true
