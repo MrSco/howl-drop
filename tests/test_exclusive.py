@@ -164,6 +164,24 @@ exclusive_down || exit 12
         self.assertIn('iw dev wlan0 set type managed', out)
         self.assertIn('connection up uuid 12345678-1234-1234-1234-123456789abc ifname wlan0', out)
 
+    def test_active_monitor_takes_40_mhz_on_5ghz(self):
+        out = self.run_case('''PROF_MODE=active-monitor
+[[ $(exclusive_up wlan0 phy0 5745 2437) == 5745 ]] || exit 10
+''')
+        self.assertIn('iw dev wlan0 set freq 5745 HT40+', out)
+        self.assertIn('iw dev mon0 set freq 5745 HT40+', out)
+        self.assertNotIn('set freq 5745 HT20', out)
+
+    def test_active_monitor_falls_back_to_20_mhz(self):
+        out = self.run_case('''PROF_MODE=active-monitor
+iw_original=$(declare -f iw)
+eval "${iw_original/iw ()/mock_iw ()}"
+iw() { if [[ "$*" == 'dev mon0 set freq 5745 HT40+' ]]; then echo "iw $*" >> "$RUN/commands"; return 1; fi; mock_iw "$@"; }
+[[ $(exclusive_up wlan0 phy0 5745) == 5745 ]] || exit 10
+''')
+        self.assertIn('iw dev mon0 set freq 5745 HT20', out)
+        self.assertLess(out.index('set freq 5745 HT40+'), out.index('set freq 5745 HT20'))
+
     def test_failed_active_monitor_is_still_undone(self):
         out = self.run_case('''PROF_MODE=active-monitor
 iw_original=$(declare -f iw)
