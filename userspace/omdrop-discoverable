@@ -522,7 +522,7 @@ supervise() {
 }
 
 cmd_start() {
-  local secs=${1:-} sta drv phy gw ap freqs chan stamac monmac mt76 problem _
+  local secs=${1:-} sta drv phy gw ap freqs chan stamac monmac mt76 problem tx_rate _
   local owl_extra=() strategy=intersect
   [[ "$secs" =~ ^[0-9]+$ ]] || die "usage: omdrop-discoverable start <seconds>" 2
   need_root
@@ -626,6 +626,10 @@ cmd_start() {
     owl_extra+=(-F -E)
     strategy=pin
   fi
+  # $CONF/tx-rate: the PHY rate of our data frames (owl -R,
+  # patches/owl-01-tx-rate.patch), e.g. 24 or mcs3; OWL's default is legacy 12.
+  tx_rate=$(knob tx-rate)
+  [ -n "$tx_rate" ] && owl_extra+=(-R "$tx_rate")
 
   # mt76_pm: runtime PM off for the window, restored by stop.
   mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug 2>/dev/null
