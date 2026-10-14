@@ -13,9 +13,11 @@ and the add-on's defaults.
   one or two slots in sixteen. A 1.1 MB photo took 27 s on 6 and about 1 s on
   149; two photos, 4 MB, crossed in about 3 s on 149. A card that can follow
   the phone onto 5 GHz is the difference between usable and not.
-- **The pre-window survey can miss the phone on 149** while it is idle, so
-  the add-on starts on 5 GHz anyway (149 unless the phone was heard on 44 or
-  36) and keeps 6 as the last resort.
+- **Which channel, without asking:** an idle iPhone is hard to hear on 149,
+  and other Apple devices nearby use AWDL too: a survey before the window
+  once missed the phone on 149 and once heard a Mac on 44 and started there,
+  where the iPhone never came. The add-on starts on 149 with no survey; the
+  `channels` option overrides it.
 - **The chunked terminator sometimes never comes.** The phone sends an
   `/Upload` body chunked, and now and then sends the whole archive, has every
   byte acknowledged, and then sends nothing at all: no `0\r\n\r\n`, no

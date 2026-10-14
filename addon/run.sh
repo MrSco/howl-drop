@@ -309,9 +309,9 @@ PY
 # makes IBSS setup return EOPNOTSUPP. Drop the interface, then stop the
 # process if it still has the radio.
 release_supplicant() {
-    local n pid
+    local pid
     dbus_remove_iface
-    for n in 1 2 3 4 5; do
+    for _ in 1 2 3 4 5; do
         pid=$(wpa_pid || true)
         [ -n "${pid:-}" ] || break
         if ! supplicant_has_iface "$pid"; then
@@ -870,57 +870,6 @@ frames_heard() {  # SECS
     say "AWDL senders: ${senders:-none with a source address}."
 }
 
-# Where the phone is. Before the window, listen on each of FREQS for a few
-# seconds and count AWDL frames from anyone but us; print FREQS back, the
-# busiest first, ties in the order given. Receive only, with the station as
-# a single passive monitor, which tunes the card (on the MT7612U an active
-# monitor alone does not, pull request 13). An iPhone uses AWDL most while its share sheet
-# is open. 0.5.1 on 44 heard only its own frames with the phone on 5 GHz
-# Wi-Fi (2026-10-14): its channels are not fixed. Messages go to stderr, so
-# the caller's $(...) gets only the frequencies.
-survey_freqs() {  # IFACE FREQ...
-    local dev=$1 f cap n senders own heard scores=
-    shift
-    own=$(cat "/sys/class/net/$dev/address" 2>/dev/null)
-    ip link set "$dev" down 2>/dev/null
-    if ! iw dev "$dev" set type monitor 2>/dev/null; then
-        say "Survey: ${dev} would not become a monitor; keeping the default order." >&2
-        printf '%s\n' "$*"
-        return 0
-    fi
-    iw dev "$dev" set monitor none 2>/dev/null
-    ip link set "$dev" up 2>/dev/null
-    for f in "$@"; do
-        if ! iw dev "$dev" set freq "$f" HT20 2>/dev/null; then
-            say "Survey: $(freq_name "$f") would not tune." >&2
-            scores="${scores}0 $f"$'\n'
-            continue
-        fi
-        sleep 0.5
-        cap=$(timeout 4 tcpdump -i "$dev" -n -e -l 2>/dev/null)
-        senders=$(printf '%s\n' "$cap" | grep -i "$BSSID" | grep -oiE 'SA:[0-9a-f:]{17}' | cut -c4- \
-            | tr 'A-F' 'a-f' | grep -vx "${own:-none}" | sort | uniq -c | sort -rn)
-        n=$(printf '%s\n' "$senders" | awk 'NF { s += $1 } END { print s + 0 }')
-        heard=$(printf '%s\n' "$senders" | head -n 3 | awk 'NF { printf "%s%s x%s", (NR > 1 ? ", " : ""), $2, $1 }')
-        vsay "Survey: $(freq_name "$f"): $(printf '%s\n' "$cap" | grep -c 'MHz') frames, ${n} AWDL from others${heard:+ (${heard})}." >&2
-        scores="${scores}${n} $f"$'\n'
-    done
-    ip link set "$dev" down 2>/dev/null
-    iw dev "$dev" set type managed 2>/dev/null
-    # 5 GHz before 2.4 GHz whatever was heard; within a band, heard first,
-    # in the order given. Not ranked by count: idle-time counts are a
-    # handful of frames, and the phone runs a transfer on 5 GHz, giving 149
-    # most of its slots and 6 a few. A survey that heard 10 on 6 and 7 on
-    # 149 picked 6 (an upload crawled at ~0.5 Mbit/s against ~4 on 149), and
-    # one that missed the phone on 149 altogether picked 6 too: a 1.1 MB
-    # photo took 27 s there and two photos stalled, where on 149 the photo
-    # crossed in about a second (2026-10-14).
-    printf '%s' "$scores" | awk 'NF && $1 > 0 && $2 > 5000 { print $2 }' | paste -sd' ' -
-    printf '%s' "$scores" | awk 'NF && $1 == 0 && $2 > 5000 { print $2 }' | paste -sd' ' -
-    printf '%s' "$scores" | awk 'NF && $1 > 0 && $2 < 5000 { print $2 }' | paste -sd' ' -
-    printf '%s' "$scores" | awk 'NF && $1 == 0 && $2 < 5000 { print $2 }' | paste -sd' ' -
-}
-
 # The AirDrop TCP conversation on awdl0 (what OWL hands the kernel and what
 # the kernel sends back), every 2 s with traffic: segments and new bytes in
 # from the phone, its resends, and our ACKs out. Uploads stalled with
@@ -1255,15 +1204,17 @@ fi
 PC_HOST=$(option pc_host)
 PC_NAME=$(option pc_name)
 CHANNELS=$(option channels)
-# Empty or auto: a card whose window runs on 5 GHz (uses_5ghz) surveys 149,
-# 44, 36 and 6 for the phone before the window; the rest hold 6. Shared mode
-# runs on its network's channel.
-SURVEY=0
+# Empty or auto: a card whose window runs on 5 GHz (uses_5ghz) starts on 149,
+# where an iPhone runs its transfers (every fast one here ran there), then 44,
+# 36 and 6; the rest hold 6. Shared mode runs on its network's channel.
+# No survey for the phone first: it can't tell one Apple device from another.
+# One heard a Mac on 44 and started there, where the iPhone (6 and 149) never
+# came, and the tile never appeared; another missed the iPhone on 149
+# altogether (2026-10-14). It also took 20 s of every start.
 case "${CHANNELS// /}" in
     ""|auto)
         if uses_5ghz "$DRV" "$BACKEND"; then
             CHANNELS="149 44 36 6"
-            SURVEY=1
         else
             CHANNELS=6
         fi
@@ -1413,12 +1364,6 @@ elif [ "$BACKEND" = active-monitor ]; then
     # received, and a radio that is sending is not receiving (2026-10-14).
     if uses_5ghz "$DRV" "$BACKEND"; then
         echo 24 > /etc/omdrop/tx-rate
-    fi
-    if [ "$SURVEY" = 1 ]; then
-        say "Surveying $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g') for the phone, about 5 s each. Keep the iPhone's share sheet open."
-        SURVEYED=$(survey_freqs "$IFACE" $WANT_FREQS | paste -sd' ' -)
-        [ -n "${SURVEYED// /}" ] && WANT_FREQS=$SURVEYED
-        say "Channels to try after the survey, in order: $(for f in $WANT_FREQS; do freq_name "$f"; done | paste -sd, - | sed 's/,/, /g')."
     fi
     # The helper makes the active monitor itself and tunes it to the first of
     # these the card may transmit on (exclusive_monitor_up).
