@@ -292,7 +292,7 @@ connection_up() {  # UUID STA
 # partway still undoes it, tells `stop` to make the station a station again.
 # Prints the frequency mon0 was tuned to.
 monitor_up() {  # STA PHY FREQ...
-  local sta=$1 phy=$2 f
+  local sta=$1 phy=$2 f w
   shift 2
   : > "$RUN/monitor"
   iw dev "$sta" set type monitor || return 1
@@ -307,9 +307,20 @@ monitor_up() {  # STA PHY FREQ...
   # The station, as the passive monitor holding the channel context, is
   # tuned too: with only mon0 set to 44, an MT7612U (kernel 6.12) heard
   # nothing there and iw showed no channel for either interface.
+  # On 5 GHz, 40 MHz wide where the card takes it: an iPhone sends to us at
+  # HT40 (MCS 7, 40 MHz, on 149+153), and with both tuned HT20 an MT7612U
+  # never received a third of its first tries (2026-10-14). 36, 44 and 149
+  # are each the lower half of their 40 MHz pair. Channel 6 stays HT20.
   for f in "$@"; do
-    iw dev "$sta" set freq "$f" HT20 >&2 2>/dev/null
-    iw dev "$MON" set freq "$f" HT20 >&2 && { echo "$f"; return 0; }
+    for w in HT40+ HT20; do
+      case "$f:$w" in 5*:*|*:HT20) ;; *) continue ;; esac
+      iw dev "$sta" set freq "$f" "$w" >&2 2>/dev/null
+      if iw dev "$MON" set freq "$f" "$w" >&2; then
+        log "$MON on $f MHz, $w"
+        echo "$f"
+        return 0
+      fi
+    done
   done
   return 1
 }
