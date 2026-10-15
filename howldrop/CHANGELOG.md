@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.5
+
+- The panel shows edited iPhone photos too (FullSizeRender.heic, with an HDR gain map): HEIC is now read with pillow-heif's current libheif instead of Debian's.
+- The panel's filter buttons line up with the photos on a wide screen.
+
 ## 0.11.4
 
 - Forwarding to `howldrop.exe` works: the Windows app reset any transfer whose data paused, so files from the add-on never arrived. Get the new `howldrop.exe` too.
