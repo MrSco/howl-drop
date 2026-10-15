@@ -82,8 +82,10 @@ trying a change before it's pushed; pushing to `main` publishes it to the
 
 The optional `howldrop.exe` is a tray app: a notification for each drop,
 and links, photos and documents opened as they arrive if you choose
-(`howldrop/README.md`). It builds with CMake, Ninja and a MinGW-w64 g++
-(Strawberry Perl ships all three), and CI builds it on every push:
+(`howldrop/README.md`), paired with the add-on so only it can send there.
+Download it from [Releases](https://github.com/MrSco/howl-drop/releases/latest).
+It builds with CMake, Ninja and a MinGW-w64 g++ (Strawberry Perl ships all
+three), and CI builds it on every push:
 
 ```powershell
 tools\build-howldrop.ps1 -Run

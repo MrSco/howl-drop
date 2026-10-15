@@ -7,6 +7,12 @@ needs no Wi-Fi card, Bluetooth or AWDL. The add-on (`addon/` in this repo)
 runs the AirDrop radio and `howldrop-bridge`, which forwards each file or
 shared text to this program.
 
+Download `howldrop.exe` from
+[Releases](https://github.com/MrSco/howl-drop/releases/latest). It is one
+file with nothing to install; put it somewhere it can stay (say
+`%LOCALAPPDATA%\Programs\HowlDrop`), since **Start with Windows** and the
+firewall rule remember its path.
+
 ## The tray app
 
 Start `howldrop.exe` (double-click it). It runs by the clock, with no window:
@@ -91,8 +97,13 @@ cmake --build build --config Release
 ```
 
 A cross-build from Linux uses `cmake/mingw-w64-x86_64.cmake`. CI builds
-`howldrop.exe` on every push; it is the `howldrop-windows` download on the
-run's page.
+`howldrop.exe` on every push (the `howldrop-windows` download on the run's
+page).
+
+To release it: set `kVersion` in `src/config.hpp` to the add-on version it
+goes with, push, then push a tag `windows-vVERSION` (e.g. `windows-v0.12.0`).
+`.github/workflows/release-windows.yml` builds and tests it and publishes a
+GitHub release with `howldrop.exe` attached and `RELEASE.md` as its notes.
 
 `tests/` runs on Linux (`howldrop-test`, `howldrop-bridge-test`) and on
 both (`howldrop-open-test`, the rules for what opens by itself, in

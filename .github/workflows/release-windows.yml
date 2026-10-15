@@ -1,0 +1,41 @@
+name: Release howldrop.exe
+
+# Push a tag windows-vVERSION (VERSION = kVersion in howldrop/src/config.hpp,
+# the add-on version it goes with) to build, test and publish howldrop.exe as
+# a GitHub release. howldrop/README.md has the steps.
+on:
+  push:
+    tags: ['windows-v*']
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+      - name: The tag matches the version the exe reports
+        run: |
+          tag="${GITHUB_REF_NAME#windows-v}"
+          version=$(sed -n 's/.*kVersion = "\(.*\)";/\1/p' howldrop/src/config.hpp)
+          echo "tag $tag, kVersion $version"
+          [ "$tag" = "$version" ]
+      - name: Build
+        run: cmake -S howldrop -B build/howldrop -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/howldrop
+      - name: Test
+        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "$env:GITHUB_REF_NAME".Substring("windows-v".Length)
+          gh release create "$env:GITHUB_REF_NAME" build/howldrop/howldrop.exe `
+            --title "HowlDrop for Windows $version" --notes-file howldrop/RELEASE.md --verify-tag

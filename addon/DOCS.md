@@ -166,7 +166,8 @@ not.
 either way. `howldrop.exe` sits in the tray, shows a Windows notification
 for each drop, and can open links, photos and documents as they arrive, as
 a Mac does (its menu says which; links are on by default). Download it from
-the latest CI run (`howldrop-windows`) or build it with
+[the latest release](https://github.com/MrSco/howl-drop/releases/latest)
+(use the one matching this add-on's version) or build it with
 `tools\build-howldrop.ps1`; the repo's `howldrop/README.md` has the details.
 Allow UDP 47631 and TCP 47632 from the LAN on that PC. Set `pc_host` to the
 PC's address only when its beacon does not reach Home Assistant.
