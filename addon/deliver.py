@@ -24,6 +24,7 @@ Each delivered file is announced to Home Assistant (announce.py): an event,
 and notifications to the notify option's targets.
 
   deliver.py --staging DIR --dest DIR [--no-fetch] [--max-mb N] [--options FILE]
+             [--history FILE]
 """
 import argparse
 import configparser
@@ -200,8 +201,9 @@ def move_in(src, dest_dir):
 SHARED_TEXT = re.compile(r'text-[0-9A-Za-z]+(?:-[0-9A-Za-z]+)*\.txt')
 
 
-def deliver(path, staging, dest, fetch_links, max_bytes, allow_private=False, announcer=None):
-    """Deliver one settled staging file; return lines for the log."""
+def deliver(path, staging, dest, fetch_links, max_bytes, allow_private=False, announcer=None, history=None):
+    """Deliver one settled staging file; return lines for the log. history,
+    when given, is the file the panel reads senders from (announce.record)."""
     rel = os.path.relpath(path, staging)
     target_dir = os.path.join(dest, os.path.dirname(rel))
     sender, url = announce.read_note(staging, os.path.basename(path))
@@ -223,6 +225,7 @@ def deliver(path, staging, dest, fetch_links, max_bytes, allow_private=False, an
         final = move_in(path, target_dir)
         line = f'delivered {os.path.relpath(final, dest)}'
     lines = [line]
+    announce.record(history, final, dest, sender, url)
     if announcer:
         lines += announcer.drop(final, dest, sender, url)
     return lines
@@ -271,7 +274,7 @@ def purge(dest, days, now=None):
 
 
 def run(staging, dest, fetch_links, max_bytes, interval=0.5, once=False, allow_private=False,
-        keep_days=0, purge_every=86400, announcer=None):
+        keep_days=0, purge_every=86400, announcer=None, history=None):
     """Deliver each staging file once its size has held for two scans, and at
     start and every purge_every seconds (a day) delete what has been in dest
     for keep_days."""
@@ -299,7 +302,8 @@ def run(staging, dest, fetch_links, max_bytes, interval=0.5, once=False, allow_p
             sizes[path] = (size, (prev[1] + 1) if prev and prev[0] == size else 0)
             if sizes[path][1] >= 2:
                 try:
-                    for line in deliver(path, staging, dest, fetch_links, max_bytes, allow_private, announcer):
+                    for line in deliver(path, staging, dest, fetch_links, max_bytes, allow_private, announcer,
+                                        history):
                         say(line)
                 except OSError as e:
                     say(f'could not deliver {os.path.relpath(path, staging)}: {e}')
@@ -320,6 +324,7 @@ def main():
     ap.add_argument('--keep-days', type=int, default=0,
                     help='delete files that have been in DEST this many days (0: keep)')
     ap.add_argument('--options', help="the add-on's options.json, for its notify targets")
+    ap.add_argument('--history', help='where to note who sent each file, for the panel')
     a = ap.parse_args()
     targets = []
     if a.options:
@@ -336,7 +341,8 @@ def main():
     if announcer.enabled:
         say('each delivery fires a howldrop_received event in Home Assistant'
             + (f'; notifying {", ".join(announcer.targets)}' if announcer.targets else ''))
-    run(a.staging, a.dest, not a.no_fetch, a.max_mb * 1024 * 1024, keep_days=a.keep_days, announcer=announcer)
+    run(a.staging, a.dest, not a.no_fetch, a.max_mb * 1024 * 1024, keep_days=a.keep_days, announcer=announcer,
+        history=a.history)
 
 
 if __name__ == '__main__':

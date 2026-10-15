@@ -49,7 +49,7 @@ packaging removed (upstream has it).
 
 | Path | What |
 |---|---|
-| `addon/` | The add-on: `config.yaml`, `Dockerfile`, `run.sh`, and the Python it ships (`deliver.py`, `senders.py`, `patch_receiver.py`). |
+| `addon/` | The add-on: `config.yaml`, `Dockerfile`, `run.sh`, and the Python it ships (`deliver.py`, `announce.py`, `senders.py`, `patch_receiver.py`), and the sidebar panel (`panel.py`, `panel/`). |
 | `howldrop/` | `howldrop.exe` (the Windows listener) and `howldrop-bridge` (the forwarder in the add-on), C++17, one CMake tree. |
 | `userspace/` | `omdrop-discoverable`, the radio helper, and `owl-profiles`, its per-driver table. |
 | `patches/`, `pins` | OWL's pinned upstream commit and the patches applied to it; `tools/build-owl.sh` applies them. |

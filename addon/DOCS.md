@@ -60,6 +60,20 @@ destination copies it there: `tools/stage-addon.sh
 appears under Local add-ons and builds on your machine. Bump `version` in
 `config.yaml` for every change, or Supervisor keeps the old image.
 
+## The HowlDrop panel
+
+**HowlDrop** in Home Assistant's sidebar (or **Open web UI** on the add-on's
+page) lists what arrived, newest first: who sent it, thumbnails of photos,
+text you can copy, links you can open, a download for each, and delete. It
+works in the Home Assistant app too, and refreshes every few seconds. Turn
+**Show in sidebar** off on the add-on's page to hide it.
+
+Only signed-in Home Assistant users reach it: the add-on answers only Home
+Assistant's own proxy (ingress), never the network. Anyone in range can send
+in Everyone mode, so the panel treats every drop as untrusted: photos,
+videos and plain text open in the browser, and anything else (a web page, a
+program) is only ever a download.
+
 ## Notifications and automations
 
 Every file that arrives fires a `howldrop_received` event in Home Assistant,

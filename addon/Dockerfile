@@ -42,6 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-dbus \
         python3-gi \
+        python3-pil \
         python3-libarchive-c \
     && rm -rf /var/lib/apt/lists/*
 
@@ -93,6 +94,9 @@ RUN cmake -S /src/howldrop -B /tmp/howldrop-build -DCMAKE_BUILD_TYPE=Release \
 
 COPY deliver.py /deliver.py
 COPY announce.py /announce.py
+COPY panel.py /panel.py
+COPY panel/ /panel/
+COPY icon.png /panel/icon.png
 COPY senders.py /senders.py
 COPY run.sh /run.sh
 RUN chmod 755 /run.sh

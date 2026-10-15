@@ -1,5 +1,5 @@
 name: HowlDrop
-version: "0.10.0"
+version: "0.11.0"
 slug: howldrop
 description: AirDrop from iPhones to Home Assistant OS. Files and text land in the share folder; any Wi-Fi card omdrop-owl supports.
 url: https://github.com/MrSco/howl-drop
@@ -21,6 +21,12 @@ devices:
 apparmor: false
 # The howldrop_received event and notifications (announce.py).
 homeassistant_api: true
+# The HowlDrop panel in the sidebar: recent drops (panel.py). On the host
+# network, so a port no other add-on is likely to take.
+ingress: true
+ingress_port: 47640
+panel_icon: mdi:cellphone-arrow-down
+panel_title: HowlDrop
 # save_folder defaults to /share/howldrop, which the Samba share add-on shows.
 map:
   - share:rw

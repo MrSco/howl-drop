@@ -230,6 +230,14 @@ class AnnounceTests(unittest.TestCase):
         self.assertEqual(note[2]['message'], 'Link from Pat: https://example.com/page')
         self.assertEqual(note[2]['data']['url'], 'https://example.com/page')
 
+    def test_the_panel_history_names_the_sender(self):
+        self.drop('IMG_1.JPG', b'jpeg', 'Pat')
+        self.drop('text-42C1-BD75-E6-0.txt', b'hi', 'Sam')
+        history = str(Path(self.tmp.name, 'drops.jsonl'))
+        deliver.run(str(self.staging), str(self.dest), False, 1 << 20, interval=0, once=True, history=history)
+        self.assertEqual(deliver.announce.senders(history),
+                         {'IMG_1.JPG': 'Pat', os.path.join('text', 'text-42C1-BD75-E6-0.txt'): 'Sam'})
+
     def test_no_note_still_announces_without_a_sender(self):
         (self.staging / 'notes.pdf').write_bytes(b'%PDF')
         self.deliver(targets=())
