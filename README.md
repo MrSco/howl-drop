@@ -5,4 +5,4 @@ Generated from [main](https://github.com/MrSco/howl-drop) by
 Add-ons, Add-on store, menu, Repositories, add
 `https://github.com/MrSco/howl-drop#ha-addon`, then install HowlDrop.
 
-HowlDrop 0.11.1, from 300a09d.
+HowlDrop 0.11.2, from 8c1a317.

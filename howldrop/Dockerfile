@@ -43,6 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-dbus \
         python3-gi \
         python3-pil \
+        libheif-examples \
         python3-libarchive-c \
     && rm -rf /var/lib/apt/lists/*
 
@@ -96,6 +97,12 @@ COPY deliver.py /deliver.py
 COPY announce.py /announce.py
 COPY panel.py /panel.py
 COPY panel/ /panel/
+# The panel shows HEIC photos as JPEG through heif-convert: check it decodes.
+RUN python3 -c "from PIL import Image; Image.new('RGB', (64, 48), (200, 30, 30)).save('/tmp/t.png')" \
+    && heif-enc -o /tmp/t.heic /tmp/t.png >/dev/null \
+    && heif-convert /tmp/t.heic /tmp/t.jpg >/dev/null \
+    && python3 -c "from PIL import Image; assert Image.open('/tmp/t.jpg').size == (64, 48)" \
+    && rm /tmp/t.png /tmp/t.heic /tmp/t.jpg
 COPY icon.png /panel/icon.png
 COPY senders.py /senders.py
 COPY run.sh /run.sh
