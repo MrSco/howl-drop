@@ -5,6 +5,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import threading
@@ -189,6 +190,44 @@ class PanelTests(unittest.TestCase):
             self.assertEqual(max(img.size), panel.THUMB_PX)
         (self.dest / 'bad.jpg').write_bytes(b'not a picture')
         self.assertEqual(self.get(base + '/thumb?p=bad.jpg')[0], 404)
+
+    def test_heic_is_shown_as_jpeg(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest('Pillow is not installed')
+        if not shutil.which('heif-convert'):
+            self.skipTest('heif-convert (libheif-examples) is not installed')
+        heic = self.dest / 'FullSizeRender.heic'
+        heic.write_bytes((Path(__file__).parent / 'data' / 'sample.heic').read_bytes())
+        (drop,) = panel.listing(str(self.dest), self.history)
+        self.assertTrue(drop['thumb'] and drop['inline'])
+        base = self.start()
+        status, headers, body = self.get(base + '/file?p=FullSizeRender.heic')
+        self.assertEqual((status, headers['Content-Type']), (200, 'image/jpeg'))
+        self.assertIn('filename="FullSizeRender.jpg"', headers['Content-Disposition'])
+        view = Path(self.tmp.name, 'view.jpg')
+        view.write_bytes(body)
+        with Image.open(view) as img:
+            self.assertEqual(img.size, (640, 480))
+            self.assertEqual(dict(img.getexif()), {})
+            red, green, blue = img.convert('RGB').getpixel((10, 10))  # the red corner, not turned
+            self.assertTrue(red > 200 and green < 60 and blue < 60)
+        status, headers, body = self.get(base + '/thumb?p=FullSizeRender.heic')
+        self.assertEqual((status, headers['Content-Type']), (200, 'image/jpeg'))
+        view.write_bytes(body)
+        with Image.open(view) as img:
+            self.assertEqual(max(img.size), panel.THUMB_PX)
+        _, headers, body = self.get(base + '/file?p=FullSizeRender.heic&download=1')
+        self.assertEqual(headers['Content-Type'], 'application/octet-stream')
+        self.assertEqual(body, heic.read_bytes())
+
+    def test_a_broken_heic_falls_back(self):
+        (self.dest / 'bad.heic').write_bytes(b'not a photo')
+        base = self.start()
+        self.assertEqual(self.get(base + '/thumb?p=bad.heic')[0], 404)
+        status, headers, _ = self.get(base + '/file?p=bad.heic')
+        self.assertEqual((status, headers['Content-Type']), (200, 'image/heic'))
 
     def test_history_is_trimmed(self):
         for i in range(announce.HISTORY_KEPT * 2):

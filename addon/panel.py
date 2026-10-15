@@ -26,7 +26,9 @@ import ipaddress
 import json
 import os
 import socketserver
+import subprocess
 import sys
+import threading
 import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -48,7 +50,12 @@ INLINE = {
     '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
     '.txt': 'text/plain; charset=utf-8',
 }
-THUMBABLE = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff'}
+THUMBABLE = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.heic', '.heif'}
+# What an iPhone sends a photo as. Only Safari shows it, so the panel shows a
+# JPEG made with libheif's heif-convert instead.
+HEIF = {'.heic', '.heif'}
+VIEWS_KEPT = 200  # full-size JPEGs of HEIC photos, a few MB each
+HEIF_TIMEOUT_S = 60
 STATIC = {
     '/': ('index.html', 'text/html; charset=utf-8'),
     '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -143,39 +150,99 @@ def resolve(dest, rel):
 
 # --- thumbnails ----------------------------------------------------------------------
 
+def cache_key(path):
+    st = os.stat(path)
+    return hashlib.sha256(f'{path}\0{st.st_mtime_ns}\0{st.st_size}'.encode()).hexdigest()[:32]
+
+
+def temp_name(out):
+    return f'{out}.{os.getpid()}.{threading.get_ident()}.new'
+
+
+def heif_view(path, cache):
+    """A full-size JPEG of a HEIC photo, made once and kept in cache; None
+    when it cannot be made. libheif applies the photo's own rotation while
+    decoding, so the JPEG is saved without EXIF: no orientation tag can turn
+    it a second time, and the photo's location stays in the original."""
+    try:
+        out = os.path.join(cache, cache_key(path) + '-view.jpg')
+    except OSError:
+        return None
+    if os.path.exists(out):
+        return out
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    tmp = temp_name(out)
+    made = tmp + '.jpg'
+    try:
+        os.makedirs(cache, exist_ok=True)
+        subprocess.run(['heif-convert', '-q', '92', path, made], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=HEIF_TIMEOUT_S, check=True)
+        # A file holding several images is written as NAME-1.jpg, NAME-2.jpg...:
+        # the first is the photo.
+        if not os.path.exists(made):
+            made = tmp + '-1.jpg'
+        with Image.open(made) as img:
+            img = img.convert('RGB')
+            img.save(tmp, 'JPEG', quality=90)
+        os.replace(tmp, out)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    finally:
+        for leftover in (tmp, tmp + '.jpg', *(f'{tmp}-{i}.jpg' for i in range(1, 9))):
+            try:
+                os.unlink(leftover)
+            except OSError:
+                pass
+    prune_cache(cache, '-view.jpg', VIEWS_KEPT)
+    return out
+
+
 def thumbnail(path, cache):
     """A small JPEG of a picture, made once and kept in cache; None when it
     cannot be made (no Pillow, or not a picture it reads)."""
     try:
-        st = os.stat(path)
+        out = os.path.join(cache, cache_key(path) + '.jpg')
     except OSError:
         return None
-    key = hashlib.sha256(f'{path}\0{st.st_mtime_ns}\0{st.st_size}'.encode()).hexdigest()[:32]
-    out = os.path.join(cache, key + '.jpg')
     if os.path.exists(out):
         return out
     try:
         from PIL import Image, ImageOps
     except ImportError:
         return None
+    heif = os.path.splitext(path)[1].lower() in HEIF
+    source = heif_view(path, cache) if heif else path
+    if not source:
+        return None
+    tmp = temp_name(out)
     try:
         os.makedirs(cache, exist_ok=True)
-        with Image.open(path) as img:
-            img = ImageOps.exif_transpose(img)
+        with Image.open(source) as img:
+            if not heif:  # heif_view has turned it already
+                img = ImageOps.exif_transpose(img)
             img.thumbnail((THUMB_PX, THUMB_PX))
             if img.mode not in ('RGB', 'L'):
                 img = img.convert('RGB')
-            img.save(out + '.new', 'JPEG', quality=82)
-        os.replace(out + '.new', out)
+            img.save(tmp, 'JPEG', quality=82)
+        os.replace(tmp, out)
     except Exception:  # noqa: BLE001 - any file a phone sends; a bad one gets no thumbnail
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
         return None
-    prune_thumbs(cache)
+    prune_cache(cache, '.jpg', THUMBS_KEPT, skip='-view.jpg')
     return out
 
 
-def prune_thumbs(cache, keep=THUMBS_KEPT):
+def prune_cache(cache, suffix, keep, skip=None):
+    """Keep the newest `keep` files in cache ending in suffix (not in skip)."""
     try:
-        names = [os.path.join(cache, n) for n in os.listdir(cache) if n.endswith('.jpg')]
+        names = [os.path.join(cache, n) for n in os.listdir(cache)
+                 if n.endswith(suffix) and not (skip and n.endswith(skip))]
     except OSError:
         return
     if len(names) <= keep:
@@ -253,6 +320,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.send_plain(404, 'no thumbnail')
                 return self.send_file(small, 'image/jpeg', 'inline', name_of(path))
             ext = os.path.splitext(path)[1].lower()
+            if ext in HEIF and not query.get('download'):
+                view = heif_view(path, self.server.thumbs)
+                if view:
+                    stem = os.path.splitext(name_of(path))[0]
+                    return self.send_file(view, 'image/jpeg', 'inline', stem + '.jpg')
             if ext in INLINE and not query.get('download'):
                 return self.send_file(path, INLINE[ext], 'inline', name_of(path))
             return self.send_file(path, 'application/octet-stream', 'attachment', name_of(path))
