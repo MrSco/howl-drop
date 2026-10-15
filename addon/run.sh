@@ -1485,10 +1485,21 @@ if [ "$FORWARD" = true ]; then
     if [ -n "$PC_HOST" ]; then
         BRIDGE_ARGS+=(--host "$PC_HOST")
     fi
+    # The PC's pairing key: files go only to the PC that proves it, signed
+    # with it. Given to the bridge in its environment, not its arguments.
+    PC_KEY=$(option pc_key)
+    if [ -z "$PC_KEY" ]; then
+        say "pc_key is empty: howldrop.exe takes files only from senders with its pairing key. On the PC, right-click the HowlDrop icon, Copy pairing key, and paste it into pc_key."
+    elif ! [[ $(printf '%s' "$PC_KEY" | tr -d ' -' | tr 'A-F' 'a-f') =~ ^[0-9a-f]{32}$ ]]; then
+        say "pc_key is not a pairing key (8 groups of 4 digits and letters a-f). Copy it again from the HowlDrop icon's menu on the PC. Not forwarding until it is fixed."
+        FORWARD=false
+    fi
+fi
+if [ "$FORWARD" = true ]; then
     say "Forwarding new files to howldrop.exe whenever a PC runs it; they stay in ${INBOX} either way. Text goes to that PC's clipboard."
     (
         while [ -f /tmp/howldrop-running ]; do
-            "$BRIDGE" "${BRIDGE_ARGS[@]}" 2>&1 | sed -u 's/^/Forward: /'
+            HOWLDROP_PC_KEY=$PC_KEY "$BRIDGE" "${BRIDGE_ARGS[@]}" 2>&1 | sed -u 's/^/Forward: /'
             [ -f /tmp/howldrop-running ] || break
             sleep 5
         done

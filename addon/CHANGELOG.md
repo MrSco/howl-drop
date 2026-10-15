@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.0
+
+- Pairing with the Windows PC: new `pc_key` option. `howldrop.exe` now accepts files only from a sender with its pairing key, and the add-on sends only to a PC that proves it has the key. Every transfer is signed. **Update `howldrop.exe` too, then copy its key (right-click the tray icon, Copy pairing key) into `pc_key`.**
+- `howldrop.exe` no longer sends what you copy to other PCs unless you turn that on in its menu.
+
 ## 0.11.5
 
 - The panel shows edited iPhone photos too (FullSizeRender.heic, with an HDR gain map): HEIC is now read with pillow-heif's current libheif instead of Debian's.

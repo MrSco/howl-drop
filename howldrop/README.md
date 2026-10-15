@@ -23,6 +23,8 @@ Start `howldrop.exe` (double-click it). It runs by the clock, with no window:
 | Open links in the browser | on | A shared web page opens, as on a Mac. Only `http` and `https` addresses. |
 | Open photos and videos | off | Opens each one in your photo or video app. |
 | Open PDFs and text files | off | `.pdf` and `.txt` only. |
+| Copy pairing key | | For the add-on's `pc_key` (below). |
+| Share what I copy with my other HowlDrop PCs | off | Sends each copied text to your other paired PCs. |
 | Start with Windows | off | Runs HowlDrop when you sign in. |
 | Quit HowlDrop | | |
 
@@ -35,6 +37,28 @@ in `%LOCALAPPDATA%\HowlDrop\settings.ini`, the log in
 Windows asks once whether to let `howldrop.exe` through the firewall: allow
 it on private networks (UDP 47631, TCP 47632).
 
+## Pairing
+
+`howldrop.exe` makes a pairing key the first time it runs (128 random bits,
+in `%LOCALAPPDATA%\HowlDrop\pair.key`) and accepts files and text only from
+a sender that knows it. Someone else on your network cannot drop files on
+the PC, set its clipboard or open pages in its browser. To pair the add-on,
+choose **Copy pairing key** from the menu, paste it into the add-on's
+`pc_key` option, and restart the add-on. HowlDrop notifies you when it turns
+an unpaired sender away.
+
+It works both ways: before sending a byte, the add-on checks that the PC
+proves it knows the key, so a machine pretending to be your PC learns
+nothing. Each transfer is signed (HMAC-SHA256 with fresh random values from
+both ends), so a changed or replayed one is dropped.
+
+Two HowlDrop PCs that send to each other need the same key: run
+`howldrop key` on one and `howldrop pair KEY` on the other, then restart
+HowlDrop there.
+
+What you copy on the PC stays there unless you turn on sharing, and even
+then it goes only to paired PCs.
+
 ## Commands
 
 In a terminal, the same program takes commands:
@@ -46,6 +70,9 @@ howldrop peers           list PCs that are visible
 howldrop send NAME FILE  send FILE to the PC named NAME
 howldrop clip            send the current clipboard text
 howldrop stop            stop HowlDrop on this PC (the tray icon too)
+howldrop key             show this PC's pairing key
+howldrop pair KEY        take another PC's key (then restart HowlDrop)
+howldrop serve --share-clipboard   serve, sending what you copy to paired PCs
 ```
 
 ## Building

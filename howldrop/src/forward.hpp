@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config.hpp"
+#include "pairing.hpp"
 #include "protocol.hpp"
 
 #include <chrono>
@@ -22,6 +23,10 @@ struct LanTarget {
     std::uint16_t port = kTransferPort;
     std::string name;
     std::string id;
+    // The PC's pairing key (pairing.hpp; the add-on's pc_key). With it, a
+    // file goes only to a PC that proves the key, signed; without it, to a
+    // PC that is not paired.
+    std::string pair_key;
 };
 
 // Hello beacon -> the PC's name, transfer port, and the address it came from.

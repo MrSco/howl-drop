@@ -12,6 +12,7 @@ add_library(howldrop-core STATIC
     src/node.cpp
     src/forward.cpp
     src/open_policy.cpp
+    src/pairing.cpp
 )
 target_include_directories(howldrop-core PUBLIC src)
 target_compile_features(howldrop-core PUBLIC cxx_std_17)
@@ -22,7 +23,7 @@ if(WIN32)
         NOMINMAX
         WIN32_LEAN_AND_MEAN
     )
-    target_link_libraries(howldrop-core PUBLIC ws2_32 iphlpapi)
+    target_link_libraries(howldrop-core PUBLIC ws2_32 iphlpapi bcrypt)
 endif()
 
 find_package(Threads REQUIRED)
@@ -59,8 +60,11 @@ endif()
 
 add_executable(howldrop-open-test tests/open_policy_test.cpp)
 target_link_libraries(howldrop-open-test PRIVATE howldrop-core)
+add_executable(howldrop-pairing-test tests/pairing_test.cpp)
+target_link_libraries(howldrop-pairing-test PRIVATE howldrop-core)
 if(NOT MSVC)
     target_compile_options(howldrop-open-test PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(howldrop-pairing-test PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 if(NOT WIN32)

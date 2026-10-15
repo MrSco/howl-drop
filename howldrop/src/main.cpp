@@ -1,4 +1,5 @@
 #include "node.hpp"
+#include "pairing.hpp"
 
 #include <chrono>
 #include <csignal>
@@ -134,6 +135,47 @@ std::string load_id() {
     return id;
 }
 
+// This PC's pairing key (pairing.hpp), in the state folder next to node.id.
+// create: make one when there is none. Empty when it cannot be read or made.
+std::string load_pair_key(bool create) {
+    const auto dir = state_dir();
+    if (dir.empty()) return {};
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const auto path = dir / "pair.key";
+    {
+        std::ifstream in(path);
+        std::string line;
+        if (in && std::getline(in, line)) {
+            const std::string key = howldrop::normalize_pair_key(line);
+            if (!key.empty()) return key;
+        }
+    }
+    if (!create) return {};
+    const std::string key = howldrop::new_pair_key();
+    if (key.empty()) return {};
+    std::ofstream out(path, std::ios::trunc);
+    if (!out) return {};
+    out << key << '\n';
+    out.close();
+    if (!out) return {};
+#ifndef _WIN32
+    std::filesystem::permissions(path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace, ec);
+#endif
+    return key;
+}
+
+bool save_pair_key(const std::string& key) {
+    const auto dir = state_dir();
+    if (dir.empty()) return false;
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream out(dir / "pair.key", std::ios::trunc);
+    out << key << '\n';
+    return static_cast<bool>(out);
+}
+
 void usage() {
     std::cout
         << "HowlDrop " << howldrop::kVersion << "\n"
@@ -141,12 +183,16 @@ void usage() {
         << "Ethernet is enough. A Wi-Fi card is not required.\n\n"
         << "  howldrop                 Start (Windows: in the tray, by the clock)\n"
         << "  howldrop serve           Start in this window, with its log\n"
+        << "  howldrop serve --share-clipboard   ...and send what you copy to the other PCs\n"
         << "  howldrop peers            List PCs that are currently visible\n"
         << "  howldrop send NAME FILE   Send FILE to the PC named NAME\n"
         << "  howldrop clip             Send the current clipboard text now\n"
-        << "  howldrop stop             Stop HowlDrop on this PC\n\n"
-        << "Received files are saved to Downloads\\HowlDrop.\n"
-        << "Text you copy while HowlDrop is running is sent to those PCs.\n";
+        << "  howldrop stop             Stop HowlDrop on this PC\n"
+        << "  howldrop key              Show this PC's pairing key (the add-on's pc_key)\n"
+        << "  howldrop pair KEY         Use another HowlDrop PC's key, so the two can send\n"
+        << "                            to each other (then restart HowlDrop)\n\n"
+        << "Received files are saved to Downloads\\HowlDrop. Only senders with this PC's\n"
+        << "pairing key are accepted. What you copy stays here unless you share it.\n";
 }
 
 struct Reply {
@@ -288,7 +334,7 @@ int cmd_simple(const std::string& command) {
     return 0;
 }
 
-int cmd_serve() {
+int cmd_serve(bool share_clipboard) {
     if (!howldrop::startup_network()) {
         std::cerr << "could not start networking\n";
         return 1;
@@ -303,6 +349,12 @@ int cmd_serve() {
     config.name = computer_name();
     config.id = load_id();
     config.inbox = inbox;
+    config.pair_key = load_pair_key(true);
+    config.share_clipboard = share_clipboard;
+    if (config.pair_key.empty()) {
+        std::cerr << "could not read or make the pairing key in " << howldrop::path_to_utf8(state_dir()) << '\n';
+        return 1;
+    }
     howldrop::Node node(std::move(config), *clipboard);
     try {
         node.start();
@@ -336,6 +388,11 @@ int cmd_tray() {
     config.name = computer_name();
     config.id = load_id();
     config.inbox = inbox;
+    config.pair_key = load_pair_key(true);
+    if (config.pair_key.empty()) {
+        MessageBoxW(nullptr, L"HowlDrop could not read or make its pairing key.", L"HowlDrop", MB_OK | MB_ICONERROR);
+        return 1;
+    }
     return howldrop::run_tray(std::move(config));
 }
 
@@ -390,7 +447,29 @@ int main(int argc, char** argv) {
         return 0;
     }
     try {
-        if (cmd == "serve") return cmd_serve();
+        if (cmd == "serve") return cmd_serve(args.size() >= 3 && args[2] == "--share-clipboard");
+        if (cmd == "key") {
+            const std::string key = load_pair_key(true);
+            if (key.empty()) {
+                std::cerr << "could not read or make the pairing key\n";
+                return 1;
+            }
+            std::cout << howldrop::display_pair_key(key) << '\n';
+            return 0;
+        }
+        if (cmd == "pair") {
+            const std::string key = args.size() >= 3 ? howldrop::normalize_pair_key(args[2]) : std::string();
+            if (key.empty()) {
+                std::cerr << "that is not a pairing key: give the 32 digits `howldrop key` shows on the other PC\n";
+                return 2;
+            }
+            if (!save_pair_key(key)) {
+                std::cerr << "could not save the pairing key\n";
+                return 1;
+            }
+            std::cout << "paired: restart HowlDrop to use it. The add-on's pc_key must be this key too.\n";
+            return 0;
+        }
         if (cmd == "peers") return cmd_peers();
         if (cmd == "clip") return cmd_simple("clip");
         if (cmd == "stop") return cmd_simple("quit");

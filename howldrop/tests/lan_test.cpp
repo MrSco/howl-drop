@@ -106,6 +106,8 @@ void test_lan() {
     a_cfg.peer_ttl = std::chrono::seconds(2);
     a_cfg.log = false;
     a_cfg.beacon_targets.push_back({"127.0.0.1", 41241});
+    a_cfg.pair_key = howldrop::new_pair_key();  // both PCs share it (howldrop pair)
+    a_cfg.share_clipboard = true;
 
     howldrop::Node::Config b_cfg = a_cfg;
     b_cfg.name = "pc-b";
@@ -149,25 +151,35 @@ void test_lan() {
         CHECK(match);
     }
 
-    {
+    // A hand-made transfer to pc-b: key "" sends it unsigned, tamper sends a
+    // body other than the one the trailer covers. Returns the ack's result.
+    const auto raw_send = [&](const std::string& name, const std::string& key, bool tamper) {
         howldrop::Socket socket = howldrop::Socket::tcp_v4();
         std::uint32_t addr = 0;
         std::string error;
         CHECK(howldrop::ipv4_from_string("127.0.0.1", addr));
-        CHECK(socket.valid());
         CHECK(socket.connect_v4(addr, 41242, 2000, error));
         howldrop::Message message;
         message.type = howldrop::MsgType::File;
         const std::string body = "hello";
         message.body_size = body.size();
-        message.fields.set("file", "..\\..\\evil.txt");
+        message.fields.set("file", name);
         message.fields.set("from", std::string(32, 'a'));
-        CHECK(howldrop::write_head(socket, message, nullptr, error));
-        CHECK(socket.send_full(reinterpret_cast<const std::uint8_t*>(body.data()), body.size(), nullptr));
+        std::optional<howldrop::HmacSha256> mac;
+        const auto opened = howldrop::open_transfer(socket, message, key, mac, nullptr, error);
+        if (opened != howldrop::OpenResult::Ok) return std::string("refused before the body");
+        const std::string sent = tamper ? "jello" : body;
+        if (mac) mac->update(body.data(), body.size());
+        socket.send_full(reinterpret_cast<const std::uint8_t*>(sent.data()), sent.size(), nullptr);
+        howldrop::close_transfer(socket, mac, nullptr);
         howldrop::Message ack;
-        CHECK(howldrop::read_head(socket, ack, nullptr, error));
-        CHECK(ack.fields.get("result") == "ok");
-        CHECK(ack.fields.get("file") == "evil.txt");
+        if (!howldrop::read_head(socket, ack, nullptr, error)) return std::string("no answer");
+        return ack.fields.get("result") + " " + ack.fields.get("file");
+    };
+
+    // Names are made safe: no way out of the inbox.
+    CHECK(raw_send("..\\..\\evil.txt", a_cfg.pair_key, false) == "ok evil.txt");
+    {
         const auto evil = root / "b" / "evil.txt";
         CHECK(std::filesystem::is_regular_file(evil));
         std::ifstream in(evil, std::ios::binary);
@@ -175,9 +187,28 @@ void test_lan() {
         CHECK(got == "hello");
         CHECK(!std::filesystem::exists(root / "evil.txt"));
     }
+    // Pairing: an unpaired sender is refused before its body, a wrong key
+    // too, and a body that is not the signed one is dropped.
+    {
+        // The refusal may beat the body, or the reset may beat the refusal.
+        const std::string unsigned_result = raw_send("unsigned.txt", "", false);
+        CHECK(unsigned_result == "error " || unsigned_result == "no answer");
+        CHECK(!std::filesystem::exists(root / "b" / "unsigned.txt"));
+    }
+    CHECK(raw_send("wrong-key.txt", howldrop::new_pair_key(), false) == "refused before the body");
+    CHECK(!std::filesystem::exists(root / "b" / "wrong-key.txt"));
+    CHECK(raw_send("tampered.txt", a_cfg.pair_key, true) == "error ");
+    CHECK(!std::filesystem::exists(root / "b" / "tampered.txt"));
+    CHECK(!std::filesystem::exists(root / "b" / "tampered.txt.partial"));
 
     CHECK(clip_a.set_text("hello from A"));
     CHECK(wait_for_text(clip_b, "hello from A"));
+
+    // Sharing off: what is copied on A stays on A.
+    node_a.set_share_clipboard(false);
+    CHECK(clip_a.set_text("a password on A"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    CHECK(clip_b.read().text == "hello from A");
 
     node_a.stop();
     node_b.stop();
