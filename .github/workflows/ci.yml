@@ -24,6 +24,40 @@ jobs:
       - name: Unit tests
         run: tools/run-tests.sh
 
+  # The PC side (howldrop/): its tests on Linux, and howldrop.exe built the
+  # way tools/build-howldrop.ps1 does, with MinGW, kept as a download.
+  howldrop-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cmake -S howldrop -B build/howldrop -DCMAKE_BUILD_TYPE=Release && cmake --build build/howldrop -j4
+      - name: Test
+        run: |
+          build/howldrop/howldrop-open-test
+          build/howldrop/howldrop-bridge-test
+          timeout 300 build/howldrop/howldrop-test
+
+  howldrop-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+      - name: Build
+        run: cmake -S howldrop -B build/howldrop -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/howldrop
+      - name: Test
+        run: build/howldrop/howldrop-open-test.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: howldrop-windows
+          path: build/howldrop/howldrop.exe
+
   # The prebuilt image Home Assistant pulls, one per architecture, each built
   # on a native runner. A version is built once: an image already in the
   # registry for this version is left as it is, so bump the version in

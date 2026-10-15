@@ -75,8 +75,10 @@ start it, and read its log. That's the local add-on (`local_howldrop`), for
 trying a change before it's pushed; pushing to `main` publishes it to the
 `ha-addon` branch once CI passes.
 
-The optional `howldrop.exe` builds with CMake, Ninja and a MinGW-w64 g++
-(Strawberry Perl ships all three):
+The optional `howldrop.exe` is a tray app: a notification for each drop,
+and links, photos and documents opened as they arrive if you choose
+(`howldrop/README.md`). It builds with CMake, Ninja and a MinGW-w64 g++
+(Strawberry Perl ships all three), and CI builds it on every push:
 
 ```powershell
 tools\build-howldrop.ps1 -Run

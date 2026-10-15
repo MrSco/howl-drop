@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Make the add-on's icon.png and logo.png, the images Home Assistant shows
-for it, from the artwork in art/howldrop.png.
+for it, and howldrop.exe's icon (howldrop/res/howldrop.ico), from the
+artwork in art/howldrop.png.
 
   python tools/make-icons.py [SOURCE]
 
@@ -68,7 +69,10 @@ def main(argv):
     out = ROOT / 'addon'
     icon.resize((256, 256), Image.LANCZOS).save(out / 'icon.png', optimize=True)
     logo(icon).save(out / 'logo.png', optimize=True)
-    print(f'wrote {out / "icon.png"} and {out / "logo.png"} from {ART}')
+    ico = ROOT / 'howldrop' / 'res' / 'howldrop.ico'
+    ico.parent.mkdir(exist_ok=True)
+    icon.save(ico, sizes=[(16, 16), (20, 20), (24, 24), (32, 32), (40, 40), (48, 48), (64, 64), (128, 128), (256, 256)])
+    print(f'wrote {out / "icon.png"}, {out / "logo.png"} and {ico} from {ART}')
 
 
 if __name__ == '__main__':

@@ -433,6 +433,7 @@ void Node::receive_file(Socket& socket, const Message& message) {
         std::string note = "saved " + path_to_utf8(final_path) + " (" + std::to_string(message.body_size) + " bytes)";
         if (!from.empty()) note += " from " + from;
         log_line(note);
+        if (config_.on_file) config_.on_file(final_path, from == message.fields.get("from") ? std::string() : from);
     } catch (const std::exception& ex) {
         write_ack(socket, false, ex.what(), "");
     }
@@ -473,6 +474,7 @@ void Node::receive_clip(Socket& socket, const Message& message) {
     }
     write_ack(socket, true, "", "");
     log_line("clipboard from " + (name.empty() ? std::string("a peer") : name));
+    if (config_.on_text) config_.on_text(text, name == from ? std::string() : name);
 }
 
 std::filesystem::path Node::inbox_file(const std::string& safe_name) const {
@@ -740,6 +742,7 @@ void Node::handle_control(Socket socket) {
     if (!got_newline && line.empty()) return;
 
     std::string response;
+    bool stopping = false;
     if (line == "peers") {
         const auto list = peers();
         response = "ok " + std::to_string(list.size()) + "\n";
@@ -750,7 +753,7 @@ void Node::handle_control(Socket socket) {
         const Status status = push_clipboard();
         response = (status.ok ? "ok " : "error ") + one_line(status.message.empty() ? (status.ok ? "ok" : "failed") : status.message);
     } else if (line == "quit" || line == "stop") {
-        request_stop();
+        stopping = true;  // after the reply: a stop would cut its send short
         response = "ok stopping";
     } else if (line.rfind("send ", 0) == 0) {
         const std::string rest = line.substr(5);
@@ -771,6 +774,7 @@ void Node::handle_control(Socket socket) {
     }
     if (response.empty() || response.back() != '\n') response.push_back('\n');
     socket.send_full(reinterpret_cast<const std::uint8_t*>(response.data()), response.size(), &stop_, 3);
+    if (stopping) request_stop();
 }
 
 void Node::reap() {
@@ -815,6 +819,10 @@ void Node::join_jobs() {
 void Node::log_line(const std::string& line) {
     if (!config_.log) return;
     std::lock_guard<std::mutex> lock(log_mu_);
+    if (config_.on_log) {
+        config_.on_log(line);
+        return;
+    }
     std::cout << line << '\n' << std::flush;
 }
 
