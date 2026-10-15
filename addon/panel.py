@@ -26,7 +26,6 @@ import ipaddress
 import json
 import os
 import socketserver
-import subprocess
 import sys
 import threading
 import urllib.parse
@@ -52,10 +51,9 @@ INLINE = {
 }
 THUMBABLE = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.heic', '.heif'}
 # What an iPhone sends a photo as. Only Safari shows it, so the panel shows a
-# JPEG made with libheif's heif-convert instead.
+# JPEG made with pillow-heif instead.
 HEIF = {'.heic', '.heif'}
 VIEWS_KEPT = 200  # full-size JPEGs of HEIC photos, a few MB each
-HEIF_TIMEOUT_S = 60
 STATIC = {
     '/': ('index.html', 'text/html; charset=utf-8'),
     '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -159,11 +157,25 @@ def temp_name(out):
     return f'{out}.{os.getpid()}.{threading.get_ident()}.new'
 
 
+def heif_opener():
+    """Teach Pillow HEIC with pillow-heif; False when it is not installed.
+    Its own libheif is used, not Debian's: bookworm's 1.15 refuses an edited
+    iPhone photo (FullSizeRender.heic, brand tmap: an HDR gain map) with
+    "Metadata not correctly assigned to image" (2026-10-14)."""
+    try:
+        import pillow_heif
+    except ImportError:
+        return False
+    pillow_heif.register_heif_opener()
+    return True
+
+
 def heif_view(path, cache):
     """A full-size JPEG of a HEIC photo, made once and kept in cache; None
-    when it cannot be made. libheif applies the photo's own rotation while
-    decoding, so the JPEG is saved without EXIF: no orientation tag can turn
-    it a second time, and the photo's location stays in the original."""
+    when it cannot be made. pillow-heif applies the photo's own rotation
+    while decoding, and the JPEG is saved without EXIF: no orientation tag
+    can turn it a second time, and the photo's location stays in the
+    original."""
     try:
         out = os.path.join(cache, cache_key(path) + '-view.jpg')
     except OSError:
@@ -174,28 +186,21 @@ def heif_view(path, cache):
         from PIL import Image
     except ImportError:
         return None
+    if not heif_opener():
+        return None
     tmp = temp_name(out)
-    made = tmp + '.jpg'
     try:
         os.makedirs(cache, exist_ok=True)
-        subprocess.run(['heif-convert', '-q', '92', path, made], stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL, timeout=HEIF_TIMEOUT_S, check=True)
-        # A file holding several images is written as NAME-1.jpg, NAME-2.jpg...:
-        # the first is the photo.
-        if not os.path.exists(made):
-            made = tmp + '-1.jpg'
-        with Image.open(made) as img:
-            img = img.convert('RGB')
-            img.save(tmp, 'JPEG', quality=90)
+        with Image.open(path) as img:
+            img.convert('RGB').save(tmp, 'JPEG', quality=90)
         os.replace(tmp, out)
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except Exception as e:  # noqa: BLE001 - any file a phone sends
+        print(f'cannot show {os.path.basename(path)}: {e}', flush=True)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
         return None
-    finally:
-        for leftover in (tmp, tmp + '.jpg', *(f'{tmp}-{i}.jpg' for i in range(1, 9))):
-            try:
-                os.unlink(leftover)
-            except OSError:
-                pass
     prune_cache(cache, '-view.jpg', VIEWS_KEPT)
     return out
 

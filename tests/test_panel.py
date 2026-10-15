@@ -5,7 +5,6 @@ import ipaddress
 import json
 import os
 from pathlib import Path
-import shutil
 import sys
 import tempfile
 import threading
@@ -196,8 +195,8 @@ class PanelTests(unittest.TestCase):
             from PIL import Image
         except ImportError:
             self.skipTest('Pillow is not installed')
-        if not shutil.which('heif-convert'):
-            self.skipTest('heif-convert (libheif-examples) is not installed')
+        if not panel.heif_opener():
+            self.skipTest('pillow-heif is not installed')
         heic = self.dest / 'FullSizeRender.heic'
         heic.write_bytes((Path(__file__).parent / 'data' / 'sample.heic').read_bytes())
         (drop,) = panel.listing(str(self.dest), self.history)

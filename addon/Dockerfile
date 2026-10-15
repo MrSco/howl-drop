@@ -42,8 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-dbus \
         python3-gi \
-        python3-pil \
-        libheif-examples \
+        python3-pip \
         python3-libarchive-c \
     && rm -rf /var/lib/apt/lists/*
 
@@ -97,12 +96,15 @@ COPY deliver.py /deliver.py
 COPY announce.py /announce.py
 COPY panel.py /panel.py
 COPY panel/ /panel/
-# The panel shows HEIC photos as JPEG through heif-convert: check it decodes.
-RUN python3 -c "from PIL import Image; Image.new('RGB', (64, 48), (200, 30, 30)).save('/tmp/t.png')" \
-    && heif-enc -o /tmp/t.heic /tmp/t.png >/dev/null \
-    && heif-convert /tmp/t.heic /tmp/t.jpg >/dev/null \
-    && python3 -c "from PIL import Image; assert Image.open('/tmp/t.jpg').size == (64, 48)" \
-    && rm /tmp/t.png /tmp/t.heic /tmp/t.jpg
+# The panel's thumbnails, and HEIC photos shown as JPEG. From PyPI: pillow-heif
+# carries a current libheif, and bookworm's libheif 1.15 cannot read an
+# edited iPhone photo (an HDR gain map); it needs a newer Pillow than
+# bookworm's too. Checked by a round trip.
+RUN pip3 install --no-cache-dir --break-system-packages pillow==12.3.0 pillow-heif==1.1.1 \
+    && python3 -c "import pillow_heif; from PIL import Image; pillow_heif.register_heif_opener(); \
+Image.new('RGB', (64, 48), (200, 30, 30)).save('/tmp/t.heic'); \
+assert Image.open('/tmp/t.heic').convert('RGB').getpixel((5, 5))[0] > 150" \
+    && rm /tmp/t.heic
 COPY icon.png /panel/icon.png
 COPY senders.py /senders.py
 COPY run.sh /run.sh
