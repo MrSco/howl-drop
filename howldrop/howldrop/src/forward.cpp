@@ -23,8 +23,10 @@ Status connect_transfer(const LanTarget& target, Socket& socket) {
     if (!ipv4_from_string(target.host, addr)) return Status::failure("could not reach the PC");
     socket = Socket::tcp_v4();
     std::string error;
-    if (!socket.valid() || !socket.connect_v4(addr, target.port, 2000, error)) {
-        return Status::failure("could not reach the PC");
+    if (!socket.valid()) return Status::failure("could not reach the PC: no socket");
+    if (!socket.connect_v4(addr, target.port, 2000, error)) {
+        return Status::failure("could not reach the PC: connecting to " + target.host + ":" +
+                               std::to_string(target.port) + " " + (error.empty() ? "failed" : error));
     }
     socket.set_recv_timeout_ms(1000);
     socket.set_send_timeout_ms(5000);
@@ -35,7 +37,10 @@ Status connect_transfer(const LanTarget& target, Socket& socket) {
 Status read_ack(Socket& socket) {
     Message ack;
     std::string error;
-    if (!read_head(socket, ack, nullptr, error)) return Status::failure("could not reach the PC");
+    if (!read_head(socket, ack, nullptr, error)) {
+        return Status::failure("could not reach the PC: no answer after sending (" +
+                               (error.empty() ? std::string("connection closed") : error) + ")");
+    }
     if (ack.type != MsgType::Ack || ack.fields.get("result") != "ok") {
         std::string why = ack.fields.get("message");
         if (why.empty()) why = "the PC did not accept it";
@@ -187,7 +192,7 @@ Status forward_file(const LanTarget& target, const std::filesystem::path& path, 
         in.read(buf.data(), chunk);
         if (in.gcount() != chunk) return Status::failure("could not read the file");
         if (!socket.send_full(reinterpret_cast<std::uint8_t*>(buf.data()), static_cast<std::size_t>(chunk), nullptr)) {
-            return Status::failure("could not reach the PC");
+            return Status::failure("could not reach the PC: the connection broke while sending");
         }
         left -= static_cast<std::uint64_t>(chunk);
     }
@@ -211,7 +216,7 @@ Status forward_text(const LanTarget& target, std::string_view text) {
     if (!write_head(socket, message, nullptr, error)) return Status::failure("rejected: " + error);
     if (!text.empty() &&
         !socket.send_full(reinterpret_cast<const std::uint8_t*>(text.data()), text.size(), nullptr)) {
-        return Status::failure("could not reach the PC");
+        return Status::failure("could not reach the PC: the connection broke while sending");
     }
     return read_ack(socket);
 }
