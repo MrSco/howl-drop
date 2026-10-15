@@ -267,7 +267,15 @@ Socket Socket::accept_v4() {
 #endif
     const Native fd = ::accept(as_native(fd_), reinterpret_cast<sockaddr*>(&from), &len);
     if (fd == kInvalid) return {};
-    return Socket(static_cast<std::intptr_t>(fd));
+    Socket accepted(static_cast<std::intptr_t>(fd));
+    // Blocking, so the receive timeout applies. On Windows a socket accepted
+    // from a non-blocking listener is non-blocking too (Linux does not pass
+    // it on): recv then failed with WSAEWOULDBLOCK the moment the sender
+    // paused, recv_full used up its 30 waits in microseconds, and the
+    // connection was reset mid-file. Files from the add-on broke every time,
+    // while loopback tests, too fast to pause, passed (2026-10-14).
+    accepted.set_nonblocking(false);
+    return accepted;
 }
 
 bool Socket::connect_v4(std::uint32_t addr_be, std::uint16_t port_host, int timeout_ms, std::string& error) {

@@ -400,6 +400,12 @@ void Node::receive_file(Socket& socket, const Message& message) {
                     out.close();
                     std::error_code ec;
                     std::filesystem::remove(partial, ec);
+                    if (!stop_.load()) {
+                        log_line("receiving " + safe + " stopped after " +
+                                 std::to_string(message.body_size - left) + " of " +
+                                 std::to_string(message.body_size) +
+                                 " bytes: the sender closed the connection, or nothing came for 30 s");
+                    }
                     return;
                 }
                 out.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(chunk));

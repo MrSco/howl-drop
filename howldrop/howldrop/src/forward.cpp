@@ -192,7 +192,9 @@ Status forward_file(const LanTarget& target, const std::filesystem::path& path, 
         in.read(buf.data(), chunk);
         if (in.gcount() != chunk) return Status::failure("could not read the file");
         if (!socket.send_full(reinterpret_cast<std::uint8_t*>(buf.data()), static_cast<std::size_t>(chunk), nullptr)) {
-            return Status::failure("could not reach the PC: the connection broke while sending");
+            const std::string why = last_socket_error();
+            return Status::failure("could not reach the PC: the connection broke after " + std::to_string(size - left) +
+                                   " of " + std::to_string(size) + " bytes (" + why + ")");
         }
         left -= static_cast<std::uint64_t>(chunk);
     }
@@ -216,7 +218,8 @@ Status forward_text(const LanTarget& target, std::string_view text) {
     if (!write_head(socket, message, nullptr, error)) return Status::failure("rejected: " + error);
     if (!text.empty() &&
         !socket.send_full(reinterpret_cast<const std::uint8_t*>(text.data()), text.size(), nullptr)) {
-        return Status::failure("could not reach the PC: the connection broke while sending");
+        return Status::failure("could not reach the PC: the connection broke while sending (" + last_socket_error() +
+                               ")");
     }
     return read_ack(socket);
 }
@@ -286,6 +289,24 @@ DropResult take_drop(const std::filesystem::path& inbox, const std::filesystem::
     if (!keep) move_aside(inbox / ".forwarded", file);
     const DropAction action = kind == DropKind::Text ? DropAction::SentText : DropAction::SentFile;
     return DropResult{action, status.message};
+}
+
+std::string HandledFiles::identity(const std::filesystem::path& file) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(file, ec);
+    if (ec) return {};
+    const auto time = std::filesystem::last_write_time(file, ec);
+    if (ec) return {};
+    return std::to_string(size) + ":" + std::to_string(time.time_since_epoch().count());
+}
+
+void HandledFiles::add(const std::filesystem::path& file) { files_[file.string()] = identity(file); }
+
+bool HandledFiles::has(const std::filesystem::path& file) const {
+    const auto it = files_.find(file.string());
+    if (it == files_.end()) return false;
+    const std::string now = identity(file);
+    return !now.empty() && now == it->second;
 }
 
 }  // namespace howldrop
