@@ -33,8 +33,10 @@ kernel already drives, and loads no driver or firmware of its own.
   have what was measured.
 - **Bluetooth on the host** (`hci0`): the add-on advertises through the
   host's `bluetoothd` so a phone wakes AirDrop for it.
-- An amd64 machine (tested) or aarch64, such as a Raspberry Pi 4 or 5
-  (prebuilt too, untested).
+- An amd64 machine (tested) or aarch64, such as a Raspberry Pi 3, 4 or 5
+  (prebuilt too, untested). Home Assistant OS for the Pi includes the MT7612U
+  driver; use a USB 3 port on a Pi 4 or 5. Without Home Assistant OS, the
+  same image runs under Docker ([docker/README.md](https://github.com/MrSco/howl-drop/blob/main/docker/README.md)).
 
 ## Install
 

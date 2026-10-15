@@ -1,6 +1,7 @@
 """addon/panel.py, the sidebar panel: what it lists, who it answers, what it
 serves inline, and that nothing outside save_folder can be read or deleted."""
 import importlib.util
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -99,6 +100,20 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(b'HowlDrop', body)
         self.assertIn("script-src 'self'", headers['Content-Security-Policy'])
+
+    def test_allow_takes_networks(self):
+        allow = panel.parse_allow(['192.168.1.0/24', '10.0.0.5', 'nonsense'])
+        self.assertEqual(len(allow), 2)
+
+        def allowed(address):
+            return any(ipaddress.ip_address(address) in network for network in allow)
+        self.assertTrue(allowed('192.168.1.40'))
+        self.assertTrue(allowed('10.0.0.5'))
+        self.assertFalse(allowed('10.0.0.6'))
+        base = self.start(allow=('127.0.0.0/8',))
+        self.assertEqual(self.get(base + '/api/drops')[0], 200)
+        base = self.start(allow=('*',))
+        self.assertEqual(self.get(base + '/api/drops')[0], 200)
 
     def test_resolve_keeps_to_save_folder(self):
         self.drop('a.jpg')

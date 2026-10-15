@@ -1,0 +1,17 @@
+{
+  "pc_name": "HowlDrop",
+  "save_folder": "/share/howldrop",
+  "senders": [],
+  "notify": [],
+  "fetch_links": true,
+  "fetch_max_mb": 100,
+  "delete_after_days": 30,
+  "forward_to_pc": false,
+  "pc_host": "",
+  "interface": "auto",
+  "allow_untested": false,
+  "channels": "",
+  "aggregation": "auto",
+  "verbose": false,
+  "debug_capture": false
+}

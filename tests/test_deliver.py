@@ -256,6 +256,19 @@ class AnnounceTests(unittest.TestCase):
         self.assertEqual(HomeAssistant.calls, [])
         self.assertTrue((self.dest / 'IMG_3.JPG').exists())
 
+    def test_a_long_lived_token_stands_in_for_the_supervisor(self):
+        saved = {k: os.environ.pop(k, None) for k in ('SUPERVISOR_TOKEN', 'HOWLDROP_HA_TOKEN')}
+        try:
+            os.environ['HOWLDROP_HA_TOKEN'] = 'long-lived'
+            self.assertEqual(deliver.announce.Announcer([]).token, 'long-lived')
+            os.environ['SUPERVISOR_TOKEN'] = 'supervisor'
+            self.assertEqual(deliver.announce.Announcer([]).token, 'supervisor')
+        finally:
+            for key, value in saved.items():
+                os.environ.pop(key, None)
+                if value is not None:
+                    os.environ[key] = value
+
     def test_old_notes_are_pruned(self):
         old = self.staging / '.howldrop-meta' / 'gone.jpg.json'
         old.write_text('{}', encoding='utf-8')

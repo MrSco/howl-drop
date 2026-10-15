@@ -19,7 +19,7 @@ jobs:
           shellcheck --severity=warning \
             userspace/omdrop-discoverable \
             tools/build-owl.sh tools/stage.sh tools/run-tests.sh tools/stage-addon.sh \
-            tools/publish-addon.sh addon/run.sh \
+            tools/publish-addon.sh addon/run.sh docker/install.sh \
             tests/helpers.bash
       - name: Unit tests
         run: tools/run-tests.sh

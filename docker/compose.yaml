@@ -1,0 +1,44 @@
+# HowlDrop without Home Assistant OS: the add-on's own image under Docker, on
+# 64-bit Raspberry Pi OS or any Linux whose kernel drives a supported USB
+# Wi-Fi card. README.md in this folder has the steps; install.sh sets
+# HOWLDROP_ARCH in .env.
+#
+#   docker compose up -d        start (and on every boot: restart policy)
+#   docker compose logs -f      the log
+#   docker compose down         stop, giving the card back
+#   docker compose pull && docker compose up -d     update
+services:
+  howldrop:
+    image: ghcr.io/mrsco/howldrop-${HOWLDROP_ARCH:-aarch64}:latest
+    container_name: howldrop
+    restart: unless-stopped
+    # What the add-on asks Home Assistant for (addon/config.yaml): the host
+    # network and PID namespace, these capabilities, /dev/net/tun, the host
+    # D-Bus (NetworkManager and bluetoothd) and AppArmor off.
+    network_mode: host
+    pid: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      # Settings (data/options.json), the receiver's keys, the panel's state.
+      - ./data:/data
+      # Where files and text land: save_folder, /share/howldrop by default.
+      - ./howldrop:/share/howldrop
+      - /run/dbus:/run/dbus:ro
+    environment:
+      # The panel, on port 47640: who may open it. Addresses and networks,
+      # comma-separated, or * for anyone who can reach this machine. Anyone
+      # it lets in can see and delete what was sent.
+      HOWLDROP_PANEL_ALLOW: "127.0.0.1"
+      # Events and notifications to a Home Assistant elsewhere (Container or
+      # Core): its API and a long-lived access token (your profile, Security).
+      # HOWLDROP_HA_URL: http://homeassistant.local:8123/api
+      # HOWLDROP_HA_TOKEN: ""
+    # Stopping hands the card back to NetworkManager; give it time.
+    stop_grace_period: 30s

@@ -31,7 +31,11 @@ transfers run. See [docs/hardware-notes.md](docs/hardware-notes.md).
 Or in Home Assistant: Settings, Add-ons, Add-on store, menu, Repositories,
 and add `https://github.com/MrSco/howl-drop#ha-addon`. Then install HowlDrop,
 turn Protection mode off, and start it. Requirements and options:
-[addon/DOCS.md](addon/DOCS.md).
+[addon/DOCS.md](addon/DOCS.md). Home Assistant OS on a Raspberry Pi 3, 4 or 5
+works the same way.
+
+Without Home Assistant OS, on Raspberry Pi OS (64-bit) or another Linux, the
+same image runs under Docker Compose: [docker/README.md](docker/README.md).
 
 The `ha-addon` branch is the add-on assembled from `main` by CI
 (`tools/publish-addon.sh`), since Home Assistant builds an add-on only from its
@@ -50,6 +54,7 @@ packaging removed (upstream has it).
 | Path | What |
 |---|---|
 | `addon/` | The add-on: `config.yaml`, `Dockerfile`, `run.sh`, and the Python it ships (`deliver.py`, `announce.py`, `senders.py`, `patch_receiver.py`), and the sidebar panel (`panel.py`, `panel/`). |
+| `docker/` | The same image under Docker Compose, without Home Assistant OS: `compose.yaml`, default `options.json`, `install.sh`. |
 | `howldrop/` | `howldrop.exe` (the Windows listener) and `howldrop-bridge` (the forwarder in the add-on), C++17, one CMake tree. |
 | `userspace/` | `omdrop-discoverable`, the radio helper, and `owl-profiles`, its per-driver table. |
 | `patches/`, `pins` | OWL's pinned upstream commit and the patches applied to it; `tools/build-owl.sh` applies them. |

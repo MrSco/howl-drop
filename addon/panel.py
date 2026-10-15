@@ -8,8 +8,9 @@ The add-on runs on the host network, so this server is on the host's
 addresses too. It binds the hassio bridge address when there is one and,
 wherever it listens, answers only the Supervisor's ingress proxy
 (172.30.32.2), which lets through only signed-in Home Assistant users.
-HOWLDROP_PANEL_ALLOW (comma-separated addresses, or *) changes that, for a
-plain Docker install or a test.
+HOWLDROP_PANEL_ALLOW (comma-separated addresses and networks such as
+192.168.1.0/24, or *) changes that, for a Docker install without Home
+Assistant (docker/) or a test.
 
 Anyone in range can send in Everyone mode, so a drop is untrusted: its name
 is only ever text in the page (app.js), and a file is served inline only as
@@ -21,6 +22,7 @@ deleted.
 import argparse
 import hashlib
 import http.server
+import ipaddress
 import json
 import os
 import socketserver
@@ -202,8 +204,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
     def allowed(self):
-        allow = self.server.allow
-        return '*' in allow or self.client_address[0] in allow
+        try:
+            peer = ipaddress.ip_address(self.client_address[0])
+        except ValueError:
+            return False
+        return any(peer in network for network in self.server.allow)
 
     def send_plain(self, code, text):
         body = (text + '\n').encode()
@@ -353,8 +358,25 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
 
 
+def parse_allow(entries):
+    """Addresses and networks (192.168.1.0/24), or * for any, as networks.
+    An entry that is neither is left out."""
+    networks = []
+    for entry in entries:
+        entry = entry.strip()
+        if entry == '*':
+            networks += [ipaddress.ip_network('0.0.0.0/0'), ipaddress.ip_network('::/0')]
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            print(f'HOWLDROP_PANEL_ALLOW: {entry!r} is not an address or network; left out', flush=True)
+    return networks
+
+
 def serve(dest, port, history, thumbs, static, allow, hosts=(HASSIO_GATEWAY, '0.0.0.0')):
-    """Listen on the first of hosts that can be bound; return the server."""
+    """Listen on the first of hosts that can be bound; return the server.
+    allow: the addresses and networks it answers (parse_allow)."""
     last = None
     for host in hosts:
         try:
@@ -368,7 +390,7 @@ def serve(dest, port, history, thumbs, static, allow, hosts=(HASSIO_GATEWAY, '0.
     server.history = history
     server.thumbs = thumbs
     server.static = static
-    server.allow = allow
+    server.allow = parse_allow(allow)
     return server
 
 
@@ -381,7 +403,7 @@ def main():
     ap.add_argument('--thumbs', default='/data/thumbs')
     ap.add_argument('--static', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'panel'))
     a = ap.parse_args()
-    allow = {s.strip() for s in os.environ.get('HOWLDROP_PANEL_ALLOW', SUPERVISOR).split(',') if s.strip()}
+    allow = [s.strip() for s in os.environ.get('HOWLDROP_PANEL_ALLOW', SUPERVISOR).split(',') if s.strip()]
     os.makedirs(a.dest, exist_ok=True)
     hosts = (a.bind,) if a.bind else (HASSIO_GATEWAY, '0.0.0.0')
     server = serve(a.dest, a.port, a.history, a.thumbs, a.static, allow, hosts)

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.1
+
+- Runs without Home Assistant OS too: Docker Compose on Raspberry Pi OS or any Linux (`docker/` in the repository). There, a long-lived token reaches a Home Assistant elsewhere, and the panel can be opened from the addresses you allow.
+
 ## 0.11.0
 
 - HowlDrop panel in the sidebar: recent drops with sender, photo thumbnails, text to copy, links to open, download and delete.
