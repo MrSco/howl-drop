@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.3
+
+- When forwarding to a PC fails, the log says why (timed out, refused, broke while sending) instead of only "could not reach the PC".
+
 ## 0.11.2
 
 - The panel shows iPhone HEIC photos in every browser, as JPEG, with thumbnails. Download still gives the original.
