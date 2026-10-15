@@ -11,6 +11,7 @@ add_library(howldrop-core STATIC
     src/clipboard.cpp
     src/node.cpp
     src/forward.cpp
+    src/open_policy.cpp
 )
 target_include_directories(howldrop-core PUBLIC src)
 target_compile_features(howldrop-core PUBLIC cxx_std_17)
@@ -39,7 +40,12 @@ if(NOT MSVC)
     target_compile_options(howldrop PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 if(WIN32)
-    target_link_libraries(howldrop PRIVATE shell32)
+    # The tray app, with its icon, and no console window: commands typed in
+    # a terminal attach to it (main.cpp).
+    enable_language(RC)
+    target_sources(howldrop PRIVATE src/tray_win.cpp res/howldrop.rc)
+    set_target_properties(howldrop PROPERTIES WIN32_EXECUTABLE TRUE)
+    target_link_libraries(howldrop PRIVATE shell32 user32 advapi32)
     if(MINGW)
         target_link_options(howldrop PRIVATE -static -static-libgcc -static-libstdc++)
     endif()
@@ -49,6 +55,12 @@ add_executable(howldrop-bridge src/bridge_main.cpp)
 target_link_libraries(howldrop-bridge PRIVATE howldrop-core)
 if(NOT MSVC)
     target_compile_options(howldrop-bridge PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_executable(howldrop-open-test tests/open_policy_test.cpp)
+target_link_libraries(howldrop-open-test PRIVATE howldrop-core)
+if(NOT MSVC)
+    target_compile_options(howldrop-open-test PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 if(NOT WIN32)

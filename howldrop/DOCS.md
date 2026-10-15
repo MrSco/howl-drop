@@ -147,9 +147,13 @@ not.
 `forward_to_pc` (default off; optional) also sends each new file to
 `howldrop.exe` when a PC runs it: the file goes to that PC's
 `Downloads\HowlDrop` and text to its clipboard. Files stay in `save_folder`
-either way. Build `howldrop.exe` with `tools\build-howldrop.ps1`. Allow UDP 47631 and TCP
-47632 from the LAN on that PC. Set `pc_host` to the PC's address only when
-its beacon does not reach Home Assistant.
+either way. `howldrop.exe` sits in the tray, shows a Windows notification
+for each drop, and can open links, photos and documents as they arrive, as
+a Mac does (its menu says which; links are on by default). Download it from
+the latest CI run (`howldrop-windows`) or build it with
+`tools\build-howldrop.ps1`; the repo's `howldrop/README.md` has the details.
+Allow UDP 47631 and TCP 47632 from the LAN on that PC. Set `pc_host` to the
+PC's address only when its beacon does not reach Home Assistant.
 
 `interface` (default `auto`) names the Wi-Fi interface to use, e.g.
 `wlan1`. `auto` picks one: an exclusive-mode card that is not the uplink

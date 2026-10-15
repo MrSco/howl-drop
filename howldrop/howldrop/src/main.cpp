@@ -12,6 +12,8 @@
 
 #ifdef _WIN32
 #include <shellapi.h>
+
+#include "tray.hpp"
 #else
 #include <csignal>
 #include <unistd.h>
@@ -137,7 +139,8 @@ void usage() {
         << "HowlDrop " << howldrop::kVersion << "\n"
         << "Send a file or clipboard text to another HowlDrop PC on this network.\n"
         << "Ethernet is enough. A Wi-Fi card is not required.\n\n"
-        << "  howldrop                 Start and leave this window open\n"
+        << "  howldrop                 Start (Windows: in the tray, by the clock)\n"
+        << "  howldrop serve           Start in this window, with its log\n"
         << "  howldrop peers            List PCs that are currently visible\n"
         << "  howldrop send NAME FILE   Send FILE to the PC named NAME\n"
         << "  howldrop clip             Send the current clipboard text now\n"
@@ -175,7 +178,7 @@ Reply control_request(const std::string& command) {
     std::string error;
     if (!howldrop::ipv4_from_string("127.0.0.1", addr) || !socket.valid() ||
         !socket.connect_v4(addr, howldrop::kControlPort, 1000, error)) {
-        reply.detail = "HowlDrop is not running on this PC. Start it and leave that window open.";
+        reply.detail = "HowlDrop is not running on this PC. Start it first (on Windows, howldrop.exe with no arguments).";
         return reply;
     }
     socket.set_recv_timeout_ms(2000);
@@ -321,6 +324,41 @@ int cmd_serve() {
     return 0;
 }
 
+#ifdef _WIN32
+// The tray app: the same node as `serve`, without a console window.
+int cmd_tray() {
+    const auto inbox = inbox_dir();
+    if (inbox.empty()) {
+        MessageBoxW(nullptr, L"HowlDrop could not find your Downloads folder.", L"HowlDrop", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+    howldrop::Node::Config config;
+    config.name = computer_name();
+    config.id = load_id();
+    config.inbox = inbox;
+    return howldrop::run_tray(std::move(config));
+}
+
+// howldrop.exe is a windowed program, so a command typed in a terminal
+// writes to that terminal by attaching to it; `serve` opens one if needed.
+// Output already sent to a pipe or a file (howldrop peers > out.txt) stays
+// there.
+void attach_console(bool create) {
+    const auto redirected = [](DWORD which) {
+        const HANDLE handle = GetStdHandle(which);
+        return handle != nullptr && handle != INVALID_HANDLE_VALUE && GetFileType(handle) != FILE_TYPE_UNKNOWN;
+    };
+    const bool out = redirected(STD_OUTPUT_HANDLE);
+    const bool err = redirected(STD_ERROR_HANDLE);
+    if (out && err) return;
+    if (!AttachConsole(ATTACH_PARENT_PROCESS) && !(create && AllocConsole())) return;
+    FILE* ignored = nullptr;
+    if (!out) freopen_s(&ignored, "CONOUT$", "w", stdout);
+    if (!err) freopen_s(&ignored, "CONOUT$", "w", stderr);
+    std::ios::sync_with_stdio(true);
+}
+#endif
+
 }  // namespace
 
 #ifdef _WIN32
@@ -342,6 +380,10 @@ int main(int argc, char** argv) {
         std::cerr << "could not start networking\n";
         return 1;
     }
+#ifdef _WIN32
+    if (args.size() < 2) return cmd_tray();
+    attach_console(args[1] == "serve");
+#endif
     const std::string cmd = args.size() >= 2 ? args[1] : "serve";
     if (cmd == "help" || cmd == "--help" || cmd == "-h") {
         usage();

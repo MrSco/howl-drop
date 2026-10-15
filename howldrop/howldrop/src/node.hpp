@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -37,6 +38,13 @@ public:
         std::uint64_t max_file_bytes = kMaxFileBytes;
         bool enable_control = true;
         bool log = true;
+        // Called on a worker thread once a file is saved or text is on the
+        // clipboard, with the sender's name (empty when unknown): the Windows
+        // tray app notifies and opens from these. on_log, when set, takes the
+        // log lines that otherwise go to stdout.
+        std::function<void(const std::filesystem::path& saved, const std::string& from)> on_file;
+        std::function<void(const std::string& text, const std::string& from)> on_text;
+        std::function<void(const std::string& line)> on_log;
     };
 
     struct PeerView {
