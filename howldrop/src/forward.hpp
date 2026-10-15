@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -59,5 +60,21 @@ struct DropResult {
 // caller remembers what it has handled.
 DropResult take_drop(const std::filesystem::path& inbox, const std::filesystem::path& file, const LanTarget& target,
                      bool keep = false);
+
+// What keep mode has dealt with: each file by path, size and modification
+// time. A new file under a name that was used before (deleted from the
+// share, then the next drop takes the free name) is not the same file, so it
+// is forwarded; the add-on missed a photo that way (0.11.3).
+class HandledFiles {
+public:
+    void add(const std::filesystem::path& file);
+    // The file at this path is the one that was handled, unchanged.
+    bool has(const std::filesystem::path& file) const;
+    std::size_t size() const { return files_.size(); }
+
+private:
+    static std::string identity(const std::filesystem::path& file);
+    std::map<std::string, std::string> files_;
+};
 
 }  // namespace howldrop

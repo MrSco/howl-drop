@@ -196,7 +196,7 @@ constexpr int kGoneAfterRetries = 20;
 // looked for again) . handled holds what keep mode has already dealt with,
 // across returns: forwarded, refused, or there before the bridge started.
 void watch_loop(const howldrop::LanTarget& target, const std::filesystem::path& inbox, bool keep, bool can_rediscover,
-                std::set<std::string>& handled) {
+                howldrop::HandledFiles& handled) {
     std::filesystem::create_directories(inbox / "text");
     std::cout << "forwarding to " << target.name << " at " << target.host << ":" << target.port << '\n';
     std::cout << "inbox " << inbox << '\n';
@@ -209,7 +209,7 @@ void watch_loop(const howldrop::LanTarget& target, const std::filesystem::path& 
         int seen = 0;
     };
     std::map<std::string, Stamp> stamps;
-    std::set<std::string> gave_up;
+    howldrop::HandledFiles gave_up;
     int retries = 0;
 
     while (true) {
@@ -219,7 +219,7 @@ void watch_loop(const howldrop::LanTarget& target, const std::filesystem::path& 
         for (const auto& file : files) {
             const std::string key = file.string();
             live.insert(key);
-            if (gave_up.count(key) || handled.count(key)) continue;
+            if (gave_up.has(file) || handled.has(file)) continue;
             const auto size = std::filesystem::file_size(file, ec);
             if (ec) continue;
             Stamp& stamp = stamps[key];
@@ -241,9 +241,9 @@ void watch_loop(const howldrop::LanTarget& target, const std::filesystem::path& 
                 continue;
             }
             retries = 0;
-            if (keep) handled.insert(key);
+            if (keep) handled.add(file);
             if (result.action == howldrop::DropAction::Rejected) {
-                gave_up.insert(key);
+                gave_up.add(file);
                 std::cerr << file.filename().string() << ": " << result.message << '\n';
                 continue;
             }
@@ -271,9 +271,9 @@ int run_watch(const Options& opt) {
     std::error_code ec;
     std::filesystem::create_directories(inbox / "text", ec);
     if (ec) return fail("could not create " + inbox.string());
-    std::set<std::string> handled;
+    howldrop::HandledFiles handled;
     if (opt.keep) {
-        for (const auto& file : inbox_files(inbox)) handled.insert(file.string());
+        for (const auto& file : inbox_files(inbox)) handled.add(file);
         std::cout << "keeping files in " << inbox << "; " << handled.size()
                   << " already there are not forwarded" << std::endl;
     }

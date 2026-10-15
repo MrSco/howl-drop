@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.4
+
+- Forwarding to `howldrop.exe` works: the Windows app reset any transfer whose data paused, so files from the add-on never arrived. Get the new `howldrop.exe` too.
+- A new file that takes the name of one deleted from the share is forwarded (it was skipped as already sent).
+
 ## 0.11.3
 
 - When forwarding to a PC fails, the log says why (timed out, refused, broke while sending) instead of only "could not reach the PC".

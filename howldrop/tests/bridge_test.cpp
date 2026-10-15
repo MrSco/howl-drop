@@ -167,6 +167,25 @@ void test_bridge() {
     CHECK(clipboard.read().text == "text kept too");
     CHECK(std::filesystem::is_regular_file(kept_note));
 
+    // keep mode remembers a file by path, size and time: a new file under a
+    // name used before is not the one already handled.
+    howldrop::HandledFiles handled;
+    const auto reused = pi_inbox / "FullSizeRender.heic";
+    {
+        std::ofstream out(reused, std::ios::binary);
+        out << "the first photo";
+    }
+    handled.add(reused);
+    CHECK(handled.has(reused));
+    std::filesystem::remove(reused);
+    CHECK(!handled.has(reused));
+    {
+        std::ofstream out(reused, std::ios::binary);
+        out << "a different, later photo";
+    }
+    CHECK(!handled.has(reused));
+    CHECK(!handled.has(pi_inbox / "never-seen.jpg"));
+
     node.stop();
     std::filesystem::remove_all(root);
 }
