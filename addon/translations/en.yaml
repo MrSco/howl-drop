@@ -8,6 +8,9 @@ configuration:
   senders:
     name: Allowed senders
     description: Apple ID email addresses and phone numbers (with country code, e.g. +1 555 123 4567) of the people allowed to send. Empty lets anyone nearby send.
+  notify:
+    name: Notify
+    description: Where to announce each drop, e.g. notify.mobile_app_your_phone (the Home Assistant app on your phone), or persistent_notification (Home Assistant's own notifications). Empty sends none; the howldrop_received event fires either way.
   fetch_links:
     name: Fetch linked files
     description: When the phone shares a link to a file (a picture viewed in Safari, say), download the file in its place. Public internet addresses only.

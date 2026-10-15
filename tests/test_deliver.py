@@ -2,6 +2,7 @@
 web pages and refused fetches stay shortcuts, other files are moved."""
 import http.server
 import importlib.util
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -41,6 +42,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class HomeAssistant(http.server.BaseHTTPRequestHandler):
+    """Records what the add-on posts to Home Assistant's REST API."""
+    calls = []
+    down = False
+
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+        HomeAssistant.calls.append((self.path, self.headers.get('Authorization'), json.loads(body)))
+        self.send_response(200)
+        self.send_header('Content-Length', '2')
+        self.end_headers()
+        self.wfile.write(b'[]')
+
+
 class DeliverTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -64,9 +82,9 @@ class DeliverTests(unittest.TestCase):
     def shortcut(self, name, url):
         (self.staging / name).write_text(f'[InternetShortcut]\nURL={url}\n', encoding='utf-8')
 
-    def run_once(self, allow_private, max_bytes=1024 * 1024):
+    def run_once(self, allow_private, max_bytes=1024 * 1024, announcer=None):
         deliver.run(str(self.staging), str(self.dest), True, max_bytes, interval=0, once=True,
-                    allow_private=allow_private)
+                    allow_private=allow_private, announcer=announcer)
 
     def listing(self):
         return sorted(str(p.relative_to(self.dest)).replace('\\', '/') for p in self.dest.rglob('*') if p.is_file())
@@ -138,6 +156,104 @@ class DeliverTests(unittest.TestCase):
             with self.assertRaises(deliver.Refused, msg=host):
                 deliver.public_host(host)
 
+
+
+class AnnounceTests(unittest.TestCase):
+    """Each delivery fires howldrop_received and notifies the notify targets,
+    with the sender from the receiver's note; Home Assistant being away never
+    stops a delivery."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ha = http.server.ThreadingHTTPServer(('127.0.0.1', 0), HomeAssistant)
+        cls.api = f'http://127.0.0.1:{cls.ha.server_address[1]}/api'
+        threading.Thread(target=cls.ha.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.ha.shutdown()
+
+    def setUp(self):
+        HomeAssistant.calls = []
+        self.tmp = tempfile.TemporaryDirectory()
+        self.staging = Path(self.tmp.name, 'staging')
+        self.dest = Path(self.tmp.name, 'share')
+        (self.staging / '.howldrop-meta').mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def drop(self, name, data, sender, url=None):
+        (self.staging / name).write_bytes(data)
+        (self.staging / '.howldrop-meta' / (name + '.json')).write_text(
+            json.dumps({'sender': sender, 'url': url}), encoding='utf-8')
+
+    def deliver(self, targets=('mobile_app_phone',), api=None, token='secret'):
+        announcer = deliver.announce.Announcer(list(targets), token=token, api=api or self.api)
+        deliver.run(str(self.staging), str(self.dest), False, 1 << 20, interval=0, once=True,
+                    announcer=announcer)
+
+    def call(self, path):
+        return [c for c in HomeAssistant.calls if c[0] == path]
+
+    def test_a_photo_fires_the_event_and_notifies(self):
+        self.drop('IMG_1.JPG', b'jpeg', "Rocco's iPhone")
+        self.deliver()
+        (event,) = self.call('/api/events/howldrop_received')
+        self.assertEqual(event[1], 'Bearer secret')
+        self.assertEqual(event[2]['sender'], "Rocco's iPhone")
+        self.assertEqual(event[2]['kind'], 'image')
+        self.assertEqual(event[2]['name'], 'IMG_1.JPG')
+        self.assertEqual(event[2]['size'], 4)
+        (note,) = self.call('/api/services/notify/mobile_app_phone')
+        self.assertEqual(note[2]['message'], "Photo from Rocco's iPhone: IMG_1.JPG")
+        self.assertFalse((self.staging / '.howldrop-meta' / 'IMG_1.JPG.json').exists())
+
+    def test_text_is_previewed_and_lands_in_text(self):
+        self.drop('text-42C1-BD75-E6-0.txt', 'hello from the phone'.encode(), 'Pat')
+        self.deliver(targets=('notify.mobile_app_phone', 'persistent_notification'))
+        (event,) = self.call('/api/events/howldrop_received')
+        self.assertEqual(event[2]['kind'], 'text')
+        self.assertTrue(event[2]['path'].replace('\\', '/').endswith('/text/text-42C1-BD75-E6-0.txt'))
+        (note,) = self.call('/api/services/notify/mobile_app_phone')
+        self.assertEqual(note[2]['message'], 'Text from Pat: hello from the phone')
+        (persistent,) = self.call('/api/services/persistent_notification/create')
+        self.assertEqual(persistent[2]['message'], 'Text from Pat: hello from the phone')
+
+    def test_a_link_carries_its_address(self):
+        self.drop('example.com-page.url', b'[InternetShortcut]\nURL=https://example.com/page\n', 'Pat',
+                  'https://example.com/page')
+        self.deliver()
+        (event,) = self.call('/api/events/howldrop_received')
+        self.assertEqual((event[2]['kind'], event[2]['url']), ('link', 'https://example.com/page'))
+        (note,) = self.call('/api/services/notify/mobile_app_phone')
+        self.assertEqual(note[2]['message'], 'Link from Pat: https://example.com/page')
+        self.assertEqual(note[2]['data']['url'], 'https://example.com/page')
+
+    def test_no_note_still_announces_without_a_sender(self):
+        (self.staging / 'notes.pdf').write_bytes(b'%PDF')
+        self.deliver(targets=())
+        (event,) = self.call('/api/events/howldrop_received')
+        self.assertEqual((event[2]['sender'], event[2]['kind']), ('', 'file'))
+        self.assertEqual(self.call('/api/services/notify/mobile_app_phone'), [])
+
+    def test_home_assistant_away_does_not_stop_delivery(self):
+        self.drop('IMG_2.JPG', b'jpeg', 'Pat')
+        self.deliver(api='http://127.0.0.1:9/api')
+        self.assertTrue((self.dest / 'IMG_2.JPG').exists())
+
+    def test_without_a_token_nothing_is_sent(self):
+        self.drop('IMG_3.JPG', b'jpeg', 'Pat')
+        self.deliver(token='')
+        self.assertEqual(HomeAssistant.calls, [])
+        self.assertTrue((self.dest / 'IMG_3.JPG').exists())
+
+    def test_old_notes_are_pruned(self):
+        old = self.staging / '.howldrop-meta' / 'gone.jpg.json'
+        old.write_text('{}', encoding='utf-8')
+        os.utime(old, (time.time() - 2 * 86400,) * 2)
+        self.assertEqual(deliver.announce.prune_notes(str(self.staging), 86400), 1)
+        self.assertFalse(old.exists())
 
 
 class PurgeTests(unittest.TestCase):

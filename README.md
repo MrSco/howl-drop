@@ -31,7 +31,7 @@ transfers run. See [docs/hardware-notes.md](docs/hardware-notes.md).
 Or in Home Assistant: Settings, Add-ons, Add-on store, menu, Repositories,
 and add `https://github.com/MrSco/howl-drop#ha-addon`. Then install HowlDrop,
 turn Protection mode off, and start it. Requirements and options:
-[addon/README.md](addon/README.md).
+[addon/DOCS.md](addon/DOCS.md).
 
 The `ha-addon` branch is the add-on assembled from `main` by CI
 (`tools/publish-addon.sh`), since Home Assistant builds an add-on only from its

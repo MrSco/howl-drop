@@ -1425,7 +1425,8 @@ fi
 fast_awdl_retransmit
 # Delivery first, so an item the receiver saves is moved as soon as it is
 # whole. Anything left in staging by an earlier run goes too.
-DELIVER_ARGS=(--staging "$STAGING" --dest "$INBOX" --max-mb "$FETCH_MB" --keep-days "$KEEP_DAYS")
+DELIVER_ARGS=(--staging "$STAGING" --dest "$INBOX" --max-mb "$FETCH_MB" --keep-days "$KEEP_DAYS"
+              --options /data/options.json)
 [ "$FETCH" = true ] || DELIVER_ARGS+=(--no-fetch)
 python3 "$DELIVER" "${DELIVER_ARGS[@]}" 2>&1 | sed -u 's/^/Deliver: /' &
 DELIVER_PID=$!
