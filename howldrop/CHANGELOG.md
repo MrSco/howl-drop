@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.0
+
+- HowlDrop panel in the sidebar: recent drops with sender, photo thumbnails, text to copy, links to open, download and delete.
+- `howldrop.exe` for Windows is now a tray app: a notification for each drop, and links (or photos and documents, if you choose) open as they arrive.
+
 ## 0.10.0
 
 - Each drop fires a `howldrop_received` event (sender, file, kind, size, link) for automations.

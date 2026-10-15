@@ -9,6 +9,7 @@ every PC on the network.
   near the phone, and Bluetooth on the host.
 - Only the people you list can send, if you want (Apple-verified, like a
   Mac set to Contacts Only).
+- A HowlDrop panel in the sidebar shows what arrived and who sent it.
 - Each drop can notify your phone through the Home Assistant app, and fires
   an event for automations.
 - Old files are deleted after 30 days, or never.

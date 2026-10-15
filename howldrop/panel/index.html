@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HowlDrop</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <img src="icon.png" alt="" width="36" height="36">
+  <div class="title">
+    <h1>HowlDrop</h1>
+    <p id="folder"></p>
+  </div>
+  <div class="filters" role="tablist" aria-label="Show">
+    <button type="button" data-filter="all" class="on">All</button>
+    <button type="button" data-filter="media">Photos &amp; videos</button>
+    <button type="button" data-filter="text">Text &amp; links</button>
+    <button type="button" data-filter="file">Files</button>
+  </div>
+</header>
+<main>
+  <p id="status">Loading…</p>
+  <ul id="drops"></ul>
+</main>
+<div id="viewer" hidden>
+  <div class="bar">
+    <span id="viewer-name"></span>
+    <a id="viewer-download" href="#">Download</a>
+    <button type="button" id="viewer-close" aria-label="Close">✕</button>
+  </div>
+  <div id="viewer-body"></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

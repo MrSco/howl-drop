@@ -19,6 +19,9 @@ INBOX=/share/howldrop
 # fetching the file behind a link when the link points at one.
 STAGING=/data/staging
 DELIVER=/deliver.py
+# The sidebar panel (ingress), and who sent each file for it.
+PANEL=/panel.py
+HISTORY=/data/drops.jsonl
 # Who may send: the senders option, as the receiver's Contacts Only files.
 SENDERS=/senders.py
 SENDERS_CONFIG=${XDG_CONFIG_HOME:-${HOME:-/root}/.config}/omdrop
@@ -29,6 +32,7 @@ BLE_PID=
 SERVE_PID=
 BRIDGE_PID=
 DELIVER_PID=
+PANEL_PID=
 TCPFLOW_PID=
 MON_IF=mon0
 WATCH_PID=
@@ -1111,6 +1115,8 @@ stop_stack() {
     pkill -f "tcpdump -i awdl0" 2>/dev/null || true
     pkill -f "tcpdump -i mon0 -s 256" 2>/dev/null || true
     pkill -f "$DELIVER" 2>/dev/null || true
+    if [ -n "$PANEL_PID" ]; then kill "$PANEL_PID" 2>/dev/null || true; fi
+    pkill -f "$PANEL" 2>/dev/null || true
     if [ -n "$SERVE_PID" ]; then kill "$SERVE_PID" 2>/dev/null || true; fi
     if [ -n "$BLE_PID" ]; then kill "$BLE_PID" 2>/dev/null || true; fi
     if [ "$RADIO" = 1 ]; then
@@ -1252,6 +1258,11 @@ case "$CAPTURE" in
     True|true|1|yes) CAPTURE=true ;;
     *) CAPTURE=false ;;
 esac
+# The HowlDrop panel in the sidebar: recent drops in save_folder. Started now,
+# so it answers while the radio comes up. Only the Supervisor's ingress proxy
+# may use it (panel.py).
+python3 "$PANEL" --dest "$INBOX" --history "$HISTORY" 2>&1 | sed -u 's/^/Panel: /' &
+PANEL_PID=$!
 # Off unless asked for: the share folder is the way to use this, and a PC
 # running howldrop.exe is an extra.
 FORWARD=$(option forward_to_pc)
@@ -1426,7 +1437,7 @@ fast_awdl_retransmit
 # Delivery first, so an item the receiver saves is moved as soon as it is
 # whole. Anything left in staging by an earlier run goes too.
 DELIVER_ARGS=(--staging "$STAGING" --dest "$INBOX" --max-mb "$FETCH_MB" --keep-days "$KEEP_DAYS"
-              --options /data/options.json)
+              --options /data/options.json --history "$HISTORY")
 [ "$FETCH" = true ] || DELIVER_ARGS+=(--no-fetch)
 python3 "$DELIVER" "${DELIVER_ARGS[@]}" 2>&1 | sed -u 's/^/Deliver: /' &
 DELIVER_PID=$!

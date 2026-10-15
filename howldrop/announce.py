@@ -18,6 +18,7 @@ import urllib.request
 API = os.environ.get('HOWLDROP_HA_URL', 'http://supervisor/core/api')
 TIMEOUT_S = 5
 TEXT_PREVIEW = 300
+HISTORY_KEPT = 1000
 
 IMAGE = {'.jpg', '.jpeg', '.png', '.heic', '.heif', '.gif', '.webp', '.tif', '.tiff', '.bmp', '.dng'}
 VIDEO = {'.mov', '.mp4', '.m4v', '.avi', '.mkv', '.webm', '.hevc'}
@@ -67,6 +68,45 @@ def prune_notes(staging, older_than_s, now=None):
         except OSError:
             pass
     return gone
+
+
+def record(history, path, dest, sender, url=None, now=None):
+    """Note a delivered file in history, the file the panel (panel.py) reads
+    senders from: one JSON line each, newest last, the last HISTORY_KEPT
+    kept. No history, or a failed write, records nothing."""
+    if not history:
+        return
+    entry = {'path': os.path.relpath(path, dest), 'sender': sender or '', 'time': int(now or time.time())}
+    if url:
+        entry['url'] = url
+    try:
+        os.makedirs(os.path.dirname(history) or '.', exist_ok=True)
+        with open(history, 'a', encoding='utf-8') as fh:
+            fh.write(json.dumps(entry) + '\n')
+        if os.path.getsize(history) > HISTORY_KEPT * 400:
+            with open(history, encoding='utf-8') as fh:
+                lines = fh.readlines()[-HISTORY_KEPT:]
+            with open(history + '.new', 'w', encoding='utf-8') as fh:
+                fh.writelines(lines)
+            os.replace(history + '.new', history)
+    except OSError:
+        pass
+
+
+def senders(history):
+    """{path relative to save_folder: sender} from history; the latest wins."""
+    out = {}
+    try:
+        with open(history, encoding='utf-8') as fh:
+            for line in fh:
+                try:
+                    entry = json.loads(line)
+                    out[str(entry['path'])] = str(entry.get('sender') or '')
+                except (ValueError, KeyError, TypeError):
+                    continue
+    except OSError:
+        pass
+    return out
 
 
 def text_preview(path):
