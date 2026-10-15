@@ -3,6 +3,7 @@
 #include "clipboard.hpp"
 #include "config.hpp"
 #include "net.hpp"
+#include "pairing.hpp"
 #include "protocol.hpp"
 #include "text.hpp"
 
@@ -38,6 +39,14 @@ public:
         std::uint64_t max_file_bytes = kMaxFileBytes;
         bool enable_control = true;
         bool log = true;
+        // The pairing key (pairing.hpp): with one, only a sender that knows
+        // it can deliver here, and this node signs what it sends. Empty:
+        // the unpaired protocol, both ways.
+        std::string pair_key;
+        // Send what is copied here to the other HowlDrop PCs. Off unless
+        // asked for: on, every copy (a password too) goes to any PC that
+        // answers on the network. `howldrop clip` sends once either way.
+        bool share_clipboard = false;
         // Called on a worker thread once a file is saved or text is on the
         // clipboard, with the sender's name (empty when unknown): the Windows
         // tray app notifies and opens from these. on_log, when set, takes the
@@ -67,6 +76,7 @@ public:
     Status send_file(const std::string& peer, const std::filesystem::path& path);
     Status push_clipboard();
     std::vector<PeerView> peers() const;
+    void set_share_clipboard(bool on) { share_clipboard_.store(on); }
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -104,8 +114,9 @@ private:
     void handle_datagram(const std::uint8_t* data, std::size_t n, std::uint32_t from_be, std::uint16_t from_port);
     void handle_transfer(Socket socket);
     void handle_control(Socket socket);
-    void receive_file(Socket& socket, const Message& message);
-    void receive_clip(Socket& socket, const Message& message);
+    void receive_file(Socket& socket, const Message& message, std::optional<HmacSha256>& mac);
+    void receive_clip(Socket& socket, const Message& message, std::optional<HmacSha256>& mac);
+    bool trailer_matches(Socket& socket, std::optional<HmacSha256>& mac);
     void write_ack(Socket& socket, bool ok, const std::string& message, const std::string& saved);
     bool send_clip_to(const Peer& peer, const std::string& text, std::string& error);
     Status flush_clips();
@@ -150,6 +161,7 @@ private:
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> running_{false};
+    std::atomic<bool> share_clipboard_{false};
     bool started_ = false;
     std::string start_error_;
     bool baseline_done_ = false;

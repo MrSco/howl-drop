@@ -171,6 +171,14 @@ the latest CI run (`howldrop-windows`) or build it with
 Allow UDP 47631 and TCP 47632 from the LAN on that PC. Set `pc_host` to the
 PC's address only when its beacon does not reach Home Assistant.
 
+`pc_key` pairs the add-on with that PC. `howldrop.exe` accepts files only
+from a sender that knows its pairing key, so nobody else on the network can
+send it files, set its clipboard or open pages in its browser; and the add-on
+sends only to a PC that proves it knows the key, so a machine pretending to
+be your PC gets nothing. On the PC, right-click the HowlDrop icon, choose
+**Copy pairing key**, paste it here, and restart the add-on. Every transfer
+is signed with it, and a changed or replayed one is dropped.
+
 `interface` (default `auto`) names the Wi-Fi interface to use, e.g.
 `wlan1`. `auto` picks one: an exclusive-mode card that is not the uplink
 (active monitor first), else a shared-mode card that is. When none fits, the

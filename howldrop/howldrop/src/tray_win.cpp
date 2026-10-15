@@ -22,6 +22,7 @@ namespace {
 
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kDropMessage = WM_APP + 2;
+constexpr UINT kRefusedMessage = WM_APP + 3;
 constexpr UINT kTrayId = 1;
 constexpr UINT_PTR kStopTimer = 1;
 constexpr int kIconResource = 1;
@@ -35,6 +36,8 @@ enum : UINT {
     kMenuOpenLinks,
     kMenuOpenMedia,
     kMenuOpenDocuments,
+    kMenuShareClipboard,
+    kMenuCopyKey,
     kMenuStartup,
     kMenuQuit,
 };
@@ -44,6 +47,7 @@ struct Settings {
     bool open_links = true;
     bool open_media = false;
     bool open_documents = false;
+    bool share_clipboard = false;  // send what is copied here to other HowlDrop PCs
 };
 
 // What arrived, posted from the node's worker thread to the window.
@@ -64,6 +68,8 @@ struct App {
     std::filesystem::path inbox;
     std::unique_ptr<Clipboard> clipboard;
     std::unique_ptr<Node> node;
+    std::string pair_key;
+    ULONGLONG last_refusal_note = 0;
     std::wstring click_target;  // what clicking the last notification opens
     bool click_selects = false;  // show it in its folder instead of opening it
 };
@@ -94,6 +100,7 @@ void load_settings(App& app) {
         else if (key == "open_links") app.settings.open_links = on;
         else if (key == "open_media") app.settings.open_media = on;
         else if (key == "open_documents") app.settings.open_documents = on;
+        else if (key == "share_clipboard") app.settings.share_clipboard = on;
     }
 }
 
@@ -102,7 +109,8 @@ void save_settings(const App& app) {
     out << "notify=" << app.settings.notify << '\n'
         << "open_links=" << app.settings.open_links << '\n'
         << "open_media=" << app.settings.open_media << '\n'
-        << "open_documents=" << app.settings.open_documents << '\n';
+        << "open_documents=" << app.settings.open_documents << '\n'
+        << "share_clipboard=" << app.settings.share_clipboard << '\n';
 }
 
 bool starts_with_windows() {
@@ -223,6 +231,10 @@ void show_menu(App& app) {
     AppendMenuW(menu, check(app.settings.open_media), kMenuOpenMedia, L"Open photos and videos");
     AppendMenuW(menu, check(app.settings.open_documents), kMenuOpenDocuments, L"Open PDFs and text files");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kMenuCopyKey, L"Copy pairing key");
+    AppendMenuW(menu, check(app.settings.share_clipboard), kMenuShareClipboard,
+                L"Share what I copy with my other HowlDrop PCs");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, check(starts_with_windows()), kMenuStartup, L"Start with Windows");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kMenuQuit, L"Quit HowlDrop");
@@ -232,6 +244,20 @@ void show_menu(App& app) {
     TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, at.x, at.y, 0, app.window, nullptr);
     PostMessageW(app.window, WM_NULL, 0, 0);
     DestroyMenu(menu);
+}
+
+// The add-on's pc_key, onto the clipboard. Shown even with notifications off:
+// it is the answer to what the user just asked for.
+void copy_pair_key(App& app) {
+    const std::string shown = display_pair_key(app.pair_key);
+    const bool copied = app.clipboard && app.clipboard->set_text(shown);
+    const bool notify_was = app.settings.notify;
+    app.settings.notify = true;
+    app.click_target.clear();
+    notify(app, copied ? L"Pairing key copied" : L"Pairing key",
+           copied ? L"Paste it into the HowlDrop add-on's pc_key option in Home Assistant, then restart the add-on."
+                  : L"Copy failed. Run howldrop key in a terminal to see it: " + wide(shown));
+    app.settings.notify = notify_was;
 }
 
 void open_folder(App& app) {
@@ -271,6 +297,20 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             handle_drop(*app, *drop);
             return 0;
         }
+        case kRefusedMessage: {
+            // A sender without this PC's pairing key: most likely the add-on
+            // before pc_key is set. Said at most every 10 minutes.
+            std::unique_ptr<std::string> why(reinterpret_cast<std::string*>(lparam));
+            const ULONGLONG now = GetTickCount64();
+            if (app->last_refusal_note == 0 || now - app->last_refusal_note > 10 * 60 * 1000) {
+                app->last_refusal_note = now;
+                app->click_target.clear();
+                notify(*app, L"HowlDrop refused a sender that is not paired",
+                       L"If that was Home Assistant: right-click this icon, Copy pairing key, and paste it into the "
+                       L"add-on's pc_key option.");
+            }
+            return 0;
+        }
         case WM_COMMAND:
             switch (LOWORD(wparam)) {
                 case kMenuOpenFolder: open_folder(*app); break;
@@ -278,6 +318,11 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                 case kMenuOpenLinks: app->settings.open_links = !app->settings.open_links; break;
                 case kMenuOpenMedia: app->settings.open_media = !app->settings.open_media; break;
                 case kMenuOpenDocuments: app->settings.open_documents = !app->settings.open_documents; break;
+                case kMenuShareClipboard:
+                    app->settings.share_clipboard = !app->settings.share_clipboard;
+                    if (app->node) app->node->set_share_clipboard(app->settings.share_clipboard);
+                    break;
+                case kMenuCopyKey: copy_pair_key(*app); return 0;
                 case kMenuStartup: set_start_with_windows(!starts_with_windows()); break;
                 case kMenuQuit: DestroyWindow(window); return 0;
                 default: return 0;
@@ -325,8 +370,11 @@ int run_tray(Node::Config config) {
     std::filesystem::create_directories(dir, ec);
     app.settings_file = dir / L"settings.ini";
     app.log_file = dir / L"howldrop.log";
-    if (std::filesystem::exists(app.settings_file, ec)) load_settings(app);
-    else save_settings(app);
+    const bool first_run = !std::filesystem::exists(app.settings_file, ec);
+    if (first_run) save_settings(app);
+    else load_settings(app);
+    app.pair_key = config.pair_key;
+    config.share_clipboard = app.settings.share_clipboard;
     if (std::filesystem::file_size(app.log_file, ec) > (1u << 20)) std::filesystem::remove(app.log_file, ec);
 
     HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -361,10 +409,16 @@ int run_tray(Node::Config config) {
     };
     const std::filesystem::path log_file = app.log_file;
     config.on_log = [log_file](const std::string& line) {
-        static std::mutex lock;  // lines come from the node's threads
-        const std::lock_guard<std::mutex> hold(lock);
-        std::ofstream out(log_file, std::ios::app);
-        out << line << '\n';
+        {
+            static std::mutex lock;  // lines come from the node's threads
+            const std::lock_guard<std::mutex> hold(lock);
+            std::ofstream out(log_file, std::ios::app);
+            out << line << '\n';
+        }
+        if (line.rfind("refused a ", 0) == 0 && g_app && g_app->window) {
+            auto* why = new std::string(line);
+            if (!PostMessageW(g_app->window, kRefusedMessage, 0, reinterpret_cast<LPARAM>(why))) delete why;
+        }
     };
 
     app.clipboard = make_system_clipboard();
@@ -378,6 +432,11 @@ int run_tray(Node::Config config) {
         return 1;
     }
     SetTimer(app.window, kStopTimer, 1000, nullptr);
+    if (first_run) {
+        notify(app, L"HowlDrop is running",
+               L"To get AirDrops from Home Assistant: right-click this icon, Copy pairing key, and paste it into "
+               L"the add-on's pc_key option.");
+    }
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {

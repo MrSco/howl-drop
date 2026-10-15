@@ -31,7 +31,9 @@ void usage() {
         << "  --timeout SEC   How long to wait for a hello (default 8)\n"
         << "  --keep          (watch) Leave files in DIR after forwarding, and forward only\n"
         << "                  ones that arrive after the bridge starts\n"
-        << "  --wait          (watch) No PC yet, or it went away: keep looking for one\n";
+        << "  --wait          (watch) No PC yet, or it went away: keep looking for one\n\n"
+        << "HOWLDROP_PC_KEY in the environment is the PC's pairing key: files then go only\n"
+        << "to a PC that proves it, signed with it.\n";
 }
 
 struct Options {
@@ -46,6 +48,7 @@ struct Options {
     bool text_stdin = false;
     bool keep = false;
     bool wait = false;
+    std::string pair_key;  // from HOWLDROP_PC_KEY: not an argument, so not in ps
 };
 
 bool parse_port(const std::string& text, std::uint16_t& port) {
@@ -158,14 +161,18 @@ bool parse_args(const std::vector<std::string>& args, Options& opt, std::string&
 }
 
 std::optional<howldrop::LanTarget> resolve_target(const Options& opt, std::string& error) {
+    std::optional<howldrop::LanTarget> target;
     if (!opt.host.empty()) {
-        howldrop::LanTarget target;
-        target.host = opt.host;
-        target.port = opt.port == 0 ? howldrop::kTransferPort : opt.port;
-        target.name = opt.name.empty() ? opt.host : opt.name;
-        return target;
+        target.emplace();
+        target->host = opt.host;
+        target->port = opt.port == 0 ? howldrop::kTransferPort : opt.port;
+        target->name = opt.name.empty() ? opt.host : opt.name;
+    } else {
+        target = howldrop::discover_target(howldrop::kDiscoveryPort, std::chrono::seconds(opt.timeout_s), opt.name,
+                                           error);
     }
-    return howldrop::discover_target(howldrop::kDiscoveryPort, std::chrono::seconds(opt.timeout_s), opt.name, error);
+    if (target) target->pair_key = opt.pair_key;
+    return target;
 }
 
 int fail(const std::string& message) {
@@ -308,6 +315,10 @@ int main(int argc, char** argv) {
     Options opt;
     std::string error;
     if (!parse_args(args, opt, error)) return fail(error.empty() ? "bad arguments" : error);
+    if (const char* key = std::getenv("HOWLDROP_PC_KEY"); key && *key) {
+        opt.pair_key = howldrop::normalize_pair_key(key);
+        if (opt.pair_key.empty()) return fail("HOWLDROP_PC_KEY is not a pairing key (32 hex digits)");
+    }
     if (opt.command == "help") {
         usage();
         return 0;

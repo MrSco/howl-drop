@@ -183,7 +183,10 @@ Status forward_file(const LanTarget& target, const std::filesystem::path& path, 
     message.fields.set("file", name);
     message.fields.set("from", kBridgeFromId);
     std::string error;
-    if (!write_head(socket, message, nullptr, error)) return Status::failure("rejected: " + error);
+    std::optional<HmacSha256> mac;
+    const OpenResult opened = open_transfer(socket, message, target.pair_key, mac, nullptr, error);
+    if (opened == OpenResult::Lost) return Status::failure("could not reach the PC: " + error);
+    if (opened == OpenResult::Refused) return Status::failure("rejected: " + error);
 
     std::vector<char> buf(64 * 1024);
     std::uint64_t left = size;
@@ -191,12 +194,17 @@ Status forward_file(const LanTarget& target, const std::filesystem::path& path, 
         const auto chunk = static_cast<std::streamsize>(std::min<std::uint64_t>(left, buf.size()));
         in.read(buf.data(), chunk);
         if (in.gcount() != chunk) return Status::failure("could not read the file");
+        if (mac) mac->update(buf.data(), static_cast<std::size_t>(chunk));
         if (!socket.send_full(reinterpret_cast<std::uint8_t*>(buf.data()), static_cast<std::size_t>(chunk), nullptr)) {
             const std::string why = last_socket_error();
             return Status::failure("could not reach the PC: the connection broke after " + std::to_string(size - left) +
                                    " of " + std::to_string(size) + " bytes (" + why + ")");
         }
         left -= static_cast<std::uint64_t>(chunk);
+    }
+    if (!close_transfer(socket, mac, nullptr)) {
+        return Status::failure("could not reach the PC: the connection broke after the file (" + last_socket_error() +
+                               ")");
     }
     Status ack = read_ack(socket);
     if (!ack.ok) return ack;
@@ -215,12 +223,17 @@ Status forward_text(const LanTarget& target, std::string_view text) {
     message.body_size = text.size();
     message.fields.set("from", kBridgeFromId);
     std::string error;
-    if (!write_head(socket, message, nullptr, error)) return Status::failure("rejected: " + error);
+    std::optional<HmacSha256> mac;
+    const OpenResult opened = open_transfer(socket, message, target.pair_key, mac, nullptr, error);
+    if (opened == OpenResult::Lost) return Status::failure("could not reach the PC: " + error);
+    if (opened == OpenResult::Refused) return Status::failure("rejected: " + error);
+    if (mac) mac->update(text.data(), text.size());
     if (!text.empty() &&
         !socket.send_full(reinterpret_cast<const std::uint8_t*>(text.data()), text.size(), nullptr)) {
         return Status::failure("could not reach the PC: the connection broke while sending (" + last_socket_error() +
                                ")");
     }
+    if (!close_transfer(socket, mac, nullptr)) return Status::failure("could not reach the PC: the connection broke");
     return read_ack(socket);
 }
 

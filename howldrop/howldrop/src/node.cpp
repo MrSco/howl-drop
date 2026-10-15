@@ -45,6 +45,7 @@ std::string clean_name(std::string name) {
 Node::Node(Config config, Clipboard& clipboard) : config_(std::move(config)), clipboard_(clipboard) {
     config_.name = clean_name(config_.name);
     if (!is_node_id(config_.id)) config_.id = random_id();
+    share_clipboard_.store(config_.share_clipboard);
 }
 
 Node::~Node() { stop(); }
@@ -204,7 +205,16 @@ void Node::loop() {
             }
         }
         expire_peers();
-        poll_clipboard();
+        if (share_clipboard_.load()) {
+            poll_clipboard();
+        } else {
+            // Keep up with the clipboard without reading it, so turning
+            // sharing on sends the next copy, not whatever was there.
+            const auto seq = clipboard_.sequence();
+            std::lock_guard<std::mutex> lock(mu_);
+            last_seq_ = seq;
+            baseline_done_ = true;
+        }
         bool have = false;
         std::uint64_t gen = 0;
         {
@@ -212,7 +222,8 @@ void Node::loop() {
             have = have_clip_;
             gen = clip_gen_;
         }
-        if (have && (gen != last_flush_gen_ || Clock::now() - last_flush_ >= std::chrono::seconds(1))) {
+        if (have && share_clipboard_.load() &&
+            (gen != last_flush_gen_ || Clock::now() - last_flush_ >= std::chrono::seconds(1))) {
             flush_clips();
             last_flush_gen_ = gen;
             last_flush_ = Clock::now();
@@ -355,9 +366,35 @@ void Node::handle_transfer(Socket socket) {
     Message message;
     std::string error;
     if (!read_head(socket, message, &stop_, error)) return;
-    if (message.type == MsgType::File) receive_file(socket, message);
-    else if (message.type == MsgType::Clip) receive_clip(socket, message);
-    else write_ack(socket, false, "unsupported message", "");
+    if (message.type != MsgType::File && message.type != MsgType::Clip) {
+        write_ack(socket, false, "unsupported message", "");
+        return;
+    }
+    // Pairing (pairing.hpp): refused before any body is read, and a paired
+    // sender gets our proof of the key before it sends the body.
+    std::string why;
+    const HeadCheck check = check_head(message, config_.pair_key, why);
+    if (check == HeadCheck::Refused) {
+        write_ack(socket, false, why, "");
+        log_line("refused a " + std::string(message.type == MsgType::File ? "file" : "text") + ": " + why);
+        return;
+    }
+    std::optional<HmacSha256> mac;
+    if (check == HeadCheck::Paired) {
+        std::string ours;
+        if (!send_ready(socket, config_.pair_key, message.fields.get("nonce"), ours, &stop_)) return;
+        mac.emplace(body_mac(config_.pair_key, message.fields.get("nonce"), ours));
+    }
+    if (message.type == MsgType::File) receive_file(socket, message, mac);
+    else receive_clip(socket, message, mac);
+}
+
+bool Node::trailer_matches(Socket& socket, std::optional<HmacSha256>& mac) {
+    if (!mac) return true;
+    Digest got{};
+    if (!socket.recv_full(got.data(), got.size(), &stop_)) return false;
+    const Digest want = mac->finish();
+    return same_bytes(got.data(), want.data(), want.size());
 }
 
 void Node::write_ack(Socket& socket, bool ok, const std::string& message, const std::string& saved) {
@@ -371,7 +408,7 @@ void Node::write_ack(Socket& socket, bool ok, const std::string& message, const 
     write_head(socket, ack, &stop_, error);
 }
 
-void Node::receive_file(Socket& socket, const Message& message) {
+void Node::receive_file(Socket& socket, const Message& message, std::optional<HmacSha256>& mac) {
     try {
         if (message.body_size > config_.max_file_bytes) {
             write_ack(socket, false, "file is too large", "");
@@ -408,6 +445,7 @@ void Node::receive_file(Socket& socket, const Message& message) {
                     }
                     return;
                 }
+                if (mac) mac->update(buf.data(), chunk);
                 out.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(chunk));
                 if (!out) {
                     out.close();
@@ -425,6 +463,13 @@ void Node::receive_file(Socket& socket, const Message& message) {
                 write_ack(socket, false, "could not write the file", "");
                 return;
             }
+        }
+        if (!trailer_matches(socket, mac)) {
+            std::error_code ec;
+            std::filesystem::remove(partial, ec);
+            write_ack(socket, false, "the file does not match its pairing signature", "");
+            log_line("dropped " + safe + ": it does not match its pairing signature");
+            return;
         }
         std::filesystem::rename(partial, final_path);
         const std::string saved = filename_utf8(final_path);
@@ -445,7 +490,7 @@ void Node::receive_file(Socket& socket, const Message& message) {
     }
 }
 
-void Node::receive_clip(Socket& socket, const Message& message) {
+void Node::receive_clip(Socket& socket, const Message& message, std::optional<HmacSha256>& mac) {
     if (message.body_size > kMaxClipBytes) {
         write_ack(socket, false, "clipboard text is too large", "");
         return;
@@ -453,6 +498,12 @@ void Node::receive_clip(Socket& socket, const Message& message) {
     std::string text(static_cast<std::size_t>(message.body_size), '\0');
     if (message.body_size &&
         !socket.recv_full(reinterpret_cast<std::uint8_t*>(&text[0]), text.size(), &stop_)) {
+        return;
+    }
+    if (mac) mac->update(text.data(), text.size());
+    if (!trailer_matches(socket, mac)) {
+        write_ack(socket, false, "the text does not match its pairing signature", "");
+        log_line("dropped a text: it does not match its pairing signature");
         return;
     }
     if (!clipboard_.set_text(text)) {
@@ -556,18 +607,23 @@ Status Node::send_file(const std::string& peer_query, const std::filesystem::pat
     message.body_size = size;
     message.fields.set("file", safe);
     message.fields.set("from", config_.id);
-    if (!write_head(socket, message, &stop_, error)) return Status::failure("could not reach " + peer.name);
+    std::optional<HmacSha256> mac;
+    const OpenResult opened = open_transfer(socket, message, config_.pair_key, mac, &stop_, error);
+    if (opened == OpenResult::Lost) return Status::failure("could not reach " + peer.name);
+    if (opened == OpenResult::Refused) return Status::failure(peer.name + ": " + error);
     std::vector<char> buf(64 * 1024);
     std::uint64_t left = size;
     while (left > 0) {
         const auto chunk = static_cast<std::streamsize>(std::min<std::uint64_t>(left, buf.size()));
         in.read(buf.data(), chunk);
         if (in.gcount() != chunk) return Status::failure("could not read the file");
+        if (mac) mac->update(buf.data(), static_cast<std::size_t>(chunk));
         if (!socket.send_full(reinterpret_cast<std::uint8_t*>(buf.data()), static_cast<std::size_t>(chunk), &stop_)) {
             return Status::failure("connection to " + peer.name + " was lost");
         }
         left -= static_cast<std::uint64_t>(chunk);
     }
+    if (!close_transfer(socket, mac, &stop_)) return Status::failure("connection to " + peer.name + " was lost");
     Message ack;
     if (!read_head(socket, ack, &stop_, error) || ack.type != MsgType::Ack || ack.fields.get("result") != "ok") {
         std::string why = ack.fields.get("message");
@@ -594,9 +650,15 @@ bool Node::send_clip_to(const Peer& peer, const std::string& text, std::string& 
     message.type = MsgType::Clip;
     message.body_size = text.size();
     message.fields.set("from", config_.id);
-    if (!write_head(socket, message, &stop_, error)) return false;
+    std::optional<HmacSha256> mac;
+    if (open_transfer(socket, message, config_.pair_key, mac, &stop_, error) != OpenResult::Ok) return false;
     if (!text.empty() &&
         !socket.send_full(reinterpret_cast<const std::uint8_t*>(text.data()), text.size(), &stop_)) {
+        error = "connection lost";
+        return false;
+    }
+    if (mac) mac->update(text.data(), text.size());
+    if (!close_transfer(socket, mac, &stop_)) {
         error = "connection lost";
         return false;
     }

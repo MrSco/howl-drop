@@ -60,6 +60,7 @@ void test_bridge() {
     config.peer_ttl = std::chrono::seconds(5);
     config.log = false;
     config.beacon_targets.push_back({"127.0.0.1", listen});
+    config.pair_key = howldrop::new_pair_key();
 
     howldrop::Node node(config, clipboard);
     node.start();
@@ -74,7 +75,29 @@ void test_bridge() {
         CHECK(learned->port == transfer);
         CHECK(learned->id == config.id);
     }
-    const howldrop::LanTarget target = learned ? *learned : howldrop::LanTarget{"127.0.0.1", transfer, "Office-PC", {}};
+    howldrop::LanTarget target = learned ? *learned : howldrop::LanTarget{"127.0.0.1", transfer, "Office-PC", {}, {}};
+    target.pair_key = config.pair_key;  // the add-on's pc_key
+
+    // Pairing: without the PC's key, or with another, nothing is delivered,
+    // and it is a refusal (the bridge gives that file up), not a retry.
+    {
+        const auto stray = pi_inbox / "stray.bin";
+        {
+            std::ofstream out(stray, std::ios::binary);
+            out << "from someone else on the network";
+        }
+        howldrop::LanTarget unpaired = target;
+        unpaired.pair_key.clear();
+        const auto refused = howldrop::take_drop(pi_inbox, stray, unpaired, true);
+        CHECK(refused.action == howldrop::DropAction::Rejected || refused.action == howldrop::DropAction::Retry);
+        howldrop::LanTarget wrong = target;
+        wrong.pair_key = howldrop::new_pair_key();
+        const auto refused_key = howldrop::take_drop(pi_inbox, stray, wrong, true);
+        if (refused_key.action != howldrop::DropAction::Rejected) std::cerr << "wrong key: " << refused_key.message << '\n';
+        CHECK(refused_key.action == howldrop::DropAction::Rejected);
+        CHECK(!std::filesystem::exists(pc_inbox / "stray.bin"));
+        std::filesystem::remove(stray);
+    }
 
     const auto photo = pi_inbox / "photo.bin";
     {
