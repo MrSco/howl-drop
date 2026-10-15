@@ -20,11 +20,15 @@ Text the phone shares (from Notes, say) arrives as a file of its own named
 like text-430B-AD01-9A-0.txt. It goes to save_folder's text/, apart from
 photos, which is also where howldrop-bridge takes text for a PC's clipboard.
 
-  deliver.py --staging DIR --dest DIR [--no-fetch] [--max-mb N]
+Each delivered file is announced to Home Assistant (announce.py): an event,
+and notifications to the notify option's targets.
+
+  deliver.py --staging DIR --dest DIR [--no-fetch] [--max-mb N] [--options FILE]
 """
 import argparse
 import configparser
 import ipaddress
+import json
 import mimetypes
 import os
 import re
@@ -35,6 +39,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import announce  # noqa: E402
 
 PAGE_TYPES = ('text/html', 'application/xhtml+xml')
 MAX_REDIRECTS = 5
@@ -193,24 +200,32 @@ def move_in(src, dest_dir):
 SHARED_TEXT = re.compile(r'text-[0-9A-Za-z]+(?:-[0-9A-Za-z]+)*\.txt')
 
 
-def deliver(path, staging, dest, fetch_links, max_bytes, allow_private=False):
-    """Deliver one settled staging file; return a line for the log."""
+def deliver(path, staging, dest, fetch_links, max_bytes, allow_private=False, announcer=None):
+    """Deliver one settled staging file; return lines for the log."""
     rel = os.path.relpath(path, staging)
     target_dir = os.path.join(dest, os.path.dirname(rel))
+    sender, url = announce.read_note(staging, os.path.basename(path))
     if os.path.dirname(rel) == '' and SHARED_TEXT.fullmatch(os.path.basename(path)):
         target_dir = os.path.join(dest, 'text')
-    if fetch_links and path.endswith('.url'):
-        url = url_of_shortcut(path)
-        if url:
-            try:
-                got = fetch(url, target_dir if os.path.isdir(target_dir) else dest, max_bytes, allow_private)
-                os.unlink(path)
-                return f'fetched {os.path.basename(got)} ({os.path.getsize(got)} bytes) from {url}'
-            except Refused as e:
-                kept = move_in(path, target_dir)
-                return f'kept {os.path.basename(kept)}: not fetched, {e}'
-    kept = move_in(path, target_dir)
-    return f'delivered {os.path.relpath(kept, dest)}'
+    if path.endswith('.url'):
+        url = url_of_shortcut(path) or url
+    line = None
+    if fetch_links and path.endswith('.url') and url:
+        try:
+            final = fetch(url, target_dir if os.path.isdir(target_dir) else dest, max_bytes, allow_private)
+            os.unlink(path)
+            line = f'fetched {os.path.basename(final)} ({os.path.getsize(final)} bytes) from {url}'
+            url = None  # a file now, not a link
+        except Refused as e:
+            final = move_in(path, target_dir)
+            line = f'kept {os.path.basename(final)}: not fetched, {e}'
+    if line is None:
+        final = move_in(path, target_dir)
+        line = f'delivered {os.path.relpath(final, dest)}'
+    lines = [line]
+    if announcer:
+        lines += announcer.drop(final, dest, sender, url)
+    return lines
 
 
 def staged_files(staging):
@@ -256,14 +271,18 @@ def purge(dest, days, now=None):
 
 
 def run(staging, dest, fetch_links, max_bytes, interval=0.5, once=False, allow_private=False,
-        keep_days=0, purge_every=86400):
+        keep_days=0, purge_every=86400, announcer=None):
     """Deliver each staging file once its size has held for two scans, and at
     start and every purge_every seconds (a day) delete what has been in dest
     for keep_days."""
     os.makedirs(dest, exist_ok=True)
     sizes = {}
     next_purge = 0
+    next_prune = 0
     while True:
+        if time.monotonic() >= next_prune:
+            next_prune = time.monotonic() + 3600
+            announce.prune_notes(staging, 86400)
         if keep_days > 0 and time.monotonic() >= next_purge:
             next_purge = time.monotonic() + purge_every
             gone = purge(dest, keep_days)
@@ -280,7 +299,8 @@ def run(staging, dest, fetch_links, max_bytes, interval=0.5, once=False, allow_p
             sizes[path] = (size, (prev[1] + 1) if prev and prev[0] == size else 0)
             if sizes[path][1] >= 2:
                 try:
-                    say(deliver(path, staging, dest, fetch_links, max_bytes, allow_private))
+                    for line in deliver(path, staging, dest, fetch_links, max_bytes, allow_private, announcer):
+                        say(line)
                 except OSError as e:
                     say(f'could not deliver {os.path.relpath(path, staging)}: {e}')
                 sizes.pop(path, None)
@@ -299,12 +319,24 @@ def main():
     ap.add_argument('--max-mb', type=int, default=100, help='largest linked file fetched (MB)')
     ap.add_argument('--keep-days', type=int, default=0,
                     help='delete files that have been in DEST this many days (0: keep)')
+    ap.add_argument('--options', help="the add-on's options.json, for its notify targets")
     a = ap.parse_args()
+    targets = []
+    if a.options:
+        try:
+            with open(a.options, encoding='utf-8') as fh:
+                targets = json.load(fh).get('notify') or []
+        except (OSError, ValueError):
+            targets = []
+    announcer = announce.Announcer(targets)
     say(f'delivering {a.staging} to {a.dest}; links to files are '
         f'{"left as shortcuts" if a.no_fetch else f"fetched (public hosts only, up to {a.max_mb} MB)"}')
     say(f'files are deleted from {a.dest} {a.keep_days} days after they arrive' if a.keep_days > 0
         else f'files in {a.dest} are kept until you delete them')
-    run(a.staging, a.dest, not a.no_fetch, a.max_mb * 1024 * 1024, keep_days=a.keep_days)
+    if announcer.enabled:
+        say('each delivery fires a howldrop_received event in Home Assistant'
+            + (f'; notifying {", ".join(announcer.targets)}' if announcer.targets else ''))
+    run(a.staging, a.dest, not a.no_fetch, a.max_mb * 1024 * 1024, keep_days=a.keep_days, announcer=announcer)
 
 
 if __name__ == '__main__':

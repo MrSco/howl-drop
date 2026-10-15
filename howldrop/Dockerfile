@@ -92,6 +92,7 @@ RUN cmake -S /src/howldrop -B /tmp/howldrop-build -DCMAKE_BUILD_TYPE=Release \
     && rm -rf /tmp/howldrop-build
 
 COPY deliver.py /deliver.py
+COPY announce.py /announce.py
 COPY senders.py /senders.py
 COPY run.sh /run.sh
 RUN chmod 755 /run.sh

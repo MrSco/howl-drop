@@ -49,9 +49,37 @@ DIAG = '''        except socket.timeout as e:
 LOGGING = "logging.basicConfig(level=logging.DEBUG, stream=sys.stdout,\n"
 LOGGING_NEW = "logging.basicConfig(level=os.environ.get('HOWLDROP_LOG_LEVEL', 'DEBUG'), stream=sys.stdout,\n"
 
+# Who sent each stored file, for the add-on's Home Assistant event and
+# notifications: a note in staging/.howldrop-meta (deliver.py, announce.py).
+NOTE_FN_ANCHOR = 'class Handler(BaseHTTPRequestHandler):\n'
+NOTE_FN = '''def howl_note(dest, names, sender, url=None):
+    """howl-drop: note who sent each stored file (.howldrop-meta/<name>.json)."""
+    try:
+        meta = os.path.join(dest, '.howldrop-meta')
+        os.makedirs(meta, exist_ok=True)
+        for name in names:
+            with open(os.path.join(meta, name + '.json'), 'w', encoding='utf-8') as fh:
+                json.dump({'sender': sender or '', 'url': url}, fh)
+    except OSError as e:
+        logging.warning('could not note who sent %s: %s', ', '.join(names), e)
+
+
+class Handler(BaseHTTPRequestHandler):
+'''
+ASK = "        files = ask.get('Files') or []\n"
+ASK_NEW = ASK + "        self._howl_sender = ask.get('SenderComputerName') or ''  # howl-drop\n"
+STORED = "            logging.info('upload %s: stored %s', tid, ', '.join(written))\n"
+STORED_NEW = STORED + "            howl_note(DEST, written, getattr(self, '_howl_sender', ''))\n"
+LINK = "                logging.info('link stored as %s -> %s', stored, item)\n"
+LINK_NEW = LINK + "                howl_note(DEST, [stored], ask.get('SenderComputerName') or '', item)\n"
+
 EDITS = [
     ('upload timeout handler', ANCHOR, DIAG),
     ('the logging setup', LOGGING, LOGGING_NEW),
+    ('the Handler class', NOTE_FN_ANCHOR, NOTE_FN),
+    ("handle_ask's file list", ASK, ASK_NEW),
+    ("handle_upload's stored line", STORED, STORED_NEW),
+    ("handle_ask's link line", LINK, LINK_NEW),
 ]
 
 # contacts.py, beside the receiver: Contacts Only refused an iPhone on the
