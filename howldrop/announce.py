@@ -121,7 +121,10 @@ def text_preview(path):
 class Announcer:
     def __init__(self, targets, token=None, api=API):
         self.targets = [t.strip() for t in targets if t and t.strip()]
-        self.token = token if token is not None else os.environ.get('SUPERVISOR_TOKEN', '')
+        # Under Docker without the Supervisor (docker/), a long-lived access
+        # token and HOWLDROP_HA_URL reach a Home Assistant elsewhere.
+        self.token = token if token is not None else (
+            os.environ.get('SUPERVISOR_TOKEN') or os.environ.get('HOWLDROP_HA_TOKEN', ''))
         self.api = api.rstrip('/')
 
     @property
