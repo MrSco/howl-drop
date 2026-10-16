@@ -29,6 +29,9 @@
 # A card whose profile says "exclusive" can't do that (Intel). Its station
 # comes down for the window, and an ad-hoc vif on AWDL's own BSSID sits beside
 # the monitor vif on a channel the card may transmit on: see exclusive_up.
+# "active-monitor" is exclusive too, but with no ad-hoc vif: the monitor vif is
+# an active one, which ACKs the phone's unicast itself (MediaTek MT7921 and
+# MT7922, MT7612U): see monitor_up.
 #
 # ROOT: required. Callers come through pkexec, which drops the environment, so
 # everything lives at fixed paths: helpers beside this script (/usr/lib/omdrop
@@ -61,7 +64,7 @@ ADV_BURST_EXCLUSIVE="--count 64 --interval 0.0164"
 # station by itself before stop brings the recorded connection up. Autoconnect
 # took 3 s on an AX211; a connection with autoconnect off never comes back.
 RECONNECT_WAIT=10
-VERSION=0.1.1
+VERSION=0.2.0
 # The omdrop-awdl helper contract this follows, which is also the version of
 # omdrop-awdl's tools staged beside it.
 CONTRACT=0.8.1
@@ -84,8 +87,9 @@ need_root() { [ "$(id -u)" = 0 ] || die "must run as root (through pkexec)" 2; }
 # The Wi-Fi station: $CONF/infra-iface, else the first managed interface.
 station_iface() {
   local forced d name
-  # A station turned into the cell (exclusive_up) isn't managed until stop.
-  [ -e "$RUN/converted" ] && { cat "$RUN/exclusive"; return; }
+  # A station turned into the cell or a monitor (exclusive_up) isn't managed
+  # until stop.
+  [ -e "$RUN/converted" ] || [ -e "$RUN/monitor" ] && { cat "$RUN/exclusive"; return; }
   forced=$(knob infra-iface)
   [ -n "$forced" ] && { echo "$forced"; return; }
   for d in /sys/class/net/*/phy80211; do
@@ -118,6 +122,14 @@ untested_hint() {
   echo "omdrop-owl hasn't been tested on this computer's Wi-Fi (${1:-unknown driver}). To try it anyway, put 1 in $CONF/allow-untested, and please report how it goes (README, \"Adding your card\")."
 }
 
+# What an active-monitor profile needs beyond its mode: the card's support,
+# and mon0 on the station's MAC, the address the phone sends to.
+active_monitor_problem() {  # PHY
+  [ "$PROF_MONMAC" = station ] || { echo "This Wi-Fi card's profile asks for active-monitor mode with mon_mac $PROF_MONMAC; active monitor needs mon_mac station."; return; }
+  iw phy "$1" info 2>/dev/null | grep -q 'Device supports active monitor' \
+    || echo "This Wi-Fi card's profile asks for active-monitor mode, but the card doesn't support an active monitor."
+}
+
 mt76_dir() { echo "/sys/kernel/debug/ieee80211/$(basename "$(readlink -f "/sys/class/net/$1/phy80211")")/mt76"; }
 
 # ------------------------------------------------------------- exclusive mode
@@ -128,13 +140,18 @@ mt76_dir() { echo "/sys/kernel/debug/ieee80211/$(basename "$(readlink -f "/sys/c
 # ad-hoc cell can start there: the AX201 refuses every 5 GHz one (EINVAL on
 # 149 under a GB regdomain, where 44 is "No IR" until it has an AP there), so
 # exclusive_up tries them in this order.
+# An active monitor gets channel 6 alone. The MT7921/MT7922 (mt7921e) sends
+# unicast injected from it at 1 Mbit/s CCK whatever rate OWL asks for, so on
+# 44 none of the MT7922's reached the air (0 of 132, to an independent
+# capture), while on 6 115 of 121 did, and the phone ACKed 100.
 tx_channels() {  # PHY
-  local ok c
+  local ok c order="5220 5745 2437"
+  [ "${PROF_MODE:-}" = active-monitor ] && order=2437
   ok=$(iw phy "$1" channels 2>/dev/null | awk '
     /^[[:space:]]*\* [0-9]+ MHz/ { if (f && ok) print f; f = $2; ok = !/disabled/; next }
     /No IR|Radar detection/ { ok = 0 }
     END { if (f && ok) print f }')
-  for c in 5220 5745 2437; do
+  for c in $order; do
     grep -qx "$c" <<< "$ok" && echo "$c"
   done
 }
@@ -158,6 +175,8 @@ tx_channels() {  # PHY
 # The AX211 refuses the ad-hoc vif while the station exists, even down
 # (EOPNOTSUPP), so there the station itself becomes the cell, and
 # $RUN/converted, which holds its IPv6 setting, tells `stop` to turn it back.
+# An active-monitor profile takes the station the same way, then monitor_up
+# sets up its radio instead of a cell.
 # Prints the frequency the cell started on.
 exclusive_up() {  # STA PHY FREQ...
   local sta=$1 phy=$2 f cell=$IBSS
@@ -167,6 +186,10 @@ exclusive_up() {  # STA PHY FREQ...
   nmcli -g GENERAL.CON-UUID device show "$sta" > "$RUN/connection" 2>/dev/null
   nmcli device set "$sta" managed no >/dev/null 2>&1
   ip link set "$sta" down
+  if [ "${PROF_MODE:-}" = active-monitor ]; then
+    monitor_up "$sta" "$phy" "$@"
+    return
+  fi
   iw dev "$IBSS" del 2>/dev/null
   if iw phy "$phy" interface add "$IBSS" type ibss 2>/dev/null; then
     ip link set "$IBSS" address "$(cat "/sys/class/net/$sta/address")"
@@ -217,20 +240,51 @@ connection_up() {  # UUID STA
   nmcli -w 10 connection up uuid "$1" ifname "$2" >/dev/null 2>&1
 }
 
+# The active-monitor radio (PR #13, kmod-midori), for cards with no ad-hoc
+# mode. mon0 is an active monitor, which ACKs unicast to its own address, so
+# it carries the station's MAC and stands in for the cell; OWL injects through
+# it as usual. An active monitor alone accepted channel changes but stayed on
+# its old channel (MT7612U, kernel 7.2), so the station becomes a passive
+# monitor first, which gives mac80211 the channel context that makes them
+# take effect. $RUN/monitor, written before the change so a start that fails
+# partway still undoes it, tells `stop` to make the station a station again.
+# Prints the frequency mon0 was tuned to.
+monitor_up() {  # STA PHY FREQ...
+  local sta=$1 phy=$2 f
+  shift 2
+  : > "$RUN/monitor"
+  iw dev "$sta" set type monitor || return 1
+  iw dev "$sta" set monitor none || return 1
+  ip link set "$sta" up || return 1
+  iw dev "$MON" del 2>/dev/null
+  iw phy "$phy" interface add "$MON" type monitor flags active || return 1
+  ip link set "$MON" address "$(cat "/sys/class/net/$sta/address")" || return 1
+  ip link set "$MON" up || return 1
+  for f in "$@"; do
+    iw dev "$MON" set freq "$f" HT20 >&2 && { echo "$f"; return 0; }
+  done
+  return 1
+}
+
 # NetworkManager reconnects by itself once it has the station back, if the
 # connection has autoconnect on. Otherwise nothing would, so a station it
 # hasn't reconnected within RECONNECT_WAIT gets the connection recorded at
-# start brought up explicitly. A converted one gets it straight away: it can
-# still find that unavailable for a moment, and then leaves it. Up to three
-# tries either way.
+# start brought up explicitly. A converted one, or one that was a monitor
+# (monitor_up), gets it straight away: it can still find that unavailable for a
+# moment, and then leaves it. Up to three tries either way.
 # Fails, keeping the state for the next stop or start, only if a converted
-# station can't be made a station again.
+# station can't be made a station again. `stop` deletes mon0 before this.
 exclusive_down() {
   local sta converted=no ipv6 uuid
   iw dev "$IBSS" ibss leave 2>/dev/null
   iw dev "$IBSS" del 2>/dev/null
   sta=$(cat "$RUN/exclusive" 2>/dev/null)
   [ -n "$sta" ] || return 0
+  if [ -e "$RUN/monitor" ]; then
+    converted=yes
+    ip link set "$sta" down 2>/dev/null
+    iw dev "$sta" set type managed || return 1
+  fi
   if [ -e "$RUN/converted" ]; then
     converted=yes
     ipv6=$(cat "$RUN/converted")
@@ -242,7 +296,7 @@ exclusive_down() {
   ip link set "$sta" up 2>/dev/null
   nmcli device set "$sta" managed yes >/dev/null 2>&1
   uuid=$(cat "$RUN/connection" 2>/dev/null)
-  rm -f "$RUN/exclusive" "$RUN/converted" "$RUN/connection"
+  rm -f "$RUN/exclusive" "$RUN/converted" "$RUN/monitor" "$RUN/connection"
   # Not connected at start ("--" or empty): nothing to reconnect to.
   [[ "$uuid" =~ ^[0-9a-fA-F-]{36}$ ]] || return 0
   [ "$converted" = yes ] || ! nm_reconnects "$sta" || return 0
@@ -307,7 +361,7 @@ cmd_peers() {
 # What omdrop's doctor shows: the backend, and what stands in the way, most
 # fundamental first. Unprivileged, so nothing here may need root.
 cmd_probe() {
-  local sta drv hw=true ap missing=()
+  local sta drv hw=true ap problem missing=()
   sta=$(station_iface)
   drv=$( [ -n "$sta" ] && driver_of "$sta" )
   if [ -z "$sta" ]; then
@@ -321,10 +375,16 @@ cmd_probe() {
     missing+=("hardware|$(untested_hint "$drv")")
   else
     [ -x "$OWL_BIN" ] || missing+=("backend|omdrop-owl is installed without OWL ($OWL_BIN). Reinstall omdrop-owl.")
-    [ "$PROF_MODE" = shared ] || [ "$PROF_MODE" = exclusive ] || missing+=("backend|This Wi-Fi card's profile asks for \"$PROF_MODE\" mode, which omdrop-owl doesn't implement yet.")
+    case "$PROF_MODE" in
+      shared|exclusive) ;;
+      active-monitor)
+        problem=$(active_monitor_problem "$(basename "$(readlink -f "/sys/class/net/$sta/phy80211")")")
+        [ -z "$problem" ] || missing+=("backend|$problem") ;;
+      *) missing+=("backend|This Wi-Fi card's profile asks for \"$PROF_MODE\" mode, which omdrop-owl doesn't implement yet.") ;;
+    esac
     ap=$(iw dev "$sta" link 2>/dev/null | awk '/freq:/ {print int($2)}')
     case "$PROF_MODE:$ap" in
-      exclusive:*|*:2437|*:5220|*:5745) ;;
+      exclusive:*|active-monitor:*|*:2437|*:5220|*:5745) ;;
       *:) missing+=("radio|Wi-Fi isn't connected, and AirDrop shares its channel. Connect to Wi-Fi first.") ;;
       *) missing+=("radio|Your Wi-Fi network is on $ap MHz, but AirDrop can only share channel 6, 44 or 149 with it. Moving the router to one of those makes this work.") ;;
     esac
@@ -413,7 +473,7 @@ supervise() {
 }
 
 cmd_start() {
-  local secs=${1:-} sta drv phy gw ap freqs chan stamac monmac mt76 _
+  local secs=${1:-} sta drv phy gw ap freqs chan stamac monmac mt76 problem _
   local owl_extra=() strategy=intersect
   [[ "$secs" =~ ^[0-9]+$ ]] || die "usage: omdrop-discoverable start <seconds>" 2
   need_root
@@ -429,11 +489,11 @@ cmd_start() {
   fi
   : > "$RUN/log"
   : > "$RUN/announce.log"
-  # A station the last stop couldn't turn back still holds the cell, and
-  # exclusive_up would take its state for the original.
-  if [ -e "$RUN/converted" ]; then
+  # A station the last stop couldn't turn back still holds the cell, or is
+  # still a monitor, and exclusive_up would take its state for the original.
+  if [ -e "$RUN/converted" ] || [ -e "$RUN/monitor" ]; then
     cmd_stop recovered >/dev/null
-    [ -e "$RUN/converted" ] && die "Wi-Fi ($(cat "$RUN/exclusive")) is still in ad-hoc mode from the last window and couldn't be switched back. Restarting the computer fixes it." 4
+    [ -e "$RUN/converted" ] || [ -e "$RUN/monitor" ] && die "Wi-Fi ($(cat "$RUN/exclusive")) is still set up for the last window and couldn't be switched back. Restarting the computer fixes it." 4
   fi
   # The last window's, which a stop after a failed start would act on.
   rm -f "$RUN/reason" "$RUN/profile" "$RUN/station" "$RUN/pm"
@@ -445,17 +505,22 @@ cmd_start() {
   if [ "$PROF_STATUS" != tested ] && [ "$(knob allow-untested)" != 1 ]; then
     die "$(untested_hint "$drv")" 4
   fi
-  [ "$PROF_MODE" = shared ] || [ "$PROF_MODE" = exclusive ] || die "this Wi-Fi card's profile asks for \"$PROF_MODE\" mode, which omdrop-owl doesn't implement yet" 4
+  phy=$(basename "$(readlink -f "/sys/class/net/$sta/phy80211")")
+  case "$PROF_MODE" in
+    shared|exclusive) ;;
+    active-monitor) problem=$(active_monitor_problem "$phy"); [ -z "$problem" ] || die "$problem" 4 ;;
+    *) die "this Wi-Fi card's profile asks for \"$PROF_MODE\" mode, which omdrop-owl doesn't implement yet" 4 ;;
+  esac
   # Before anything that can fail into cmd_stop, which reads reconnect from it.
   echo "$drv $PROF_MODE $PROF_MONMAC $PROF_RECONNECT $PROF_PM" > "$RUN/profile"
-  phy=$(basename "$(readlink -f "/sys/class/net/$sta/phy80211")")
-  if [ "$PROF_MODE" = exclusive ]; then
+  if [ "$PROF_MODE" != shared ]; then
     gw=none
     freqs=$(tx_channels "$phy")
     [ -n "$freqs" ] || die "this Wi-Fi card may not transmit on any of AirDrop's channels (6, 44, 149) here" 4
     # From here a failure has to give Wi-Fi back, which is cmd_stop's job.
     if ! ap=$(exclusive_up "$sta" "$phy" $freqs); then
       cmd_stop start-failed >/dev/null
+      [ "$PROF_MODE" = active-monitor ] && die "could not set up the active monitor $MON on channel 6" 4
       die "could not start the ad-hoc interface $IBSS on any of AirDrop's channels" 4
     fi
   else
@@ -478,31 +543,34 @@ cmd_start() {
   echo "$sta" > "$RUN/station"
   log "station $sta ($stamac, $drv) on ch$chan, gateway $gw; profile: mode=$PROF_MODE mon_mac=$PROF_MONMAC reconnect=$PROF_RECONNECT mt76_pm=$PROF_PM"
 
-  iw dev "$MON" del 2>/dev/null
-  if ! iw phy "$phy" interface add "$MON" type monitor; then
-    cmd_stop start-failed >/dev/null
-    die "could not create the monitor interface $MON" 4
-  fi
-  # mon_mac: the station's MAC on the monitor interface, or one of its own
-  # (locally administered, derived from the station's) with OWL told the
-  # station's through -m.
-  if [ "$PROF_MONMAC" = own ]; then
-    monmac="02:${stamac#*:}"
-    owl_extra=(-m "$stamac")
-  else
-    monmac=$stamac
-  fi
-  ip link set "$MON" address "$monmac"
-  if ! ip link set "$MON" up; then
-    cmd_stop start-failed >/dev/null
-    die "could not bring $MON up" 4
+  # An active monitor's mon0 is up already (monitor_up).
+  if [ "$PROF_MODE" != active-monitor ]; then
+    iw dev "$MON" del 2>/dev/null
+    if ! iw phy "$phy" interface add "$MON" type monitor; then
+      cmd_stop start-failed >/dev/null
+      die "could not create the monitor interface $MON" 4
+    fi
+    # mon_mac: the station's MAC on the monitor interface, or one of its own
+    # (locally administered, derived from the station's) with OWL told the
+    # station's through -m.
+    if [ "$PROF_MONMAC" = own ]; then
+      monmac="02:${stamac#*:}"
+      owl_extra=(-m "$stamac")
+    else
+      monmac=$stamac
+    fi
+    ip link set "$MON" address "$monmac"
+    if ! ip link set "$MON" up; then
+      cmd_stop start-failed >/dev/null
+      die "could not bring $MON up" 4
+    fi
   fi
   # owl -F, -E: patches/owl-03-fixed-radio.patch, owl-04-election-metric.patch.
   # -S pin advertises our one channel in all sixteen slots, which with -F is
   # where we are (patches/owl-06-fixed-radio-pin.patch), rather than only the
   # slots the phone already gives it: those move while the phone makes room
   # for us, and the intersection trails them by a tick.
-  if [ "$PROF_MODE" = exclusive ]; then
+  if [ "$PROF_MODE" != shared ]; then
     owl_extra+=(-F -E)
     strategy=pin
   fi

@@ -19,6 +19,7 @@ class ExclusiveTests(unittest.TestCase):
             script = r'''
 set -uo pipefail
 IBSS=awdlibss0
+MON=mon0
 AWDL_BSSID=00:25:00:ff:94:73
 RECONNECT_WAIT=3
 log() { echo "log $*" >> "$RUN/commands"; }
@@ -133,6 +134,33 @@ printf '%s' -- > "$RUN/connection"
 exclusive_down || exit 11
 ''')
         self.assertNotIn('connection up uuid', out)
+        self.assertIn('nmcli device set wlan0 managed yes', out)
+
+    def test_active_monitor_makes_station_a_monitor_and_back(self):
+        out = self.run_case('''PROF_MODE=active-monitor
+exclusive_up wlan0 phy0 2437 || exit 10
+[[ $(station_iface) == wlan0 ]] || exit 11
+exclusive_down || exit 12
+[ ! -e "$RUN/exclusive" ] && [ ! -e "$RUN/monitor" ] || exit 13
+''')
+        self.assertIn('iw dev wlan0 set type monitor', out)
+        self.assertIn('iw phy phy0 interface add mon0 type monitor flags active', out)
+        self.assertIn('ip link set mon0 address 02:00:00:00:00:01', out)
+        self.assertIn('iw dev mon0 set freq 2437 HT20', out)
+        self.assertNotIn('type ibss', out)
+        self.assertIn('iw dev wlan0 set type managed', out)
+        self.assertIn('connection up uuid 12345678-1234-1234-1234-123456789abc ifname wlan0', out)
+
+    def test_failed_active_monitor_is_still_undone(self):
+        out = self.run_case('''PROF_MODE=active-monitor
+iw_original=$(declare -f iw)
+eval "${iw_original/iw ()/mock_iw ()}"
+iw() { if [[ "$*" == 'phy phy0 interface add mon0 type monitor flags active' ]]; then return 1; fi; mock_iw "$@"; }
+exclusive_up wlan0 phy0 2437 && exit 10
+exclusive_down || exit 11
+[ ! -e "$RUN/monitor" ] || exit 12
+''')
+        self.assertIn('iw dev wlan0 set type managed', out)
         self.assertIn('nmcli device set wlan0 managed yes', out)
 
     def test_unreconnected_station_gets_its_recorded_connection_up(self):

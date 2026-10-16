@@ -96,31 +96,31 @@ Received files land in `~/Downloads`.
 
 ## Supported hardware
 
-**Status:** ✅ both directions work, ❌ tried and fails, ❓ untested\
+**Status:** ✅ both directions work, ⚠️ both have worked but not reliably ([known issues](#known-issues)), ❌ tried and fails, ❓ untested\
 **Modes:** *Shared* keeps Wi-Fi connected; *Exclusive* turns it off while visible ([why](#exclusive-mode))
 
 | Card | Driver | Status | Tested on |
 |---|---|---|---|
 | MediaTek MT7925 | `mt7925e` | ✅ Shared | Framework 13, `14c3:0717`, Omarchy 4.0.4 (kernel 7.2.5) |
+| MediaTek MT7612U (USB) | `mt76x2u` | ✅ Exclusive | `0e8d:7612` (kernel 7.2.9) |
 | Realtek RTL8822BE | `rtw88_8822be` | ✅ Exclusive; shared untested | Crosshair VII Hero, `10ec:b822`, NixOS 26.11 (kernel 7.2.9) |
 | Realtek RTL8852AE | `rtw89_8852ae` | ✅ Shared (opt-in) | ThinkPad P14s Gen 2a, `10ec:8852`, Ubuntu 26.04.1 (kernel 7.0) |
+| Realtek RTL8852BE | `rtw89_8852be` | ✅ Shared (opt-in) | ASUS PRIME B550M-A WIFI II, `10ec:b852`, CachyOS (kernel 7.2.9) |
 | Realtek RTL8852CE | `rtw89_8852ce` | ✅ Shared (opt-in) | Legion Slim 5 16AHP9, `10ec:c852`, Omarchy 4.0.4 (kernel 7.2.5) |
 | Intel 9560 | `iwlwifi` | ✅ Exclusive | Lenovo 81SY, `8086:a370`, Omarchy 4.0.0 (kernel 7.2.8) |
 | Intel AX200 | `iwlwifi` | ✅ Exclusive | ThinkPad X1 Yoga, `8086:2723`, NixOS 26.05 (kernel 6.19.8) |
 | Intel AX201 | `iwlwifi` | ✅ Exclusive | • Ubuntu 24.04 (kernel 6.8)<br>• CachyOS (kernel 7.2.9) |
 | Intel AX211 | `iwlwifi` | ✅ Exclusive | • ThinkPad X1, `8086:51f1`, Ubuntu 26.04 (kernel 7.0)<br>• XPS 9320, `8086:51f0`, Arch (kernel 7.2.3)<br>• Legion Pro 7 16IRX8H, `8086:7a70`, Omarchy 4.0.4 (kernel 7.2.3) |
 | Intel BE (Panther Lake) | `iwlwifi` | ✅ Exclusive | XPS 16, `8086:e440`, Arch (kernel 7.2) |
-| MediaTek MT7921 | `mt7921e` | ❌ Exclusive ([#14](https://github.com/t4t5/omdrop-owl/issues/14)); shared untested | `14c3:7961`, CachyOS (kernel 7.2.9) |
+| Intel BE200 | `iwlwifi` | ✅ Exclusive | GEEKOM IT13 Max, `8086:272b`, Omarchy 4.0.4 (kernel 7.2.5) |
+| MediaTek MT7921 | `mt7921e` | ⚠️ Exclusive, opt-in; shared fails ([#14](https://github.com/t4t5/omdrop-owl/issues/14)) | `14c3:7961`, CachyOS (kernel 7.2.9) |
+| MediaTek MT7922 (RZ616) | `mt7921e` | ⚠️ Exclusive, opt-in; shared fails ([#14](https://github.com/t4t5/omdrop-owl/issues/14)) | Minisforum MS-A2, `14c3:0616`, NixOS 26.05 (kernels 6.18 and 7.2.5) |
 | MediaTek MT7927 | `mt7925e` | ❌ Shared and exclusive ([#44](https://github.com/t4t5/omdrop-owl/issues/44)) | TP-Link Archer TBE550E, `14c3:7927`, CachyOS (kernel 7.2.9) |
 | Qualcomm WCN6855 (QCNFA765) | `ath11k_pci` | ❌ Shared ([#45](https://github.com/t4t5/omdrop-owl/issues/45)); no ad-hoc mode for exclusive | ThinkPad, `17cb:1103`, CachyOS (kernel 7.2.9) |
-| Intel Wireless-AC 8260 | `iwlwifi` | ❌ Exclusive: the firmware resets the card on channel 44; on 6 the iPhone lists it, but no transfer completed | NUC6i7KYK, `8086:24f3`, Home Assistant OS (kernel 6.12) |
-| MediaTek MT7922 (RZ616) | `mt7921e` | ❓ Untested (opt-in) | — |
-| MediaTek MT7612U (USB) | `mt76x2u` | ❓ Untested (opt-in), in progress in [#13](https://github.com/t4t5/omdrop-owl/pull/13) | — |
-| Realtek RTL8852BE | `rtw89_8852be` | ❓ Untested (opt-in) | — |
+| Intel Wireless-AC 8260 | `iwlwifi` | ❌ Exclusive: firmware resets on channel 44; no transfer on 6 | NUC6i7KYK, `8086:24f3`, Home Assistant OS (kernel 6.12) |
 | Qualcomm WCN7850 (FastConnect 7800) | `ath12k` | ❓ Untested (opt-in) | — |
 | Intel 9260 | `iwlwifi` | ❓ Exclusive untested | — |
 | Intel AX210 | `iwlwifi` | ❓ Exclusive untested | — |
-| Intel BE200 | `iwlwifi` | ❓ Exclusive untested | — |
 
 One card name can cover chips that behave differently, so a report from a machine, PCI ID
 (`lspci -nn`) or kernel not listed here helps too.
@@ -152,7 +152,8 @@ around it varies, which is what the profile records.
    the report's `summary.txt`. The other files include your router's MAC.
 
 Cards that can't inject while connected can try `mode exclusive`, which takes
-Wi-Fi away for the window.
+Wi-Fi away for the window, or `mode active-monitor` if the card has no ad-hoc
+mode (`iw phy` lists no IBSS) but supports an active monitor.
 
 ## How it works
 
@@ -180,6 +181,11 @@ while the machine is visible and restores it on `stop`.
 - OWL injects through a monitor interface, advertises our channel in all
   16 slots (`-S pin`), and elects its sync master by metric (`-E`). Unicast
   frames are sent once to avoid retries stalling the queue.
+- Cards with no ad-hoc mode (the MediaTek MT7921, MT7922 and MT7612U) use
+  `mode active-monitor` instead: an active monitor carrying the station's MAC
+  ACKs in place of the IBSS interface
+  ([#24](https://github.com/t4t5/omdrop-owl/pull/24), from kmod-midori's
+  [#13](https://github.com/t4t5/omdrop-owl/pull/13)).
 
 ## Development
 
@@ -215,3 +221,6 @@ is sent a link-local `awdl0` doesn't have and never connects.
   `awdl0`.
 - **Intel cards are slow**, since AWDL on channel 6 gets few of the iPhone's
   slots: a 2.4 MB photo takes 10–17 s on an AX201.
+- **The MT7921/MT7922 are unreliable.** `mt7921e` sends injected unicast at
+  1 Mbit/s whatever rate is asked for, and not at all on 5 GHz, so discovery
+  and the handshake often stall. Close and reopen the share sheet to retry.
