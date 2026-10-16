@@ -9,7 +9,7 @@
 # release tagged v${pkgver} instead of the files beside it. Bumping pkgver or
 # pkgrel on main publishes it (.github/workflows/release.yml).
 pkgname=omdrop-owl
-pkgver=0.1.1
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="AirDrop radio backend for omdrop on non-Broadcom Wi-Fi: AWDL in userspace through OWL"
 arch=('x86_64' 'aarch64')
