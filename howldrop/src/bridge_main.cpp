@@ -363,6 +363,9 @@ int run_relay(const Options& opt) {
             if (text == howldrop::kScanRequest) std::ofstream(request, std::ios::trunc) << "pc\n";
         };
     }
+    // Said before the node starts: its own log lines would cut into this one.
+    std::cout << "relay \"" << config.name << "\" on TCP " << howldrop::kRelayTransferPort
+              << ": files from a paired PC go to " << opt.inbox << std::endl;
     howldrop::MemoryClipboard clipboard;
     howldrop::Node node(config, clipboard);
     try {
@@ -372,8 +375,6 @@ int run_relay(const Options& opt) {
     }
     std::signal(SIGINT, on_stop);
     std::signal(SIGTERM, on_stop);
-    std::cout << "relay \"" << config.name << "\" on TCP " << howldrop::kRelayTransferPort
-              << ": files from a paired PC go to " << opt.inbox << std::endl;
     while (!g_stop && node.running()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
     node.request_stop();
     node.stop();
