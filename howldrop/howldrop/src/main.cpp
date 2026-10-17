@@ -188,6 +188,7 @@ void usage() {
         << "  howldrop send NAME FILE   Send FILE to the PC named NAME\n"
         << "  howldrop clip             Send the current clipboard text now\n"
         << "  howldrop stop             Stop HowlDrop on this PC\n"
+        << "  howldrop iphone FILE...   AirDrop FILE to the iPhone, through Home Assistant\n"
         << "  howldrop key              Show this PC's pairing key (the add-on's pc_key)\n"
         << "  howldrop pair KEY         Use another HowlDrop PC's key, so the two can send\n"
         << "                            to each other (then restart HowlDrop)\n\n"
@@ -322,6 +323,42 @@ int cmd_send(const std::string& peer, const std::filesystem::path& file) {
     }
     std::cout << (reply.detail.empty() ? "sent" : reply.detail) << '\n';
     return 0;
+}
+
+// howldrop iphone FILE...: the running HowlDrop sends each to the add-on's
+// iPhone relay, which AirDrops it. Explorer's Send to runs this with no
+// console, so a problem is also said in a message box there.
+int cmd_iphone(const std::vector<std::string>& args) {
+    std::vector<std::string> problems;
+    if (args.size() < 3) problems.push_back("give one or more files to send");
+    for (std::size_t i = 2; i < args.size(); ++i) {
+        std::error_code ec;
+        const auto absolute = std::filesystem::absolute(howldrop::path_from_utf8(args[i]), ec);
+        const std::string path = ec ? args[i] : howldrop::path_to_utf8(absolute);
+        if (path.find('\n') != std::string::npos || path.find('\r') != std::string::npos) {
+            problems.push_back(args[i] + ": that path cannot be sent");
+            continue;
+        }
+        const Reply reply = control_request("iphone " + path);
+        if (reply.ok) {
+            std::cout << "sent " << path << " to Home Assistant for the iPhone\n";
+        } else {
+            problems.push_back(howldrop::path_to_utf8(absolute.filename()) + ": " + reply.detail);
+            if (reply.detail.rfind("HowlDrop is not running", 0) == 0) break;
+        }
+    }
+    if (problems.empty()) return 0;
+    std::string text;
+    for (const auto& p : problems) text += p + "\n";
+    std::cerr << text;
+#ifdef _WIN32
+    if (!GetConsoleWindow()) {
+        const auto wide = howldrop::wide_from_utf8(text);
+        MessageBoxW(nullptr, wide ? wide->c_str() : L"HowlDrop could not send to the iPhone.",
+                    L"HowlDrop: Send to iPhone", MB_OK | MB_ICONWARNING);
+    }
+#endif
+    return 1;
 }
 
 int cmd_simple(const std::string& command) {
@@ -470,6 +507,7 @@ int main(int argc, char** argv) {
             std::cout << "paired: restart HowlDrop to use it. The add-on's pc_key must be this key too.\n";
             return 0;
         }
+        if (cmd == "iphone") return cmd_iphone(args);
         if (cmd == "peers") return cmd_peers();
         if (cmd == "clip") return cmd_simple("clip");
         if (cmd == "stop") return cmd_simple("quit");

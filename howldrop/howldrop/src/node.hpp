@@ -47,6 +47,16 @@ public:
         // asked for: on, every copy (a password too) goes to any PC that
         // answers on the network. `howldrop clip` sends once either way.
         bool share_clipboard = false;
+        // The port beacons go to, when it is not discovery_port: the add-on's
+        // iPhone relay listens on its own port, beside the bridge's, and
+        // announces itself on the PCs' (kDiscoveryPort).
+        std::uint16_t announce_port = 0;
+        // Said in the hello. "iphone": the add-on's relay, which AirDrops what
+        // it receives to the iPhone. The bridge never takes it for a PC, and
+        // send_to_iphone finds it by this.
+        std::string role;
+        // After send_to_iphone: what was sent, and how it went.
+        std::function<void(const std::string& file, const Status& status)> on_sent;
         // Called on a worker thread once a file is saved or text is on the
         // clipboard, with the sender's name (empty when unknown): the Windows
         // tray app notifies and opens from these. on_log, when set, takes the
@@ -74,6 +84,8 @@ public:
     bool running() const { return running_.load(); }
 
     Status send_file(const std::string& peer, const std::filesystem::path& path);
+    // To the add-on's iPhone relay (role "iphone"), which AirDrops it on.
+    Status send_to_iphone(const std::filesystem::path& path);
     Status push_clipboard();
     std::vector<PeerView> peers() const;
     void set_share_clipboard(bool on) { share_clipboard_.store(on); }
@@ -87,6 +99,7 @@ private:
         std::uint32_t addr_be = 0;
         std::uint16_t tcp_port = 0;
         std::uint16_t discovery_port = 0;
+        std::string role;
         Clock::time_point seen{};
         std::uint64_t clip_sent_gen = 0;
         std::uint64_t clip_error_gen = 0;
@@ -118,6 +131,7 @@ private:
     void receive_clip(Socket& socket, const Message& message, std::optional<HmacSha256>& mac);
     bool trailer_matches(Socket& socket, std::optional<HmacSha256>& mac);
     void write_ack(Socket& socket, bool ok, const std::string& message, const std::string& saved);
+    Status send_file_to(const Peer& peer, const std::filesystem::path& path);
     bool send_clip_to(const Peer& peer, const std::string& text, std::string& error);
     Status flush_clips();
     void poll_clipboard();

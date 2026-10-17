@@ -32,7 +32,7 @@ import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import announce  # noqa: E402
-from deliver import url_of_shortcut  # noqa: E402
+from deliver import safe_name, url_of_shortcut  # noqa: E402
 
 SUPERVISOR = '172.30.32.2'
 HASSIO_GATEWAY = '172.30.32.1'
@@ -41,6 +41,7 @@ LIMIT = 300
 THUMB_PX = 360
 THUMBS_KEPT = 2000
 CHUNK = 256 * 1024
+MAX_UPLOAD = 4 << 30  # Send to iPhone; AirDrop itself takes more, the panel need not
 
 # What may be shown in the browser rather than downloaded.
 INLINE = {
@@ -260,6 +261,31 @@ def prune_cache(cache, suffix, keep, skip=None):
             pass
 
 
+# --- Send to iPhone ------------------------------------------------------------------
+
+def free_name(directory, name):
+    """A path in directory for name that is not taken (name-1.ext, ...)."""
+    stem, ext = os.path.splitext(name)
+    path = os.path.join(directory, name)
+    n = 1
+    while os.path.exists(path) or os.path.exists(path + '.partial'):
+        path = os.path.join(directory, f'{stem}-{n}{ext}')
+        n += 1
+    return path
+
+
+def send_status(outbox, status_file):
+    """For the page: whether sending is on, and the latest sends (outbox.py)."""
+    if not outbox:
+        return {'enabled': False, 'jobs': []}
+    try:
+        with open(status_file, encoding='utf-8') as fh:
+            jobs = json.load(fh).get('jobs') or []
+    except (OSError, ValueError, TypeError, AttributeError):
+        jobs = []
+    return {'enabled': True, 'jobs': jobs if isinstance(jobs, list) else []}
+
+
 # --- the server ----------------------------------------------------------------------
 
 def disposition(kind, name):
@@ -312,6 +338,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(url.query)
         if url.path in STATIC:
             return self.send_static(*STATIC[url.path])
+        if url.path == '/api/send':
+            return self.send_json(send_status(self.server.outbox, self.server.send_status))
         if url.path == '/api/drops':
             return self.send_json({'drops': listing(self.server.dest, self.server.history),
                                    'folder': self.server.dest})
@@ -338,9 +366,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.allowed():
             return self.send_plain(403, 'forbidden')
+        ctype = self.headers.get('Content-Type', '').split(';')[0].strip()
+        if urllib.parse.urlsplit(self.path).path == '/api/send':
+            return self.receive_upload(ctype)
         # JSON only: a page elsewhere cannot send it here without the browser
         # asking first, so no other site can delete through a signed-in user.
-        if self.headers.get('Content-Type', '').split(';')[0].strip() != 'application/json':
+        if ctype != 'application/json':
             return self.send_plain(415, 'JSON only')
         try:
             length = int(self.headers.get('Content-Length') or 0)
@@ -360,6 +391,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 except OSError:
                     pass
         return self.send_json({'deleted': deleted})
+
+    def receive_upload(self, ctype):
+        """Send to iPhone: the body is a file for the outbox (outbox.py).
+        application/octet-stream only, for the same reason delete takes JSON
+        only: no page elsewhere can send that through a signed-in user."""
+        if not self.server.outbox:
+            return self.send_plain(404, 'send_to_iphone is off')
+        if ctype != 'application/octet-stream':
+            return self.send_plain(415, 'application/octet-stream only')
+        try:
+            length = int(self.headers.get('Content-Length') or -1)
+        except ValueError:
+            length = -1
+        if length < 0:
+            return self.send_plain(411, 'length required')
+        if length > MAX_UPLOAD:
+            return self.send_plain(413, 'too large')
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        name = safe_name((query.get('name') or [''])[0], 'file')
+        os.makedirs(self.server.outbox, exist_ok=True)
+        temp = os.path.join(self.server.outbox, f'.upload-{os.getpid()}-{threading.get_ident()}.partial')
+        try:
+            with open(temp, 'wb') as fh:
+                left = length
+                while left > 0:
+                    chunk = self.rfile.read(min(CHUNK, left))
+                    if not chunk:
+                        raise OSError('the upload stopped early')
+                    fh.write(chunk)
+                    left -= len(chunk)
+            final = free_name(self.server.outbox, name)
+            os.replace(temp, final)
+        except OSError as e:
+            try:
+                os.unlink(temp)
+            except OSError:
+                pass
+            return self.send_plain(500, f'could not take the file: {e}')
+        return self.send_json({'name': os.path.basename(final)})
 
     def send_static(self, name, ctype):
         path = os.path.join(self.server.static, name)
@@ -451,9 +521,11 @@ def parse_allow(entries):
     return networks
 
 
-def serve(dest, port, history, thumbs, static, allow, hosts=(HASSIO_GATEWAY, '0.0.0.0')):
+def serve(dest, port, history, thumbs, static, allow, hosts=(HASSIO_GATEWAY, '0.0.0.0'), outbox=None,
+          send_status_file=None):
     """Listen on the first of hosts that can be bound; return the server.
-    allow: the addresses and networks it answers (parse_allow)."""
+    allow: the addresses and networks it answers (parse_allow). outbox: the
+    send folder when send_to_iphone is on, with outbox.py's status file."""
     last = None
     for host in hosts:
         try:
@@ -468,6 +540,8 @@ def serve(dest, port, history, thumbs, static, allow, hosts=(HASSIO_GATEWAY, '0.
     server.thumbs = thumbs
     server.static = static
     server.allow = parse_allow(allow)
+    server.outbox = outbox
+    server.send_status = send_status_file
     return server
 
 
@@ -478,12 +552,14 @@ def main():
     ap.add_argument('--bind', help='address to listen on (default: the hassio bridge, else all)')
     ap.add_argument('--history', default='/data/drops.jsonl')
     ap.add_argument('--thumbs', default='/data/thumbs')
+    ap.add_argument('--outbox', help='the send folder, when send_to_iphone is on')
+    ap.add_argument('--send-status', help="outbox.py's status file")
     ap.add_argument('--static', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'panel'))
     a = ap.parse_args()
     allow = [s.strip() for s in os.environ.get('HOWLDROP_PANEL_ALLOW', SUPERVISOR).split(',') if s.strip()]
     os.makedirs(a.dest, exist_ok=True)
     hosts = (a.bind,) if a.bind else (HASSIO_GATEWAY, '0.0.0.0')
-    server = serve(a.dest, a.port, a.history, a.thumbs, a.static, allow, hosts)
+    server = serve(a.dest, a.port, a.history, a.thumbs, a.static, allow, hosts, a.outbox, a.send_status)
     host, port = server.server_address[:2]
     print(f'panel on {host}:{port} for {", ".join(sorted(allow))}', flush=True)
     server.serve_forever()

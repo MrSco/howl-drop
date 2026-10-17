@@ -19,8 +19,17 @@
     <button type="button" data-filter="text">Text &amp; links</button>
     <button type="button" data-filter="file">Files</button>
   </div>
+  <button type="button" id="send-button" class="send" hidden>Send to iPhone</button>
+  <input type="file" id="send-input" multiple hidden>
 </header>
 <main>
+  <section id="sending" hidden>
+    <div class="sending-head">
+      <h2>Sending to iPhone</h2>
+      <p>Set the iPhone's AirDrop to <strong>Everyone for 10 Minutes</strong>, keep it unlocked, and accept.</p>
+    </div>
+    <ul id="sends"></ul>
+  </section>
   <p id="status">Loading…</p>
   <ul id="drops"></ul>
 </main>
