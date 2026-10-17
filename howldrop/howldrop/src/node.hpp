@@ -23,6 +23,9 @@
 
 namespace howldrop {
 
+// The text a PC sends the relay to ask for a scan of nearby devices.
+inline constexpr const char* kScanRequest = "howldrop:scan";
+
 class Node {
 public:
     struct Config {
@@ -57,6 +60,12 @@ public:
         std::string role;
         // After send_to_iphone: what was sent, and how it went.
         std::function<void(const std::string& file, const Status& status)> on_sent;
+        // More hello fields, read at each beacon: the relay adds the devices
+        // its latest scan heard ("near", tab-separated) and "scanning".
+        std::function<std::vector<std::pair<std::string, std::string>>()> hello_extra;
+        // A file came with a "to" (the device it is for), called before the
+        // file takes its final name: the relay notes it for outbox.py.
+        std::function<void(const std::filesystem::path& saved, const std::string& to)> on_target;
         // Called on a worker thread once a file is saved or text is on the
         // clipboard, with the sender's name (empty when unknown): the Windows
         // tray app notifies and opens from these. on_log, when set, takes the
@@ -84,8 +93,18 @@ public:
     bool running() const { return running_.load(); }
 
     Status send_file(const std::string& peer, const std::filesystem::path& path);
-    // To the add-on's iPhone relay (role "iphone"), which AirDrops it on.
-    Status send_to_iphone(const std::filesystem::path& path);
+    // To the add-on's iPhone relay (role "iphone"), which AirDrops it on: to
+    // the device named to, or with to empty the add-on's default.
+    Status send_to_iphone(const std::filesystem::path& path, const std::string& to = {});
+    // What the relay's latest scan heard, from its hello.
+    struct Nearby {
+        bool relay = false;     // the relay is on the network
+        bool scanning = false;  // it is scanning now
+        std::vector<std::string> devices;
+    };
+    Nearby iphone_nearby() const;
+    // Ask the relay to look for nearby devices (about 30 s).
+    Status request_iphone_scan();
     Status push_clipboard();
     std::vector<PeerView> peers() const;
     void set_share_clipboard(bool on) { share_clipboard_.store(on); }
@@ -100,6 +119,8 @@ private:
         std::uint16_t tcp_port = 0;
         std::uint16_t discovery_port = 0;
         std::string role;
+        std::vector<std::string> heard;  // the relay's: devices its scan heard
+        bool scanning = false;
         Clock::time_point seen{};
         std::uint64_t clip_sent_gen = 0;
         std::uint64_t clip_error_gen = 0;
@@ -131,7 +152,8 @@ private:
     void receive_clip(Socket& socket, const Message& message, std::optional<HmacSha256>& mac);
     bool trailer_matches(Socket& socket, std::optional<HmacSha256>& mac);
     void write_ack(Socket& socket, bool ok, const std::string& message, const std::string& saved);
-    Status send_file_to(const Peer& peer, const std::filesystem::path& path);
+    Status send_file_to(const Peer& peer, const std::filesystem::path& path, const std::string& to = {});
+    std::optional<Peer> relay_peer() const;
     bool send_clip_to(const Peer& peer, const std::string& text, std::string& error);
     Status flush_clips();
     void poll_clipboard();

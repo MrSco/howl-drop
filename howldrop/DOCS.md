@@ -82,11 +82,19 @@ The panel shows each send as it goes. The file then moves to `send/sent`,
 or `send/failed` if the phone declined or never showed up within 3 minutes;
 `Send:` lines in the log say each step.
 
-Which phone: set `send_to` to its name as AirDrop shows it, e.g. `Rocco's
-iPhone` (part of the name will do), and only the device answering to it
-gets the file. Left empty, HowlDrop sends to the only AirDrop device it
-hears, or of several (a Mac nearby, say) the one whose name says iPhone;
-with two iPhones in range and no `send_to`, it doesn't guess. The PC reaches the
+Which device: **Look for devices** (in the panel, or in the PC's HowlDrop
+menu under Send to iPhone) asks every AirDrop device in range for its
+name, which takes about 30 seconds, and lists those that answer: an
+iPhone set to Everyone for 10 Minutes, a Mac with AirDrop open. Contacts
+Only phones don't answer anyone but their contacts. Choose one and send;
+only the device answering to that name gets the file. A scan connects to
+each device to ask, as a Mac's AirDrop window does, so it runs only when
+you ask.
+
+Without a choice, `send_to` decides: the phone's name as AirDrop shows
+it, e.g. `Rocco's iPhone` (part of the name will do). Left empty,
+HowlDrop sends to the only AirDrop device it hears, or of several the one
+whose name says iPhone; with two iPhones in range, it doesn't guess. The PC reaches the
 add-on through its relay, which shows up on the network as **iPhone
 (HowlDrop)** (TCP 47635) and takes files only with your pairing key.
 

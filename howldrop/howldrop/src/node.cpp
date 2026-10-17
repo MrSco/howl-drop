@@ -240,6 +240,9 @@ Message Node::hello_message() const {
     message.fields.set("id", config_.id);
     message.fields.set("port", std::to_string(config_.transfer_port));
     if (!config_.role.empty()) message.fields.set("role", config_.role);
+    if (config_.hello_extra) {
+        for (auto& [key, value] : config_.hello_extra()) message.fields.set(std::move(key), std::move(value));
+    }
     return message;
 }
 
@@ -287,6 +290,19 @@ void Node::handle_datagram(const std::uint8_t* data, std::size_t n, std::uint32_
     const std::string name = message->fields.get("name");
     const std::string port_text = message->fields.get("port");
     const std::string role = message->fields.get("role");
+    std::vector<std::string> heard;
+    {
+        const std::string text = message->fields.get("near");
+        std::size_t start = 0;
+        while (start < text.size()) {
+            const auto tab = text.find('\t', start);
+            const std::string item = text.substr(start, tab == std::string::npos ? std::string::npos : tab - start);
+            if (!item.empty() && valid_display_name(item)) heard.push_back(item);
+            if (tab == std::string::npos) break;
+            start = tab + 1;
+        }
+    }
+    const bool scanning = message->fields.get("scanning") == "1";
     if (!is_node_id(id) || !valid_display_name(name) || id == config_.id) return;
     int port = 0;
     try {
@@ -313,6 +329,8 @@ void Node::handle_datagram(const std::uint8_t* data, std::size_t n, std::uint32_
             created.tcp_port = static_cast<std::uint16_t>(port);
             created.discovery_port = from_port;
             created.role = role;
+            created.heard = heard;
+            created.scanning = scanning;
             created.seen = now;
             peers_.push_back(std::move(created));
             note = "peer " + name + " " + ipv4_to_string(from_be);
@@ -326,6 +344,8 @@ void Node::handle_datagram(const std::uint8_t* data, std::size_t n, std::uint32_
             peer->discovery_port = from_port;
             peer->name = name;
             peer->role = role;
+            peer->heard = heard;
+            peer->scanning = scanning;
             if (changed) {
                 note = "peer " + name + " " + ipv4_to_string(from_be);
                 reply = true;
@@ -476,6 +496,10 @@ void Node::receive_file(Socket& socket, const Message& message, std::optional<Hm
             log_line("dropped " + safe + ": it does not match its pairing signature");
             return;
         }
+        if (config_.on_target) {
+            const std::string to = one_line(message.fields.get("to"));
+            if (!to.empty()) config_.on_target(final_path, to.substr(0, 64));
+        }
         std::filesystem::rename(partial, final_path);
         const std::string saved = filename_utf8(final_path);
         write_ack(socket, true, "", saved);
@@ -591,23 +615,46 @@ Status Node::send_file(const std::string& peer_query, const std::filesystem::pat
     return send_file_to(found.peer, path);
 }
 
-Status Node::send_to_iphone(const std::filesystem::path& path) {
-    std::optional<Peer> relay;
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        for (const auto& peer : peers_) {
-            if (peer.role == "iphone") relay = peer;
-        }
+std::optional<Node::Peer> Node::relay_peer() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    for (const auto& peer : peers_) {
+        if (peer.role == "iphone") return peer;
     }
+    return std::nullopt;
+}
+
+Node::Nearby Node::iphone_nearby() const {
+    Nearby out;
+    const auto relay = relay_peer();
+    if (!relay) return out;
+    out.relay = true;
+    out.scanning = relay->scanning;
+    out.devices = relay->heard;
+    return out;
+}
+
+Status Node::request_iphone_scan() {
+    const auto relay = relay_peer();
+    if (!relay) {
+        return Status::failure("Home Assistant's iPhone relay is not on the network: turn on the add-on's "
+                               "send_to_iphone, with pc_key set");
+    }
+    std::string error;
+    if (!send_clip_to(*relay, kScanRequest, error)) return Status::failure(error);
+    return Status::success("looking for nearby devices");
+}
+
+Status Node::send_to_iphone(const std::filesystem::path& path, const std::string& to) {
+    const auto relay = relay_peer();
     const std::string name = filename_utf8(path);
-    Status status = relay ? send_file_to(*relay, path)
+    Status status = relay ? send_file_to(*relay, path, one_line(to).substr(0, 64))
                           : Status::failure("Home Assistant's iPhone relay is not on the network: turn on the "
                                             "add-on's send_to_iphone, with pc_key set");
     if (config_.on_sent) config_.on_sent(name, status);
     return status;
 }
 
-Status Node::send_file_to(const Peer& peer, const std::filesystem::path& path) {
+Status Node::send_file_to(const Peer& peer, const std::filesystem::path& path, const std::string& to) {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec)) return Status::failure("that path is not a file");
     std::ifstream in(path, std::ios::binary);
@@ -633,6 +680,7 @@ Status Node::send_file_to(const Peer& peer, const std::filesystem::path& path) {
     message.body_size = size;
     message.fields.set("file", safe);
     message.fields.set("from", config_.id);
+    if (!to.empty()) message.fields.set("to", to);
     std::optional<HmacSha256> mac;
     const OpenResult opened = open_transfer(socket, message, config_.pair_key, mac, &stop_, error);
     if (opened == OpenResult::Lost) return Status::failure("could not reach " + peer.name);
@@ -847,10 +895,30 @@ void Node::handle_control(Socket socket) {
     } else if (line == "clip") {
         const Status status = push_clipboard();
         response = (status.ok ? "ok " : "error ") + one_line(status.message.empty() ? (status.ok ? "ok" : "failed") : status.message);
+    } else if (line == "nearby") {
+        const Nearby nearby = iphone_nearby();
+        if (!nearby.relay) {
+            response = "error Home Assistant's iPhone relay is not on the network";
+        } else {
+            response = std::string("ok ") + (nearby.scanning ? "scanning" : "done") + "\n";
+            for (const auto& device : nearby.devices) response += device + "\n";
+        }
+    } else if (line == "scan") {
+        const Status status = request_iphone_scan();
+        response = (status.ok ? "ok " : "error ") + one_line(status.message);
     } else if (line.rfind("iphone ", 0) == 0) {
         // Sent in the background: a big file outlasts the control reply's
         // timeout. on_sent (the tray's notification) says how it went.
-        const auto path = path_from_utf8(line.substr(7));
+        // "iphone NAME<tab>PATH" sends to that device; "iphone PATH" to the
+        // add-on's default.
+        std::string rest = line.substr(7);
+        std::string to;
+        const auto tab = rest.find('\t');
+        if (tab != std::string::npos) {
+            to = rest.substr(0, tab);
+            rest = rest.substr(tab + 1);
+        }
+        const auto path = path_from_utf8(rest);
         std::error_code ec;
         bool relay = false;
         {
@@ -863,7 +931,7 @@ void Node::handle_control(Socket socket) {
             response = "error Home Assistant's iPhone relay is not on the network: turn on the add-on's "
                        "send_to_iphone, with pc_key set";
         } else {
-            spawn([this, path]() { send_to_iphone(path); });
+            spawn([this, path, to]() { send_to_iphone(path, to); });
             response = "ok sending";
         }
     } else if (line == "quit" || line == "stop") {

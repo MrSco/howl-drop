@@ -241,7 +241,7 @@ const STATE_WORD = { waiting: 'Waiting', sending: 'Sending', sent: 'Sent', faile
 
 function renderSends() {
   const rows = [...uploads, ...sendJobs];
-  sending.hidden = rows.length === 0;
+  sending.hidden = sendButton.hidden;
   sendsList.textContent = '';
   for (const job of rows.slice(0, 8)) {
     const item = el('li');
@@ -275,7 +275,8 @@ function upload(file) {
   renderSends();
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', 'api/send?name=' + encodeURIComponent(file.name));
+    xhr.open('POST', 'api/send?name=' + encodeURIComponent(file.name) +
+      (chosen ? '&to=' + encodeURIComponent(chosen) : ''));
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable) {
@@ -296,6 +297,65 @@ function upload(file) {
   });
 }
 
+// --- which device: the latest scan's, or the add-on's default -------------------
+
+const devicesBox = document.getElementById('devices');
+const scanButton = document.getElementById('scan-button');
+let nearby = { devices: [], scanning: false, time: 0 };
+let chosen = '';
+let scanUntil = 0;  // poll quickly until a scan this page asked for ends
+try { chosen = localStorage.getItem('howldrop-send-to') || ''; } catch (e) { chosen = ''; }
+
+function choose(name) {
+  chosen = name;
+  try { localStorage.setItem('howldrop-send-to', name); } catch (e) { /* remembered for this visit only */ }
+  renderDevices();
+}
+
+function renderDevices() {
+  const names = nearby.devices.map((d) => d.name);
+  // A device chosen before stays on the list, even if this scan missed it.
+  if (chosen && !names.includes(chosen)) names.push(chosen);
+  devicesBox.textContent = '';
+  const chip = (label, value, title) => {
+    const button = el('button', { type: 'button', role: 'radio', 'aria-checked': String(chosen === value), title }, label);
+    if (chosen === value) button.classList.add('on');
+    button.addEventListener('click', () => choose(value));
+    devicesBox.append(button);
+  };
+  chip('Default', '', 'the send_to option, or the only iPhone nearby');
+  for (const name of names) chip(name, name, name);
+  scanButton.disabled = nearby.scanning;
+  scanButton.textContent = nearby.scanning ? 'Looking… (about 30 s)' : 'Look for devices';
+  sendButton.textContent = chosen ? 'Send to ' + chosen : 'Send to iPhone';
+}
+
+async function loadNearby() {
+  try {
+    const reply = await fetch('api/nearby', { cache: 'no-store' });
+    if (reply.ok) nearby = await reply.json();
+  } catch (e) { /* tried again with the sends */ }
+  renderDevices();
+  if (Date.now() < scanUntil && (nearby.scanning || Date.now() < scanUntil - 55000)) {
+    setTimeout(loadNearby, 2000);
+  } else if (scanUntil) {
+    scanUntil = 0;
+    if (!nearby.devices.length) {
+      sendsList.prepend(el('li', {}, 'Nothing answered: set the iPhone’s AirDrop to Everyone for 10 Minutes, unlock it, and look again.'));
+    }
+  }
+}
+
+scanButton.addEventListener('click', async () => {
+  scanButton.disabled = true;
+  scanButton.textContent = 'Looking… (about 30 s)';
+  try {
+    await fetch('api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  } catch (e) { /* the poll shows nothing changed */ }
+  scanUntil = Date.now() + 60000;
+  setTimeout(loadNearby, 2000);
+});
+
 sendButton.addEventListener('click', () => sendInput.click());
 sendInput.addEventListener('change', async () => {
   const files = [...sendInput.files];
@@ -305,4 +365,5 @@ sendInput.addEventListener('change', async () => {
 
 load();
 loadSends();
+loadNearby();
 setInterval(() => { if (!document.hidden) load(); }, 10000);
