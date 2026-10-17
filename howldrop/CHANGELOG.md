@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.1
+
+- The relay a PC sends through starts (0.14.0 and 0.15.0 logged "Relay: unknown command relay").
+
 ## 0.15.0
 
 - Pick which device to send to: **Look for devices** in the panel, or in the PC's tray menu (Send to iPhone), lists the AirDrop devices nearby that are listening (an iPhone set to Everyone for 10 Minutes, a Mac with AirDrop open). Choose one, then send. Needs **howldrop.exe 0.15.0** on the PC.
