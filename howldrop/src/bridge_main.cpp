@@ -167,7 +167,8 @@ bool parse_args(const std::vector<std::string>& args, Options& opt, std::string&
                 opt.text += positionals[i];
             }
         }
-    } else if (opt.command != "name" && opt.command != "discover" && opt.command != "watch" && opt.command != "help") {
+    } else if (opt.command != "name" && opt.command != "discover" && opt.command != "watch" && opt.command != "relay" &&
+               opt.command != "help") {
         error = "unknown command " + opt.command;
         return false;
     }

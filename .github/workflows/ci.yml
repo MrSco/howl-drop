@@ -38,6 +38,9 @@ jobs:
           build/howldrop/howldrop-pairing-test
           build/howldrop/howldrop-bridge-test
           timeout 300 build/howldrop/howldrop-test
+          # The commands run.sh starts are accepted (0.15.0 shipped a relay
+          # the argument parser refused): without a key the relay must say so.
+          build/howldrop/howldrop-bridge relay --inbox /tmp/relay-check 2>&1 | grep -q "needs HOWLDROP_PC_KEY"
 
   howldrop-windows:
     runs-on: windows-latest
