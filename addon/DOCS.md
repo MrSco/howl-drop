@@ -64,21 +64,31 @@ appears under Local add-ons and builds on your machine. Bump `version` in
 
 ## Sending to an iPhone (experimental)
 
-With `send_to_iphone` on, a file copied into `save_folder/send`
-(`\\homeassistant\share\howldrop\send` over Samba) is AirDropped to a nearby
-iPhone:
+With `send_to_iphone` on, HowlDrop AirDrops files to a nearby iPhone too:
 
 1. On the iPhone: Control Center, AirDrop, **Everyone for 10 Minutes**.
    Keep it unlocked. Contacts Only won't work: there the phone takes files
    only from senders with an Apple-signed identity, which only Apple devices
    have. iOS switches back on its own after 10 minutes.
-2. Copy the file into the `send` folder.
+2. Send the file, any of these ways:
+   - **Send to iPhone** in the HowlDrop panel.
+   - On a paired Windows PC (`pc_key` set): **Send a file to iPhone…** in
+     the HowlDrop icon's menu, right-click a file in Explorer and **Send
+     to**, **iPhone (HowlDrop)**, or `howldrop iphone FILE`.
+   - Copy it into `save_folder/send` (`\\homeassistant\share\howldrop\send`).
 3. Accept it on the phone.
 
-The file then moves to `send/sent`, or `send/failed` if the phone declined
-or never showed up within 3 minutes. `Send:` lines in the log say each step.
-With several devices nearby (a Mac, say), the one that calls itself an
-iPhone is used.
+The panel shows each send as it goes. The file then moves to `send/sent`,
+or `send/failed` if the phone declined or never showed up within 3 minutes;
+`Send:` lines in the log say each step.
+
+Which phone: set `send_to` to its name as AirDrop shows it, e.g. `Rocco's
+iPhone` (part of the name will do), and only the device answering to it
+gets the file. Left empty, HowlDrop sends to the only AirDrop device it
+hears, or of several (a Mac nearby, say) the one whose name says iPhone;
+with two iPhones in range and no `send_to`, it doesn't guess. The PC reaches the
+add-on through its relay, which shows up on the network as **iPhone
+(HowlDrop)** (TCP 47635) and takes files only with your pairing key.
 
 ## The HowlDrop panel
 

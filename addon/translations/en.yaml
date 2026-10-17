@@ -32,6 +32,9 @@ configuration:
   send_to_iphone:
     name: Send to iPhone (experimental)
     description: Files you copy into save_folder's send folder are AirDropped to a nearby iPhone set to Everyone for 10 Minutes. You accept them on the phone.
+  send_to:
+    name: Send to (iPhone name)
+    description: "The iPhone's name as AirDrop shows it, e.g. Rocco's iPhone (part of it will do). Only that phone gets what you send. Empty: the only device nearby, or the one called iPhone."
   interface:
     name: Wi-Fi interface
     description: auto picks a supported card, never the one Home Assistant uses for its network unless its profile keeps the connection. Or name one, e.g. wlan1.

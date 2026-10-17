@@ -38,9 +38,10 @@ class PanelTests(unittest.TestCase):
             server.server_close()
         self.tmp.cleanup()
 
-    def start(self, allow=('127.0.0.1',)):
+    def start(self, allow=('127.0.0.1',), outbox=None, status=None):
         server = panel.serve(str(self.dest), 0, self.history, str(Path(self.tmp.name, 'thumbs')),
-                             str(ADDON / 'panel'), set(allow), hosts=('127.0.0.1',))
+                             str(ADDON / 'panel'), set(allow), hosts=('127.0.0.1',), outbox=outbox,
+                             send_status_file=status)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.servers.append(server)
         return f'http://127.0.0.1:{server.server_address[1]}'
@@ -227,6 +228,39 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(self.get(base + '/thumb?p=bad.heic')[0], 404)
         status, headers, _ = self.get(base + '/file?p=bad.heic')
         self.assertEqual((status, headers['Content-Type']), (200, 'image/heic'))
+
+    def upload(self, base, name, data, ctype='application/octet-stream'):
+        request = urllib.request.Request(base + '/api/send?name=' + urllib.request.quote(name), data=data,
+                                         method='POST', headers={'Content-Type': ctype})
+        try:
+            with urllib.request.urlopen(request, timeout=5) as reply:
+                return reply.status, json.loads(reply.read())
+        except urllib.error.HTTPError as e:
+            return e.code, None
+
+    def test_send_to_iphone_off(self):
+        base = self.start()
+        self.assertEqual(self.get(base + '/api/send')[2], b'{"enabled": false, "jobs": []}')
+        self.assertEqual(self.upload(base, 'a.jpg', b'x')[0], 404)
+
+    def test_send_to_iphone_upload(self):
+        outbox = Path(self.tmp.name, 'share', 'send')
+        status = Path(self.tmp.name, 'send-status.json')
+        status.write_text(json.dumps({'jobs': [{'name': 'old.jpg', 'state': 'sent', 'detail': 'on the iPhone'}]}))
+        base = self.start(outbox=str(outbox), status=str(status))
+        sent = json.loads(self.get(base + '/api/send')[2])
+        self.assertEqual((sent['enabled'], sent['jobs'][0]['name']), (True, 'old.jpg'))
+
+        self.assertEqual(self.upload(base, 'a.jpg', b'one', ctype='text/plain')[0], 415)
+        self.assertEqual(self.upload(base, 'IMG 1.jpg', b'one'), (200, {'name': 'IMG 1.jpg'}))
+        self.assertEqual(self.upload(base, 'IMG 1.jpg', b'two'), (200, {'name': 'IMG 1-1.jpg'}))
+        self.assertEqual((outbox / 'IMG 1.jpg').read_bytes(), b'one')
+        self.assertEqual((outbox / 'IMG 1-1.jpg').read_bytes(), b'two')
+        # A name is only a name: no way out of the send folder, no dotfile.
+        self.assertEqual(self.upload(base, '../../evil.sh', b'x'), (200, {'name': 'evil.sh'}))
+        self.assertEqual(self.upload(base, '.hidden', b'x'), (200, {'name': 'hidden'}))
+        self.assertFalse(Path(self.tmp.name, 'evil.sh').exists())
+        self.assertEqual(sorted(p.name for p in outbox.iterdir()), ['IMG 1-1.jpg', 'IMG 1.jpg', 'evil.sh', 'hidden'])
 
     def test_history_is_trimmed(self):
         for i in range(announce.HISTORY_KEPT * 2):

@@ -239,6 +239,7 @@ Message Node::hello_message() const {
     message.fields.set("name", config_.name);
     message.fields.set("id", config_.id);
     message.fields.set("port", std::to_string(config_.transfer_port));
+    if (!config_.role.empty()) message.fields.set("role", config_.role);
     return message;
 }
 
@@ -262,8 +263,9 @@ void Node::send_beacons() {
         udp_.send_to(bytes->data(), bytes->size(), addr, port);
     };
     if (config_.lan_broadcast) {
-        send_one(0xffffffffu, config_.discovery_port);
-        for (std::uint32_t addr : ipv4_broadcasts()) send_one(addr, config_.discovery_port);
+        const std::uint16_t port = config_.announce_port ? config_.announce_port : config_.discovery_port;
+        send_one(0xffffffffu, port);
+        for (std::uint32_t addr : ipv4_broadcasts()) send_one(addr, port);
     }
     for (const auto& target : config_.beacon_targets) {
         std::uint32_t addr = 0;
@@ -284,6 +286,7 @@ void Node::handle_datagram(const std::uint8_t* data, std::size_t n, std::uint32_
     const std::string id = message->fields.get("id");
     const std::string name = message->fields.get("name");
     const std::string port_text = message->fields.get("port");
+    const std::string role = message->fields.get("role");
     if (!is_node_id(id) || !valid_display_name(name) || id == config_.id) return;
     int port = 0;
     try {
@@ -309,6 +312,7 @@ void Node::handle_datagram(const std::uint8_t* data, std::size_t n, std::uint32_
             created.addr_be = from_be;
             created.tcp_port = static_cast<std::uint16_t>(port);
             created.discovery_port = from_port;
+            created.role = role;
             created.seen = now;
             peers_.push_back(std::move(created));
             note = "peer " + name + " " + ipv4_to_string(from_be);
@@ -321,6 +325,7 @@ void Node::handle_datagram(const std::uint8_t* data, std::size_t n, std::uint32_
             peer->tcp_port = static_cast<std::uint16_t>(port);
             peer->discovery_port = from_port;
             peer->name = name;
+            peer->role = role;
             if (changed) {
                 note = "peer " + name + " " + ipv4_to_string(from_be);
                 reply = true;
@@ -583,7 +588,28 @@ Status Node::send_file(const std::string& peer_query, const std::filesystem::pat
     if (found.kind != Lookup::Kind::Found) {
         return Status::failure("no PC named \"" + peer_query + "\" is visible");
     }
-    const Peer peer = found.peer;
+    return send_file_to(found.peer, path);
+}
+
+Status Node::send_to_iphone(const std::filesystem::path& path) {
+    std::optional<Peer> relay;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        for (const auto& peer : peers_) {
+            if (peer.role == "iphone") relay = peer;
+        }
+    }
+    const std::string name = filename_utf8(path);
+    Status status = relay ? send_file_to(*relay, path)
+                          : Status::failure("Home Assistant's iPhone relay is not on the network: turn on the "
+                                            "add-on's send_to_iphone, with pc_key set");
+    if (config_.on_sent) config_.on_sent(name, status);
+    return status;
+}
+
+Status Node::send_file_to(const Peer& peer, const std::filesystem::path& path) {
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) return Status::failure("that path is not a file");
     std::ifstream in(path, std::ios::binary);
     if (!in) return Status::failure("could not open " + path_to_utf8(path));
     in.seekg(0, std::ios::end);
@@ -686,7 +712,8 @@ Status Node::flush_clips() {
         text = clip_text_;
         any_peers = !peers_.empty();
         for (const auto& peer : peers_) {
-            if (peer.clip_sent_gen != gen) targets.push_back(peer);
+            // Not the iPhone relay: copied text is for the other PCs.
+            if (peer.clip_sent_gen != gen && peer.role.empty()) targets.push_back(peer);
         }
     }
     if (targets.empty()) {
@@ -820,6 +847,25 @@ void Node::handle_control(Socket socket) {
     } else if (line == "clip") {
         const Status status = push_clipboard();
         response = (status.ok ? "ok " : "error ") + one_line(status.message.empty() ? (status.ok ? "ok" : "failed") : status.message);
+    } else if (line.rfind("iphone ", 0) == 0) {
+        // Sent in the background: a big file outlasts the control reply's
+        // timeout. on_sent (the tray's notification) says how it went.
+        const auto path = path_from_utf8(line.substr(7));
+        std::error_code ec;
+        bool relay = false;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            for (const auto& peer : peers_) relay = relay || peer.role == "iphone";
+        }
+        if (!std::filesystem::is_regular_file(path, ec)) {
+            response = "error that path is not a file";
+        } else if (!relay) {
+            response = "error Home Assistant's iPhone relay is not on the network: turn on the add-on's "
+                       "send_to_iphone, with pc_key set";
+        } else {
+            spawn([this, path]() { send_to_iphone(path); });
+            response = "ok sending";
+        }
     } else if (line == "quit" || line == "stop") {
         stopping = true;  // after the reply: a stop would cut its send short
         response = "ok stopping";

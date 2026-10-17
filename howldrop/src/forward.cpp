@@ -88,6 +88,9 @@ std::optional<LanTarget> target_from_hello(const std::uint8_t* data, std::size_t
     std::string error;
     const auto message = parse_datagram(data, n, error);
     if (!message || message->type != MsgType::Hello) return std::nullopt;
+    // A node with a role is not a PC: the add-on's own iPhone relay beacons
+    // on the same port, and must never be where the phone's files go.
+    if (message->fields.find("role")) return std::nullopt;
     const std::string id = message->fields.get("id");
     const std::string name = message->fields.get("name");
     const std::string port_text = message->fields.get("port");

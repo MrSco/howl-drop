@@ -227,5 +227,82 @@ document.getElementById('viewer-close').addEventListener('click', closeViewer);
 viewer.addEventListener('click', (event) => { if (event.target === viewer || event.target === viewerBody) closeViewer(); });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !viewer.hidden) closeViewer(); });
 
+// --- Send to iPhone: uploads go to the add-on's send folder (outbox.py) --------
+
+const sendButton = document.getElementById('send-button');
+const sendInput = document.getElementById('send-input');
+const sending = document.getElementById('sending');
+const sendsList = document.getElementById('sends');
+const uploads = [];  // this page's uploads still on their way to the add-on
+let sendJobs = [];
+let sendTimer = null;
+
+const STATE_WORD = { waiting: 'Waiting', sending: 'Sending', sent: 'Sent', failed: 'Not sent', uploading: 'Uploading' };
+
+function renderSends() {
+  const rows = [...uploads, ...sendJobs];
+  sending.hidden = rows.length === 0;
+  sendsList.textContent = '';
+  for (const job of rows.slice(0, 8)) {
+    const item = el('li');
+    item.append(el('span', { class: 'chip ' + job.state }, STATE_WORD[job.state] || job.state),
+      el('span', { class: 'send-name', title: job.name }, job.name),
+      el('span', { class: 'send-detail' }, job.detail || ''));
+    sendsList.append(item);
+  }
+}
+
+async function loadSends() {
+  clearTimeout(sendTimer);
+  try {
+    const reply = await fetch('api/send', { cache: 'no-store' });
+    if (reply.ok) {
+      const data = await reply.json();
+      sendButton.hidden = !data.enabled;
+      sendJobs = data.enabled ? data.jobs : [];
+      renderSends();
+    }
+  } catch (e) { /* the drops list says when the add-on is away */ }
+  // Quickly while something is on its way, slowly otherwise.
+  const busy = uploads.length || sendJobs.some((j) => j.state === 'waiting' || j.state === 'sending');
+  sendTimer = setTimeout(() => { if (!document.hidden) loadSends(); else sendTimer = setTimeout(loadSends, 2000); },
+    busy ? 2000 : 15000);
+}
+
+function upload(file) {
+  const job = { name: file.name, state: 'uploading', detail: 'to Home Assistant: 0%' };
+  uploads.unshift(job);
+  renderSends();
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', 'api/send?name=' + encodeURIComponent(file.name));
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) {
+        job.detail = 'to Home Assistant: ' + Math.round((event.loaded / event.total) * 100) + '%';
+        renderSends();
+      }
+    });
+    const done = (ok, why) => {
+      uploads.splice(uploads.indexOf(job), 1);
+      if (!ok) sendJobs.unshift({ name: file.name, state: 'failed', detail: why });
+      renderSends();
+      loadSends();
+      resolve();
+    };
+    xhr.addEventListener('load', () => done(xhr.status === 200, 'upload failed: ' + (xhr.responseText || xhr.status)));
+    xhr.addEventListener('error', () => done(false, 'upload failed: the add-on did not answer'));
+    xhr.send(file);
+  });
+}
+
+sendButton.addEventListener('click', () => sendInput.click());
+sendInput.addEventListener('change', async () => {
+  const files = [...sendInput.files];
+  sendInput.value = '';
+  for (const file of files) await upload(file);
+});
+
 load();
+loadSends();
 setInterval(() => { if (!document.hidden) load(); }, 10000);

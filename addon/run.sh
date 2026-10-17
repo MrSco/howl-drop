@@ -22,8 +22,10 @@ DELIVER=/deliver.py
 # The sidebar panel (ingress), and who sent each file for it.
 PANEL=/panel.py
 HISTORY=/data/drops.jsonl
-# send_to_iphone (experimental): AirDrops what is put in save_folder/send.
+# send_to_iphone (experimental): AirDrops what is put in save_folder/send,
+# and says how each went in SEND_STATUS, for the panel.
 OUTBOX=/outbox.py
+SEND_STATUS=/data/send-status.json
 # Who may send: the senders option, as the receiver's Contacts Only files.
 SENDERS=/senders.py
 SENDERS_CONFIG=${XDG_CONFIG_HOME:-${HOME:-/root}/.config}/omdrop
@@ -1112,6 +1114,7 @@ stop_stack() {
     if [ -n "$WATCH_PID" ]; then kill "$WATCH_PID" 2>/dev/null || true; fi
     if [ -n "$BRIDGE_PID" ]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
     pkill -f "$BRIDGE watch" 2>/dev/null || true
+    pkill -f "$BRIDGE relay" 2>/dev/null || true
     if [ -n "$DELIVER_PID" ]; then kill "$DELIVER_PID" 2>/dev/null || true; fi
     if [ -n "$TCPFLOW_PID" ]; then kill "$TCPFLOW_PID" 2>/dev/null || true; fi
     pkill -f "tcpdump -i awdl0" 2>/dev/null || true
@@ -1265,7 +1268,11 @@ esac
 # The HowlDrop panel in the sidebar: recent drops in save_folder. Started now,
 # so it answers while the radio comes up. Only the Supervisor's ingress proxy
 # may use it (panel.py).
-python3 "$PANEL" --dest "$INBOX" --history "$HISTORY" 2>&1 | sed -u 's/^/Panel: /' &
+PANEL_ARGS=(--dest "$INBOX" --history "$HISTORY")
+case "$(option send_to_iphone)" in
+    True|true|1|yes) PANEL_ARGS+=(--outbox "$INBOX/send" --send-status "$SEND_STATUS") ;;
+esac
+python3 "$PANEL" "${PANEL_ARGS[@]}" 2>&1 | sed -u 's/^/Panel: /' &
 PANEL_PID=$!
 # Off unless asked for: the share folder is the way to use this, and a PC
 # running howldrop.exe is an extra.
@@ -1481,6 +1488,13 @@ say "The AirDrop receiver is listening on awdl0 port 8771."
 # when none answers or the one it had goes away (--wait). It filters by name
 # only when that name came from a PC's own beacon. Restarted if it exits; the
 # AirDrop window never waits on it.
+# The PC's pairing key (pc_key), for the forwarder and the iPhone relay: they
+# talk only to a PC that proves it, signed with it. Given to them in their
+# environment, not their arguments.
+PC_KEY=$(option pc_key)
+pc_key_ok() {
+    [[ $(printf '%s' "$PC_KEY" | tr -d ' -' | tr 'A-F' 'a-f') =~ ^[0-9a-f]{32}$ ]]
+}
 if [ "$FORWARD" = true ]; then
     BRIDGE_ARGS=(watch --inbox "$INBOX" --keep --wait --timeout 10)
     if [ -n "$PC_BEACON" ]; then
@@ -1489,12 +1503,9 @@ if [ "$FORWARD" = true ]; then
     if [ -n "$PC_HOST" ]; then
         BRIDGE_ARGS+=(--host "$PC_HOST")
     fi
-    # The PC's pairing key: files go only to the PC that proves it, signed
-    # with it. Given to the bridge in its environment, not its arguments.
-    PC_KEY=$(option pc_key)
     if [ -z "$PC_KEY" ]; then
         say "pc_key is empty: howldrop.exe takes files only from senders with its pairing key. On the PC, right-click the HowlDrop icon, Copy pairing key, and paste it into pc_key."
-    elif ! [[ $(printf '%s' "$PC_KEY" | tr -d ' -' | tr 'A-F' 'a-f') =~ ^[0-9a-f]{32}$ ]]; then
+    elif ! pc_key_ok; then
         say "pc_key is not a pairing key (8 groups of 4 digits and letters a-f). Copy it again from the HowlDrop icon's menu on the PC. Not forwarding until it is fixed."
         FORWARD=false
     fi
@@ -1516,8 +1527,22 @@ fi
 case "$(option send_to_iphone)" in
     True|true|1|yes)
         mkdir -p "$INBOX/send"
-        say "send_to_iphone (experimental): files copied into ${INBOX}/send are AirDropped to a nearby iPhone set to Everyone for 10 Minutes."
-        python3 "$OUTBOX" --outbox "$INBOX/send" --name "$PC_NAME" 2>&1 | sed -u 's/^/Send: /' &
+        say "send_to_iphone (experimental): files copied into ${INBOX}/send, uploaded in the panel or sent from a paired PC are AirDropped to a nearby iPhone set to Everyone for 10 Minutes."
+        python3 "$OUTBOX" --outbox "$INBOX/send" --name "$PC_NAME" --status "$SEND_STATUS" \
+            --to "$(option send_to)" 2>&1 | sed -u 's/^/Send: /' &
+        # The relay: a paired PC sends here (tray, Explorer's Send to,
+        # `howldrop iphone`), into the send folder. Restarted if it exits.
+        if pc_key_ok; then
+            (
+                while [ -f /tmp/howldrop-running ]; do
+                    HOWLDROP_PC_KEY=$PC_KEY "$BRIDGE" relay --inbox "$INBOX/send" 2>&1 | sed -u 's/^/Relay: /'
+                    [ -f /tmp/howldrop-running ] || break
+                    sleep 5
+                done
+            ) &
+        else
+            say "A PC can send to the iPhone too once pc_key is set (its HowlDrop icon's menu, Copy pairing key)."
+        fi
         ;;
 esac
 

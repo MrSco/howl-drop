@@ -10,12 +10,16 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <commdlg.h>
+#include <shlobj.h>
 
 #include <cwchar>
 #include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace howldrop {
 namespace {
@@ -23,6 +27,9 @@ namespace {
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kDropMessage = WM_APP + 2;
 constexpr UINT kRefusedMessage = WM_APP + 3;
+constexpr UINT kSentMessage = WM_APP + 4;
+// Explorer's Send to entry: howldrop.exe iphone FILE... (main.cpp).
+const wchar_t* const kSendToName = L"iPhone (HowlDrop).lnk";
 constexpr UINT kTrayId = 1;
 constexpr UINT_PTR kStopTimer = 1;
 constexpr int kIconResource = 1;
@@ -38,6 +45,8 @@ enum : UINT {
     kMenuOpenDocuments,
     kMenuShareClipboard,
     kMenuCopyKey,
+    kMenuSendIphone,
+    kMenuSendToMenu,
     kMenuStartup,
     kMenuQuit,
 };
@@ -48,6 +57,14 @@ struct Settings {
     bool open_media = false;
     bool open_documents = false;
     bool share_clipboard = false;  // send what is copied here to other HowlDrop PCs
+    bool send_to_menu = true;      // "iPhone (HowlDrop)" in Explorer's Send to
+};
+
+// A send to the iPhone relay finished, posted from its worker thread.
+struct Sent {
+    std::string file;
+    bool ok = false;
+    std::string message;
 };
 
 // What arrived, posted from the node's worker thread to the window.
@@ -70,6 +87,7 @@ struct App {
     std::unique_ptr<Node> node;
     std::string pair_key;
     ULONGLONG last_refusal_note = 0;
+    std::vector<std::thread> senders;  // sends from the menu, joined on quit
     std::wstring click_target;  // what clicking the last notification opens
     bool click_selects = false;  // show it in its folder instead of opening it
 };
@@ -101,6 +119,7 @@ void load_settings(App& app) {
         else if (key == "open_media") app.settings.open_media = on;
         else if (key == "open_documents") app.settings.open_documents = on;
         else if (key == "share_clipboard") app.settings.share_clipboard = on;
+        else if (key == "send_to_menu") app.settings.send_to_menu = on;
     }
 }
 
@@ -110,7 +129,8 @@ void save_settings(const App& app) {
         << "open_links=" << app.settings.open_links << '\n'
         << "open_media=" << app.settings.open_media << '\n'
         << "open_documents=" << app.settings.open_documents << '\n'
-        << "share_clipboard=" << app.settings.share_clipboard << '\n';
+        << "share_clipboard=" << app.settings.share_clipboard << '\n'
+        << "send_to_menu=" << app.settings.send_to_menu << '\n';
 }
 
 bool starts_with_windows() {
@@ -231,6 +251,9 @@ void show_menu(App& app) {
     AppendMenuW(menu, check(app.settings.open_media), kMenuOpenMedia, L"Open photos and videos");
     AppendMenuW(menu, check(app.settings.open_documents), kMenuOpenDocuments, L"Open PDFs and text files");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kMenuSendIphone, L"Send a file to iPhone...");
+    AppendMenuW(menu, check(app.settings.send_to_menu), kMenuSendToMenu, L"\"iPhone\" in Explorer's Send to menu");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kMenuCopyKey, L"Copy pairing key");
     AppendMenuW(menu, check(app.settings.share_clipboard), kMenuShareClipboard,
                 L"Share what I copy with my other HowlDrop PCs");
@@ -244,6 +267,79 @@ void show_menu(App& app) {
     TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, at.x, at.y, 0, app.window, nullptr);
     PostMessageW(app.window, WM_NULL, 0, 0);
     DestroyMenu(menu);
+}
+
+// --- sending to the iPhone, through the add-on's relay -----------------------------
+
+std::filesystem::path send_to_shortcut() {
+    PWSTR folder = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_SendTo, 0, nullptr, &folder))) return {};
+    std::filesystem::path path = std::filesystem::path(folder) / kSendToName;
+    CoTaskMemFree(folder);
+    return path;
+}
+
+// Explorer's Send to, "iPhone (HowlDrop)": runs this exe with `iphone` and
+// the chosen files. Made again each start, so it follows the exe if it moves.
+void update_send_to(const App& app) {
+    const auto shortcut = send_to_shortcut();
+    if (shortcut.empty()) return;
+    std::error_code ec;
+    if (!app.settings.send_to_menu) {
+        std::filesystem::remove(shortcut, ec);
+        return;
+    }
+    wchar_t exe[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return;
+    IShellLinkW* link = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW,
+                                reinterpret_cast<void**>(&link))))
+        return;
+    link->SetPath(exe);
+    link->SetArguments(L"iphone");
+    link->SetIconLocation(exe, 0);
+    link->SetDescription(L"AirDrop to your iPhone through HowlDrop in Home Assistant");
+    IPersistFile* file = nullptr;
+    if (SUCCEEDED(link->QueryInterface(IID_IPersistFile, reinterpret_cast<void**>(&file)))) {
+        file->Save(shortcut.c_str(), TRUE);
+        file->Release();
+    }
+    link->Release();
+}
+
+// Pick files and send each to the relay in the background; on_sent reports.
+void send_files_to_iphone(App& app) {
+    std::vector<wchar_t> buffer(64 * 1024, L'\0');
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = app.window;
+    ofn.lpstrFile = buffer.data();
+    ofn.nMaxFile = static_cast<DWORD>(buffer.size());
+    ofn.lpstrTitle = L"AirDrop to iPhone (set it to Everyone for 10 Minutes)";
+    ofn.Flags = OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    SetForegroundWindow(app.window);
+    if (!GetOpenFileNameW(&ofn)) return;
+    // One file: its full path. Several: the folder, then each name; all
+    // separated by a NUL, ended by two.
+    std::vector<std::filesystem::path> files;
+    const std::wstring first(buffer.data());
+    const wchar_t* next = buffer.data() + first.size() + 1;
+    if (*next == L'\0') {
+        files.emplace_back(first);
+    } else {
+        for (; *next; next += std::wcslen(next) + 1) files.push_back(std::filesystem::path(first) / next);
+    }
+    Node* node = app.node.get();
+    app.senders.emplace_back([node, files]() {
+        for (const auto& file : files) node->send_to_iphone(file);
+    });
+}
+
+void post_sent(const std::string& file, const Status& status) {
+    auto* sent = new Sent{file, status.ok, status.message};
+    if (!g_app || !g_app->window || !PostMessageW(g_app->window, kSentMessage, 0, reinterpret_cast<LPARAM>(sent)))
+        delete sent;
 }
 
 // The add-on's pc_key, onto the clipboard. Shown even with notifications off:
@@ -297,6 +393,21 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             handle_drop(*app, *drop);
             return 0;
         }
+        case kSentMessage: {
+            std::unique_ptr<Sent> sent(reinterpret_cast<Sent*>(lparam));
+            app->click_target.clear();
+            // Said even with notifications off: it answers what was just asked.
+            const bool notify_was = app->settings.notify;
+            app->settings.notify = true;
+            if (sent->ok) {
+                notify(*app, L"Sent to your iPhone through Home Assistant",
+                       wide(sent->file) + L": accept it on the iPhone (AirDrop set to Everyone for 10 Minutes).");
+            } else {
+                notify(*app, L"Not sent to the iPhone", wide(sent->file) + L": " + wide(sent->message));
+            }
+            app->settings.notify = notify_was;
+            return 0;
+        }
         case kRefusedMessage: {
             // A sender without this PC's pairing key: most likely the add-on
             // before pc_key is set. Said at most every 10 minutes.
@@ -323,6 +434,11 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                     if (app->node) app->node->set_share_clipboard(app->settings.share_clipboard);
                     break;
                 case kMenuCopyKey: copy_pair_key(*app); return 0;
+                case kMenuSendIphone: send_files_to_iphone(*app); return 0;
+                case kMenuSendToMenu:
+                    app->settings.send_to_menu = !app->settings.send_to_menu;
+                    update_send_to(*app);
+                    break;
                 case kMenuStartup: set_start_with_windows(!starts_with_windows()); break;
                 case kMenuQuit: DestroyWindow(window); return 0;
                 default: return 0;
@@ -407,6 +523,7 @@ int run_tray(Node::Config config) {
     config.on_text = [](const std::string& text, const std::string& from) {
         post_drop(new Drop{{}, text, from, true});
     };
+    config.on_sent = [](const std::string& file, const Status& status) { post_sent(file, status); };
     const std::filesystem::path log_file = app.log_file;
     config.on_log = [log_file](const std::string& line) {
         {
@@ -432,6 +549,8 @@ int run_tray(Node::Config config) {
         return 1;
     }
     SetTimer(app.window, kStopTimer, 1000, nullptr);
+    const bool com = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED));
+    update_send_to(app);
     if (first_run) {
         notify(app, L"HowlDrop is running",
                L"To get AirDrops from Home Assistant: right-click this icon, Copy pairing key, and paste it into "
@@ -443,9 +562,13 @@ int run_tray(Node::Config config) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
-    app.node->request_stop();
+    app.node->request_stop();  // a send in progress stops at its next chunk
+    for (auto& sender : app.senders) {
+        if (sender.joinable()) sender.join();
+    }
     app.node->stop();
     g_app = nullptr;
+    if (com) CoUninitialize();
     if (single) CloseHandle(single);
     return 0;
 }

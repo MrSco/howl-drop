@@ -1,3 +1,4 @@
+#include "forward.hpp"
 #include "node.hpp"
 
 #include <chrono>
@@ -203,6 +204,46 @@ void test_lan() {
 
     CHECK(clip_a.set_text("hello from A"));
     CHECK(wait_for_text(clip_b, "hello from A"));
+
+    // The add-on's iPhone relay: a node with role "iphone" that A finds and
+    // sends to by role, and that the bridge never takes for a PC.
+    {
+        std::filesystem::create_directories(root / "relay");
+        howldrop::MemoryClipboard clip_r;
+        howldrop::Node::Config r_cfg;
+        r_cfg.name = "iPhone (HowlDrop)";
+        r_cfg.id = std::string(32, 'c');
+        r_cfg.discovery_port = 41251;
+        r_cfg.transfer_port = 41252;
+        r_cfg.enable_control = false;
+        r_cfg.inbox = root / "relay";
+        r_cfg.lan_broadcast = false;
+        r_cfg.beacon_interval = std::chrono::milliseconds(50);
+        r_cfg.log = false;
+        r_cfg.beacon_targets.push_back({"127.0.0.1", 41231});
+        r_cfg.pair_key = a_cfg.pair_key;
+        r_cfg.role = "iphone";
+        howldrop::Node relay(r_cfg, clip_r);
+        relay.start();
+        CHECK(wait_for_peer(node_a, "iPhone (HowlDrop)"));
+        const auto sent_relay = node_a.send_to_iphone(source);
+        if (!sent_relay.ok) std::cerr << "relay: " << sent_relay.message << '\n';
+        CHECK(sent_relay.ok);
+        CHECK(std::filesystem::is_regular_file(root / "relay" / "blob.bin"));
+        CHECK(std::filesystem::file_size(root / "relay" / "blob.bin") == 100000);
+
+        howldrop::Message hello;
+        hello.type = howldrop::MsgType::Hello;
+        hello.fields.set("name", "iPhone (HowlDrop)");
+        hello.fields.set("id", std::string(32, 'c'));
+        hello.fields.set("port", "41252");
+        hello.fields.set("role", "iphone");
+        std::string error;
+        const auto bytes = howldrop::encode_head(hello, error);
+        CHECK(bytes.has_value());
+        if (bytes) CHECK(!howldrop::target_from_hello(bytes->data(), bytes->size(), "127.0.0.1").has_value());
+        relay.stop();
+    }
 
     // Sharing off: what is copied on A stays on A.
     node_a.set_share_clipboard(false);

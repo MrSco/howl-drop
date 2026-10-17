@@ -1,6 +1,7 @@
 """addon/outbox.py against a fake send-to-peer: it waits for the phone to be
 heard, picks the iPhone among several peers, and files what happened."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import stat
@@ -50,8 +51,22 @@ class OutboxTests(unittest.TestCase):
 
     def send(self, plan, window=30):
         self.plan.write_text('\n'.join(plan) + '\n')
-        ok = outbox.send(str(self.photo), str(self.tools / 'send-to-peer'), 'HowlDrop', self.env, window)
+        self.stages = []
+        ok, self.detail = outbox.send(str(self.photo), str(self.tools / 'send-to-peer'), 'HowlDrop', self.env,
+                                      window, self.stages.append)
         return ok, self.calls.read_text().splitlines()
+
+    def test_progress_follows_the_sender(self):
+        ok, _ = self.send([
+            "0 waiting up to 60s for aa:bb:cc:dd:ee:ff to start listening on 8770\\n"
+            "2026-10-16 20:50:41,376 INFO send: +  0.96s FOUND direct 'Rocco iPhone' at x; asking\\n"
+            "2026-10-16 20:50:42,465 DEBUG PIL.Image: Importing PngImagePlugin\\n"
+            "2026-10-16 20:50:46,579 INFO send: +  6.16s ASK -> accepted (4.15s)",
+        ])
+        self.assertTrue(ok)
+        self.assertEqual(self.stages, ['waiting for the iPhone to listen', 'asking: accept it on the iPhone',
+                                       'accepted; uploading'])
+        self.assertEqual(self.detail, 'on the iPhone')
 
     def test_waits_until_the_phone_is_heard(self):
         ok, calls = self.send([
@@ -76,10 +91,31 @@ class OutboxTests(unittest.TestCase):
         self.assertIn('--list --names', calls[1])
         self.assertIn('--mac aa:bb:cc:dd:ee:ff', calls[2])
 
+    def test_send_to_names_the_phone(self):
+        self.plan.write_text('\n'.join([
+            '2 no device answering to "Rocco\'s iPhone" is receiving right now.',
+            '0 UPLOAD photo.jpg -> ok',
+        ]) + '\n')
+        ok, detail = outbox.send(str(self.photo), str(self.tools / 'send-to-peer'), 'HowlDrop', self.env, 30,
+                                 None, "Rocco's iPhone")
+        calls = self.calls.read_text().splitlines()
+        self.assertTrue(ok)
+        # Asked as typed, then with iOS's curly apostrophe.
+        self.assertIn("--mac Rocco's iPhone", calls[0])
+        self.assertIn('--mac Rocco’s iPhone', calls[1])
+
+    def test_send_to_more_than_one_match(self):
+        self.plan.write_text('2 "iPhone" matches more than one device:\n')
+        ok, detail = outbox.send(str(self.photo), str(self.tools / 'send-to-peer'), 'HowlDrop', self.env, 30,
+                                 None, 'iPhone')
+        self.assertFalse(ok)
+        self.assertIn('more than one device', detail)
+
     def test_a_declined_transfer_is_not_retried(self):
         ok, calls = self.send(['3 ASK -> declined (3.61s)', '0 should not run'])
         self.assertFalse(ok)
         self.assertEqual(len(calls), 1)
+        self.assertEqual(self.detail, 'declined on the iPhone')
 
     def test_gives_up_when_the_phone_never_shows(self):
         ok, calls = self.send(['2 no devices found'] * 500, window=0.2)
@@ -109,6 +145,26 @@ class IdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertIn('could not make', outbox.ensure_identity(os.path.join(d, 'none'), 'x',
                                                                     os.path.join(d, 'home'), os.path.join(d, 's')))
+
+
+class StatusTests(unittest.TestCase):
+    def test_newest_first_and_capped(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'status.json')
+            status = outbox.Status(path)
+            first = status.add('a.jpg')
+            status.update(first, 'sent', 'on the iPhone')
+            for i in range(outbox.STATUS_KEPT + 5):
+                status.add(f'{i}.jpg')
+            jobs = json.loads(Path(path).read_text())['jobs']
+            self.assertEqual(len(jobs), outbox.STATUS_KEPT)
+            self.assertEqual(jobs[0]['name'], f'{outbox.STATUS_KEPT + 4}.jpg')
+            self.assertEqual(jobs[0]['state'], 'waiting')
+
+    def test_the_log_skips_debug_detail(self):
+        self.assertFalse(outbox.useful('2026-10-16 20:50:42,465 DEBUG PIL.Image: Importing PngImagePlugin'))
+        self.assertFalse(outbox.useful('/usr/lib/omdrop/airdrop-send.py:105: DeprecationWarning: ssl'))
+        self.assertTrue(outbox.useful('2026-10-16 20:50:46,579 INFO send: +  6.16s ASK -> accepted (4.15s)'))
 
 
 class FreePathTests(unittest.TestCase):

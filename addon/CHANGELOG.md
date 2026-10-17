@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.0
+
+- Send to iPhone from the HowlDrop panel (upload a file and watch it go), or from a paired Windows PC: the tray menu, Explorer's Send to, or `howldrop iphone FILE`. Needs `send_to_iphone`, `pc_key` for the PC, and **howldrop.exe 0.14.0**.
+- New `send_to` option: the iPhone's name, so only that phone gets what you send.
+- Quieter `Send:` log lines.
+
 ## 0.13.1
 
 - Sending to an iPhone: the sender makes its identity first (it stopped with "identity error: self-signed-missing").

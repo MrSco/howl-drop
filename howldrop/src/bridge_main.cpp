@@ -1,8 +1,11 @@
 #include "forward.hpp"
 #include "net.hpp"
+#include "node.hpp"
 
 #include <chrono>
+#include <csignal>
 #include <cstdlib>
+#include <fstream>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
@@ -22,6 +25,7 @@ void usage() {
         << "  howldrop-bridge name                 Print the Windows PC's name\n"
         << "  howldrop-bridge discover             Print name, address, id, and transfer port\n"
         << "  howldrop-bridge watch --inbox DIR    Forward new files in DIR, and text in DIR/text\n"
+        << "  howldrop-bridge relay --inbox DIR    Take files from a paired PC into DIR (the iPhone relay)\n"
         << "  howldrop-bridge file [--host IP] FILE\n"
         << "  howldrop-bridge text [--host IP] TEXT\n\n"
         << "  --host IP       PC address. Without it, wait for a hello beacon\n"
@@ -268,6 +272,61 @@ void watch_loop(const howldrop::LanTarget& target, const std::filesystem::path& 
     }
 }
 
+volatile std::sig_atomic_t g_stop = 0;
+void on_stop(int) { g_stop = 1; }
+
+// The id the relay announces, kept in the outbox so the PCs see the same
+// device across restarts.
+std::string relay_id(const std::filesystem::path& inbox) {
+    const auto path = inbox / ".relay.id";
+    {
+        std::ifstream in(path);
+        std::string line;
+        if (in && std::getline(in, line) && howldrop::is_node_id(line)) return line;
+    }
+    std::uint8_t bytes[16];
+    if (!howldrop::secure_random(bytes, sizeof(bytes))) return {};
+    const std::string id = howldrop::to_hex(bytes, sizeof(bytes));
+    std::ofstream(path, std::ios::trunc) << id << '\n';
+    return id;
+}
+
+// The add-on's iPhone relay: a HowlDrop node a paired PC sends to (howldrop
+// iphone FILE, the tray, Explorer's Send to). What it receives lands in
+// inbox, the add-on's send folder, which outbox.py AirDrops to the iPhone.
+// Paired only: without HOWLDROP_PC_KEY it does not start.
+int run_relay(const Options& opt) {
+    if (opt.inbox.empty()) return fail("relay needs --inbox, the folder outbox.py sends from");
+    if (opt.pair_key.empty()) return fail("relay needs HOWLDROP_PC_KEY, the PC's pairing key");
+    std::error_code ec;
+    std::filesystem::create_directories(opt.inbox, ec);
+    howldrop::Node::Config config;
+    config.name = opt.name.empty() ? "iPhone (HowlDrop)" : opt.name;
+    config.id = relay_id(opt.inbox);
+    config.discovery_port = howldrop::kRelayDiscoveryPort;
+    config.transfer_port = howldrop::kRelayTransferPort;
+    config.announce_port = howldrop::kDiscoveryPort;
+    config.inbox = opt.inbox;
+    config.enable_control = false;
+    config.pair_key = opt.pair_key;
+    config.role = "iphone";
+    howldrop::MemoryClipboard clipboard;
+    howldrop::Node node(config, clipboard);
+    try {
+        node.start();
+    } catch (const std::exception& ex) {
+        return fail(ex.what());
+    }
+    std::signal(SIGINT, on_stop);
+    std::signal(SIGTERM, on_stop);
+    std::cout << "relay \"" << config.name << "\" on TCP " << howldrop::kRelayTransferPort
+              << ": files from a paired PC go to " << opt.inbox << std::endl;
+    while (!g_stop && node.running()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    node.request_stop();
+    node.stop();
+    return 0;
+}
+
 int run_watch(const Options& opt) {
     std::string error;
     std::filesystem::path inbox = opt.inbox;
@@ -338,6 +397,7 @@ int main(int argc, char** argv) {
     }
 
     if (opt.command == "watch") return run_watch(opt);
+    if (opt.command == "relay") return run_relay(opt);
 
     const auto target = resolve_target(opt, error);
     if (!target) return fail(error.empty() ? "no HowlDrop PC answered" : error);

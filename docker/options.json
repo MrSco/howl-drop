@@ -10,6 +10,7 @@
   "pc_host": "",
   "pc_key": "",
   "send_to_iphone": false,
+  "send_to": "",
   "interface": "auto",
   "allow_untested": false,
   "channels": "",
