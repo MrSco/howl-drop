@@ -45,6 +45,35 @@ def shim_dir():
     return d
 
 
+def ensure_identity(tools, name, home='/root', store='/data/omdrop-sender'):
+    """Make the sender's self-signed identity, kept in store, before any send.
+
+    airdrop-send.py presents the pair in ~/.omdrop/keys. Run as root (the
+    add-on always is) it will not create one there and fails with
+    `identity error: self-signed-missing` (2026-10-16), so it is made here,
+    with omdrop-awdl's own function, and ~/.omdrop points at store so it
+    survives a restart. Returns an error to log, or None.
+    """
+    keys = os.path.join(store, 'keys')
+    link = os.path.join(home, '.omdrop')
+    try:
+        os.makedirs(keys, mode=0o700, exist_ok=True)
+        if not os.path.lexists(link):
+            os.symlink(store, link)
+        if os.path.realpath(link) != os.path.realpath(store):
+            return f'{link} is not {store}; the sender will use its own'
+        sys.path.insert(0, tools)
+        try:
+            import awdl_identity
+        finally:
+            sys.path.remove(tools)
+        from pathlib import Path
+        awdl_identity._create_self_signed(Path(keys), name)
+    except Exception as e:  # noqa: BLE001 - logged, and the send then says why
+        return f'could not make the sender identity: {e}'
+    return None
+
+
 def run(cmd, env, timeout):
     """(exit code, output lines) of a send-to-peer run."""
     try:
@@ -139,6 +168,9 @@ def main():
         say(f'no {tool}; sending is not available in this image')
         return 1
     env = {**os.environ, 'PATH': shim_dir() + os.pathsep + os.environ.get('PATH', '')}
+    problem = ensure_identity(a.tools, a.name)
+    if problem:
+        say(problem)
     os.makedirs(a.outbox, exist_ok=True)
     say(f'files put in {a.outbox} are AirDropped to a nearby iPhone set to Everyone for 10 Minutes')
     sizes = {}

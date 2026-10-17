@@ -86,6 +86,31 @@ class OutboxTests(unittest.TestCase):
         self.assertFalse(ok)
 
 
+@unittest.skipIf(os.name == 'nt', 'symlinks')
+class IdentityTests(unittest.TestCase):
+    """The sender's identity is made in the store, through ~/.omdrop."""
+
+    def test_makes_the_pair_through_the_link(self):
+        with tempfile.TemporaryDirectory() as d:
+            tools, home, store = (os.path.join(d, n) for n in ('tools', 'home', 'store'))
+            os.makedirs(tools)
+            os.makedirs(home)
+            # omdrop-awdl's function, as far as the outbox uses it.
+            Path(tools, 'awdl_identity.py').write_text(
+                'def _create_self_signed(directory, name):\n'
+                '    (directory / "certificate.self-signed.pem").write_text(name)\n'
+                '    (directory / "key.self-signed.pem").write_text(name)\n')
+            self.assertIsNone(outbox.ensure_identity(tools, 'HowlDrop', home, store))
+            self.assertEqual(os.path.realpath(os.path.join(home, '.omdrop')), os.path.realpath(store))
+            self.assertEqual(Path(home, '.omdrop', 'keys', 'certificate.self-signed.pem').read_text(), 'HowlDrop')
+            self.assertIsNone(outbox.ensure_identity(tools, 'HowlDrop', home, store))  # again: fine
+
+    def test_a_failure_is_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIn('could not make', outbox.ensure_identity(os.path.join(d, 'none'), 'x',
+                                                                    os.path.join(d, 'home'), os.path.join(d, 's')))
+
+
 class FreePathTests(unittest.TestCase):
     def test_keeps_both(self):
         with tempfile.TemporaryDirectory() as d:
