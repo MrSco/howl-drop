@@ -29,6 +29,9 @@ configuration:
   pc_key:
     name: PC pairing key
     description: "Needed to forward to a PC: in howldrop.exe's tray menu, Copy pairing key, and paste it here. Only that PC gets your files."
+  send_to_iphone:
+    name: Send to iPhone (experimental)
+    description: Files you copy into save_folder's send folder are AirDropped to a nearby iPhone set to Everyone for 10 Minutes. You accept them on the phone.
   interface:
     name: Wi-Fi interface
     description: auto picks a supported card, never the one Home Assistant uses for its network unless its profile keeps the connection. Or name one, e.g. wlan1.

@@ -22,6 +22,8 @@ DELIVER=/deliver.py
 # The sidebar panel (ingress), and who sent each file for it.
 PANEL=/panel.py
 HISTORY=/data/drops.jsonl
+# send_to_iphone (experimental): AirDrops what is put in save_folder/send.
+OUTBOX=/outbox.py
 # Who may send: the senders option, as the receiver's Contacts Only files.
 SENDERS=/senders.py
 SENDERS_CONFIG=${XDG_CONFIG_HOME:-${HOME:-/root}/.config}/omdrop
@@ -1117,6 +1119,8 @@ stop_stack() {
     pkill -f "$DELIVER" 2>/dev/null || true
     if [ -n "$PANEL_PID" ]; then kill "$PANEL_PID" 2>/dev/null || true; fi
     pkill -f "$PANEL" 2>/dev/null || true
+    pkill -f "$OUTBOX" 2>/dev/null || true
+    pkill -f "send-to-peer" 2>/dev/null || true
     if [ -n "$SERVE_PID" ]; then kill "$SERVE_PID" 2>/dev/null || true; fi
     if [ -n "$BLE_PID" ]; then kill "$BLE_PID" 2>/dev/null || true; fi
     if [ "$RADIO" = 1 ]; then
@@ -1508,6 +1512,14 @@ if [ "$FORWARD" = true ]; then
 else
     vsay "forward_to_pc is off. Files and text stay in ${INBOX}."
 fi
+
+case "$(option send_to_iphone)" in
+    True|true|1|yes)
+        mkdir -p "$INBOX/send"
+        say "send_to_iphone (experimental): files copied into ${INBOX}/send are AirDropped to a nearby iPhone set to Everyone for 10 Minutes."
+        python3 "$OUTBOX" --outbox "$INBOX/send" --name "$PC_NAME" 2>&1 | sed -u 's/^/Send: /' &
+        ;;
+esac
 
 say "Window is up on ${IFACE}. Stopping this add-on gives the card back."
 # debug_capture: what the radio and the AirDrop TCP carried, as pcap files in

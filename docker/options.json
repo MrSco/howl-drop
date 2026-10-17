@@ -9,6 +9,7 @@
   "forward_to_pc": false,
   "pc_host": "",
   "pc_key": "",
+  "send_to_iphone": false,
   "interface": "auto",
   "allow_untested": false,
   "channels": "",
