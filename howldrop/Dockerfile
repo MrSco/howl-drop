@@ -93,6 +93,7 @@ RUN cmake -S /src/howldrop -B /tmp/howldrop-build -DCMAKE_BUILD_TYPE=Release \
     && rm -rf /tmp/howldrop-build
 
 COPY deliver.py /deliver.py
+COPY outbox.py /outbox.py
 COPY announce.py /announce.py
 COPY panel.py /panel.py
 COPY panel/ /panel/

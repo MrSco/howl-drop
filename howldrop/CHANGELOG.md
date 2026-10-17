@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.0
+
+- Experimental: AirDrop to your iPhone. Turn on `send_to_iphone`, set the phone to Everyone for 10 Minutes, and copy a file into the share's `send` folder. See the Documentation tab.
+
 ## 0.12.0
 
 - Pairing with the Windows PC: new `pc_key` option. `howldrop.exe` now accepts files only from a sender with its pairing key, and the add-on sends only to a PC that proves it has the key. Every transfer is signed. **Update `howldrop.exe` too, then copy its key (right-click the tray icon, Copy pairing key) into `pc_key`.**

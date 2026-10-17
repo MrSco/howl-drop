@@ -62,6 +62,24 @@ destination copies it there: `tools/stage-addon.sh
 appears under Local add-ons and builds on your machine. Bump `version` in
 `config.yaml` for every change, or Supervisor keeps the old image.
 
+## Sending to an iPhone (experimental)
+
+With `send_to_iphone` on, a file copied into `save_folder/send`
+(`\\homeassistant\share\howldrop\send` over Samba) is AirDropped to a nearby
+iPhone:
+
+1. On the iPhone: Control Center, AirDrop, **Everyone for 10 Minutes**.
+   Keep it unlocked. Contacts Only won't work: there the phone takes files
+   only from senders with an Apple-signed identity, which only Apple devices
+   have. iOS switches back on its own after 10 minutes.
+2. Copy the file into the `send` folder.
+3. Accept it on the phone.
+
+The file then moves to `send/sent`, or `send/failed` if the phone declined
+or never showed up within 3 minutes. `Send:` lines in the log say each step.
+With several devices nearby (a Mac, say), the one that calls itself an
+iPhone is used.
+
 ## The HowlDrop panel
 
 **HowlDrop** in Home Assistant's sidebar (or **Open web UI** on the add-on's
