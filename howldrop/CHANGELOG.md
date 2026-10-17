@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.1
+
+- Sending to an iPhone: the sender makes its identity first (it stopped with "identity error: self-signed-missing").
+
 ## 0.13.0
 
 - Experimental: AirDrop to your iPhone. Turn on `send_to_iphone`, set the phone to Everyone for 10 Minutes, and copy a file into the share's `send` folder. See the Documentation tab.
