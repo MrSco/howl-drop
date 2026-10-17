@@ -30,6 +30,9 @@ constexpr UINT kRefusedMessage = WM_APP + 3;
 constexpr UINT kSentMessage = WM_APP + 4;
 // Explorer's Send to entry: howldrop.exe iphone FILE... (main.cpp).
 const wchar_t* const kSendToName = L"iPhone (HowlDrop).lnk";
+// Send to iPhone submenu: one item per nearby device, from this id up.
+constexpr UINT kMenuDeviceBase = 300;
+constexpr UINT kMenuDeviceMax = 64;
 constexpr UINT kTrayId = 1;
 constexpr UINT_PTR kStopTimer = 1;
 constexpr int kIconResource = 1;
@@ -46,6 +49,7 @@ enum : UINT {
     kMenuShareClipboard,
     kMenuCopyKey,
     kMenuSendIphone,
+    kMenuScan,
     kMenuSendToMenu,
     kMenuStartup,
     kMenuQuit,
@@ -88,6 +92,9 @@ struct App {
     std::string pair_key;
     ULONGLONG last_refusal_note = 0;
     std::vector<std::thread> senders;  // sends from the menu, joined on quit
+    std::vector<std::string> menu_devices;  // the submenu's devices, as shown
+    ULONGLONG scan_asked = 0;               // when Look for devices was chosen
+    bool scan_seen = false;                 // the relay has said it is scanning
     std::wstring click_target;  // what clicking the last notification opens
     bool click_selects = false;  // show it in its folder instead of opening it
 };
@@ -251,7 +258,26 @@ void show_menu(App& app) {
     AppendMenuW(menu, check(app.settings.open_media), kMenuOpenMedia, L"Open photos and videos");
     AppendMenuW(menu, check(app.settings.open_documents), kMenuOpenDocuments, L"Open PDFs and text files");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kMenuSendIphone, L"Send a file to iPhone...");
+    HMENU send = CreatePopupMenu();
+    const Node::Nearby nearby = app.node ? app.node->iphone_nearby() : Node::Nearby{};
+    app.menu_devices.clear();
+    if (!nearby.relay) {
+        AppendMenuW(send, MF_STRING | MF_GRAYED, 0, L"Home Assistant isn't reachable (send_to_iphone, pc_key)");
+    } else {
+        AppendMenuW(send, MF_STRING, kMenuSendIphone, L"Any nearby iPhone...");
+        AppendMenuW(send, MF_SEPARATOR, 0, nullptr);
+        for (const auto& name : nearby.devices) {
+            if (app.menu_devices.size() >= kMenuDeviceMax) break;
+            AppendMenuW(send, MF_STRING, kMenuDeviceBase + static_cast<UINT>(app.menu_devices.size()),
+                        (wide(name) + L"...").c_str());
+            app.menu_devices.push_back(name);
+        }
+        if (nearby.devices.empty()) AppendMenuW(send, MF_STRING | MF_GRAYED, 0, L"No devices heard yet");
+        AppendMenuW(send, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(send, MF_STRING | (nearby.scanning ? MF_GRAYED : 0), kMenuScan,
+                    nearby.scanning ? L"Looking for devices..." : L"Look for devices");
+    }
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(send), L"Send to iPhone");
     AppendMenuW(menu, check(app.settings.send_to_menu), kMenuSendToMenu, L"\"iPhone\" in Explorer's Send to menu");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kMenuCopyKey, L"Copy pairing key");
@@ -308,15 +334,18 @@ void update_send_to(const App& app) {
     link->Release();
 }
 
-// Pick files and send each to the relay in the background; on_sent reports.
-void send_files_to_iphone(App& app) {
+// Pick files and send each to the relay in the background, to the device
+// named to (empty: the add-on's default); on_sent reports.
+void send_files_to_iphone(App& app, const std::string& to) {
     std::vector<wchar_t> buffer(64 * 1024, L'\0');
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = app.window;
     ofn.lpstrFile = buffer.data();
     ofn.nMaxFile = static_cast<DWORD>(buffer.size());
-    ofn.lpstrTitle = L"AirDrop to iPhone (set it to Everyone for 10 Minutes)";
+    const std::wstring title = (to.empty() ? std::wstring(L"AirDrop to iPhone") : L"AirDrop to " + wide(to)) +
+                               L" (set it to Everyone for 10 Minutes)";
+    ofn.lpstrTitle = title.c_str();
     ofn.Flags = OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     SetForegroundWindow(app.window);
     if (!GetOpenFileNameW(&ofn)) return;
@@ -331,9 +360,49 @@ void send_files_to_iphone(App& app) {
         for (; *next; next += std::wcslen(next) + 1) files.push_back(std::filesystem::path(first) / next);
     }
     Node* node = app.node.get();
-    app.senders.emplace_back([node, files]() {
-        for (const auto& file : files) node->send_to_iphone(file);
+    app.senders.emplace_back([node, files, to]() {
+        for (const auto& file : files) node->send_to_iphone(file, to);
     });
+}
+
+// Look for devices: the relay's scan takes about 30 s; the timer notifies
+// what it found (check_scan).
+void look_for_devices(App& app) {
+    Node* node = app.node.get();
+    const Status status = node->request_iphone_scan();
+    app.click_target.clear();
+    const bool notify_was = app.settings.notify;
+    app.settings.notify = true;
+    if (status.ok) {
+        app.scan_asked = GetTickCount64();
+        app.scan_seen = false;
+        notify(app, L"Looking for nearby devices",
+               L"About 30 seconds. iPhones show up while their AirDrop is set to Everyone for 10 Minutes.");
+    } else {
+        notify(app, L"Can't look for devices", wide(status.message));
+    }
+    app.settings.notify = notify_was;
+}
+
+void check_scan(App& app) {
+    if (!app.scan_asked || !app.node) return;
+    const Node::Nearby nearby = app.node->iphone_nearby();
+    if (nearby.scanning) {
+        app.scan_seen = true;
+        return;
+    }
+    const bool late = GetTickCount64() - app.scan_asked > 120 * 1000;
+    if (!app.scan_seen && !late) return;
+    app.scan_asked = 0;
+    std::wstring found;
+    for (const auto& name : nearby.devices) found += (found.empty() ? L"" : L", ") + wide(name);
+    app.click_target.clear();
+    const bool notify_was = app.settings.notify;
+    app.settings.notify = true;
+    notify(app, found.empty() ? L"No devices found" : L"Nearby: right-click HowlDrop, Send to iPhone",
+           found.empty() ? L"Set the iPhone's AirDrop to Everyone for 10 Minutes, keep it unlocked, and look again."
+                         : found);
+    app.settings.notify = notify_was;
 }
 
 void post_sent(const std::string& file, const Status& status) {
@@ -434,19 +503,30 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                     if (app->node) app->node->set_share_clipboard(app->settings.share_clipboard);
                     break;
                 case kMenuCopyKey: copy_pair_key(*app); return 0;
-                case kMenuSendIphone: send_files_to_iphone(*app); return 0;
+                case kMenuSendIphone: send_files_to_iphone(*app, {}); return 0;
+                case kMenuScan: look_for_devices(*app); return 0;
                 case kMenuSendToMenu:
                     app->settings.send_to_menu = !app->settings.send_to_menu;
                     update_send_to(*app);
                     break;
                 case kMenuStartup: set_start_with_windows(!starts_with_windows()); break;
                 case kMenuQuit: DestroyWindow(window); return 0;
-                default: return 0;
+                default: {
+                    const UINT id = LOWORD(wparam);
+                    if (id >= kMenuDeviceBase && id < kMenuDeviceBase + app->menu_devices.size()) {
+                        send_files_to_iphone(*app, app->menu_devices[id - kMenuDeviceBase]);
+                    }
+                    return 0;
+                }
             }
             save_settings(*app);
             return 0;
         case WM_TIMER:  // `howldrop stop` ends the node; the icon goes with it
-            if (app->node && !app->node->running()) DestroyWindow(window);
+            if (app->node && !app->node->running()) {
+                DestroyWindow(window);
+                return 0;
+            }
+            check_scan(*app);
             return 0;
         case WM_DESTROY:
             KillTimer(window, kStopTimer);

@@ -53,6 +53,8 @@ struct Options {
     bool keep = false;
     bool wait = false;
     std::string pair_key;  // from HOWLDROP_PC_KEY: not an argument, so not in ps
+    std::filesystem::path nearby;        // relay: outbox.py's latest scan, a name per line
+    std::filesystem::path scan_request;  // relay: the file that asks outbox.py for a scan
 };
 
 bool parse_port(const std::string& text, std::uint16_t& port) {
@@ -102,6 +104,14 @@ bool parse_args(const std::vector<std::string>& args, Options& opt, std::string&
             const std::string* value = need("--inbox");
             if (!value) return false;
             opt.inbox = *value;
+        } else if (arg == "--nearby") {
+            const std::string* value = need("--nearby");
+            if (!value) return false;
+            opt.nearby = *value;
+        } else if (arg == "--scan-request") {
+            const std::string* value = need("--scan-request");
+            if (!value) return false;
+            opt.scan_request = *value;
         } else if (arg == "--timeout") {
             const std::string* value = need("--timeout");
             if (!value) return false;
@@ -291,6 +301,31 @@ std::string relay_id(const std::filesystem::path& inbox) {
     return id;
 }
 
+// What the relay says about nearby devices in its hello, from outbox.py's
+// scan file: "scanning" while one runs, then "device<tab>NAME" lines. The PC
+// lists them (tray menu, howldrop nearby). Kept within a header field's 1024.
+std::vector<std::pair<std::string, std::string>> nearby_fields(const std::filesystem::path& file) {
+    std::ifstream in(file);
+    std::string line;
+    std::string heard;
+    bool scanning = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line == "scanning") {
+            scanning = true;
+        } else if (line.rfind("device\t", 0) == 0) {
+            const std::string name = line.substr(7);
+            if (name.empty() || !howldrop::valid_display_name(name) || heard.size() + name.size() + 1 > 1000) continue;
+            if (!heard.empty()) heard += '\t';
+            heard += name;
+        }
+    }
+    std::vector<std::pair<std::string, std::string>> fields;
+    if (!heard.empty()) fields.emplace_back("near", heard);
+    if (scanning) fields.emplace_back("scanning", "1");
+    return fields;
+}
+
 // The add-on's iPhone relay: a HowlDrop node a paired PC sends to (howldrop
 // iphone FILE, the tray, Explorer's Send to). What it receives lands in
 // inbox, the add-on's send folder, which outbox.py AirDrops to the iPhone.
@@ -310,6 +345,23 @@ int run_relay(const Options& opt) {
     config.enable_control = false;
     config.pair_key = opt.pair_key;
     config.role = "iphone";
+    if (!opt.nearby.empty()) {
+        const auto nearby = opt.nearby;
+        config.hello_extra = [nearby]() { return nearby_fields(nearby); };
+    }
+    // The device a file is for, beside it, as outbox.py reads it.
+    config.on_target = [](const std::filesystem::path& saved, const std::string& to) {
+        auto sidecar = saved;
+        sidecar += ".howldrop-to";
+        std::ofstream(sidecar, std::ios::trunc) << to;
+    };
+    // A paired PC asking for a scan (Node::request_iphone_scan).
+    if (!opt.scan_request.empty()) {
+        const auto request = opt.scan_request;
+        config.on_text = [request](const std::string& text, const std::string&) {
+            if (text == howldrop::kScanRequest) std::ofstream(request, std::ios::trunc) << "pc\n";
+        };
+    }
     howldrop::MemoryClipboard clipboard;
     howldrop::Node node(config, clipboard);
     try {

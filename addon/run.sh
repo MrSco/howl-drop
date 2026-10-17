@@ -26,6 +26,10 @@ HISTORY=/data/drops.jsonl
 # and says how each went in SEND_STATUS, for the panel.
 OUTBOX=/outbox.py
 SEND_STATUS=/data/send-status.json
+# Nearby devices: a scan's result (JSON for the panel, a .txt twin for the
+# relay, which tells the PC), and the file whose appearance asks for one.
+NEARBY=/data/send-nearby.json
+SCAN_REQUEST=/data/send-scan.request
 # Who may send: the senders option, as the receiver's Contacts Only files.
 SENDERS=/senders.py
 SENDERS_CONFIG=${XDG_CONFIG_HOME:-${HOME:-/root}/.config}/omdrop
@@ -1270,7 +1274,9 @@ esac
 # may use it (panel.py).
 PANEL_ARGS=(--dest "$INBOX" --history "$HISTORY")
 case "$(option send_to_iphone)" in
-    True|true|1|yes) PANEL_ARGS+=(--outbox "$INBOX/send" --send-status "$SEND_STATUS") ;;
+    True|true|1|yes)
+        PANEL_ARGS+=(--outbox "$INBOX/send" --send-status "$SEND_STATUS" --nearby "$NEARBY"
+                     --scan-request "$SCAN_REQUEST") ;;
 esac
 python3 "$PANEL" "${PANEL_ARGS[@]}" 2>&1 | sed -u 's/^/Panel: /' &
 PANEL_PID=$!
@@ -1529,13 +1535,15 @@ case "$(option send_to_iphone)" in
         mkdir -p "$INBOX/send"
         say "send_to_iphone (experimental): files copied into ${INBOX}/send, uploaded in the panel or sent from a paired PC are AirDropped to a nearby iPhone set to Everyone for 10 Minutes."
         python3 "$OUTBOX" --outbox "$INBOX/send" --name "$PC_NAME" --status "$SEND_STATUS" \
-            --to "$(option send_to)" 2>&1 | sed -u 's/^/Send: /' &
+            --to "$(option send_to)" --nearby "$NEARBY" --scan-request "$SCAN_REQUEST" 2>&1 \
+            | sed -u 's/^/Send: /' &
         # The relay: a paired PC sends here (tray, Explorer's Send to,
         # `howldrop iphone`), into the send folder. Restarted if it exits.
         if pc_key_ok; then
             (
                 while [ -f /tmp/howldrop-running ]; do
-                    HOWLDROP_PC_KEY=$PC_KEY "$BRIDGE" relay --inbox "$INBOX/send" 2>&1 | sed -u 's/^/Relay: /'
+                    HOWLDROP_PC_KEY=$PC_KEY "$BRIDGE" relay --inbox "$INBOX/send" \
+                        --nearby "${NEARBY%.json}.txt" --scan-request "$SCAN_REQUEST" 2>&1 | sed -u 's/^/Relay: /'
                     [ -f /tmp/howldrop-running ] || break
                     sleep 5
                 done

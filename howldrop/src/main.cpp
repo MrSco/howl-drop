@@ -188,7 +188,8 @@ void usage() {
         << "  howldrop send NAME FILE   Send FILE to the PC named NAME\n"
         << "  howldrop clip             Send the current clipboard text now\n"
         << "  howldrop stop             Stop HowlDrop on this PC\n"
-        << "  howldrop iphone FILE...   AirDrop FILE to the iPhone, through Home Assistant\n"
+        << "  howldrop iphone [--to NAME] FILE...  AirDrop FILE to the iPhone, through Home Assistant\n"
+        << "  howldrop nearby [--scan]  The devices nearby the add-on can send to\n"
         << "  howldrop key              Show this PC's pairing key (the add-on's pc_key)\n"
         << "  howldrop pair KEY         Use another HowlDrop PC's key, so the two can send\n"
         << "                            to each other (then restart HowlDrop)\n\n"
@@ -330,8 +331,18 @@ int cmd_send(const std::string& peer, const std::filesystem::path& file) {
 // console, so a problem is also said in a message box there.
 int cmd_iphone(const std::vector<std::string>& args) {
     std::vector<std::string> problems;
-    if (args.size() < 3) problems.push_back("give one or more files to send");
-    for (std::size_t i = 2; i < args.size(); ++i) {
+    std::string to;
+    std::size_t first = 2;
+    if (args.size() >= 4 && args[2] == "--to") {
+        to = args[3];
+        first = 4;
+        if (to.find('\t') != std::string::npos || to.find('\n') != std::string::npos) {
+            std::cerr << "that is not a device name\n";
+            return 2;
+        }
+    }
+    if (args.size() <= first) problems.push_back("give one or more files to send");
+    for (std::size_t i = first; i < args.size(); ++i) {
         std::error_code ec;
         const auto absolute = std::filesystem::absolute(howldrop::path_from_utf8(args[i]), ec);
         const std::string path = ec ? args[i] : howldrop::path_to_utf8(absolute);
@@ -339,7 +350,7 @@ int cmd_iphone(const std::vector<std::string>& args) {
             problems.push_back(args[i] + ": that path cannot be sent");
             continue;
         }
-        const Reply reply = control_request("iphone " + path);
+        const Reply reply = control_request("iphone " + (to.empty() ? std::string() : to + "\t") + path);
         if (reply.ok) {
             std::cout << "sent " << path << " to Home Assistant for the iPhone\n";
         } else {
@@ -359,6 +370,36 @@ int cmd_iphone(const std::vector<std::string>& args) {
     }
 #endif
     return 1;
+}
+
+// howldrop nearby [--scan]: the devices the add-on's last scan heard (only
+// those listening: an iPhone set to Everyone, a Mac with AirDrop open).
+int cmd_nearby(const std::vector<std::string>& args) {
+    if (args.size() >= 3 && args[2] == "--scan") {
+        const Reply scan = control_request("scan");
+        if (!scan.ok) {
+            std::cerr << scan.detail << '\n';
+            return 1;
+        }
+        std::cout << "looking (about 30 seconds)...\n";
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+        for (int i = 0; i < 60; ++i) {
+            const Reply now = control_request("nearby");
+            if (now.ok && now.detail != "scanning") break;
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    }
+    const Reply reply = control_request("nearby");
+    if (!reply.ok) {
+        std::cerr << reply.detail << '\n';
+        return 1;
+    }
+    if (reply.lines.empty()) {
+        std::cout << "nothing heard yet: set the iPhone's AirDrop to Everyone for 10 Minutes, then howldrop nearby --scan\n";
+    }
+    for (const auto& name : reply.lines) std::cout << name << '\n';
+    if (reply.detail == "scanning") std::cout << "(still looking)\n";
+    return 0;
 }
 
 int cmd_simple(const std::string& command) {
@@ -508,6 +549,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (cmd == "iphone") return cmd_iphone(args);
+        if (cmd == "nearby") return cmd_nearby(args);
         if (cmd == "peers") return cmd_peers();
         if (cmd == "clip") return cmd_simple("clip");
         if (cmd == "stop") return cmd_simple("quit");

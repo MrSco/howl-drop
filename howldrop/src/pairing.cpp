@@ -30,8 +30,12 @@ const char* const kReady = "howldrop-pair-v1 ready\n";
 const char* const kBody = "howldrop-pair-v1 body\n";
 
 std::string head_text(const Message& message, const std::string& nonce) {
-    return kHead + std::to_string(static_cast<int>(message.type)) + "\n" + message.fields.get("from") + "\n" +
-           message.fields.get("file") + "\n" + std::to_string(message.body_size) + "\n" + nonce;
+    std::string text = kHead + std::to_string(static_cast<int>(message.type)) + "\n" + message.fields.get("from") +
+                       "\n" + message.fields.get("file") + "\n" + std::to_string(message.body_size) + "\n" + nonce;
+    // The device a file is for (the iPhone relay), signed too, so nobody
+    // between can send it elsewhere. Absent, the text is as before.
+    if (const std::string* to = message.fields.find("to")) text += "\nto=" + *to;
+    return text;
 }
 
 std::string mac_hex(const std::string& key, const std::string& text) {

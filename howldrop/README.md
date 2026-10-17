@@ -29,7 +29,7 @@ Start `howldrop.exe` (double-click it). It runs by the clock, with no window:
 | Open links in the browser | on | A shared web page opens, as on a Mac. Only `http` and `https` addresses. |
 | Open photos and videos | off | Opens each one in your photo or video app. |
 | Open PDFs and text files | off | `.pdf` and `.txt` only. |
-| Send a file to iPhone… | | AirDrops the files you pick to your iPhone, through the add-on (below). |
+| Send to iPhone | | **Look for devices**, then a device (or **Any nearby iPhone**), then files: AirDropped through the add-on (below). |
 | "iPhone" in Explorer's Send to menu | on | Right-click a file, **Send to**, **iPhone (HowlDrop)**. |
 | Copy pairing key | | For the add-on's `pc_key` (below). |
 | Share what I copy with my other HowlDrop PCs | off | Sends each copied text to your other paired PCs. |
@@ -86,7 +86,8 @@ howldrop peers           list PCs that are visible
 howldrop send NAME FILE  send FILE to the PC named NAME
 howldrop clip            send the current clipboard text
 howldrop stop            stop HowlDrop on this PC (the tray icon too)
-howldrop iphone FILE...  AirDrop FILE to your iPhone, through the add-on
+howldrop iphone [--to NAME] FILE...  AirDrop FILE through the add-on
+howldrop nearby [--scan]  the devices the add-on can send to
 howldrop key             show this PC's pairing key
 howldrop pair KEY        take another PC's key (then restart HowlDrop)
 howldrop serve --share-clipboard   serve, sending what you copy to paired PCs

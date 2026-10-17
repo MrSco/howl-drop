@@ -223,6 +223,21 @@ void test_lan() {
         r_cfg.beacon_targets.push_back({"127.0.0.1", 41231});
         r_cfg.pair_key = a_cfg.pair_key;
         r_cfg.role = "iphone";
+        r_cfg.hello_extra = []() {
+            return std::vector<std::pair<std::string, std::string>>{{"near", "Rocco’s iPhone\tOffice Mac"},
+                                                                     {"scanning", "1"}};
+        };
+        std::mutex seen_mu;
+        std::string target_seen;
+        std::string text_seen;
+        r_cfg.on_target = [&](const std::filesystem::path&, const std::string& to) {
+            std::lock_guard<std::mutex> lock(seen_mu);
+            target_seen = to;
+        };
+        r_cfg.on_text = [&](const std::string& text, const std::string&) {
+            std::lock_guard<std::mutex> lock(seen_mu);
+            text_seen = text;
+        };
         howldrop::Node relay(r_cfg, clip_r);
         relay.start();
         CHECK(wait_for_peer(node_a, "iPhone (HowlDrop)"));
@@ -231,6 +246,20 @@ void test_lan() {
         CHECK(sent_relay.ok);
         CHECK(std::filesystem::is_regular_file(root / "relay" / "blob.bin"));
         CHECK(std::filesystem::file_size(root / "relay" / "blob.bin") == 100000);
+
+        // What the relay heard nearby, from its hello; a send to one of them
+        // carries its name, signed; and a scan request reaches the relay.
+        const auto nearby = node_a.iphone_nearby();
+        CHECK(nearby.relay);
+        CHECK(nearby.scanning);
+        CHECK(nearby.devices.size() == 2 && nearby.devices[0] == "Rocco’s iPhone" && nearby.devices[1] == "Office Mac");
+        CHECK(node_a.send_to_iphone(source, "Rocco’s iPhone").ok);
+        CHECK(node_a.request_iphone_scan().ok);
+        {
+            std::lock_guard<std::mutex> lock(seen_mu);
+            CHECK(target_seen == "Rocco’s iPhone");
+            CHECK(text_seen == howldrop::kScanRequest);
+        }
 
         howldrop::Message hello;
         hello.type = howldrop::MsgType::Hello;

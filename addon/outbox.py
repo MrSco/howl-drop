@@ -37,6 +37,7 @@ import threading
 import time
 
 SETTLE_SCANS = 2
+TARGET_SUFFIX = '.howldrop-to'  # beside a file: the device it is for
 PEER_RETRY_S = 3
 STATUS_KEPT = 30
 SHIM = '#!/bin/sh\n# send-to-peer runs `pkexec HELPER peers`; the add-on is root already.\nexec "$@"\n'
@@ -269,7 +270,67 @@ def waiting(outbox):
     except OSError:
         return []
     return [os.path.join(outbox, n) for n in names
-            if not n.startswith('.') and not n.endswith('.partial') and os.path.isfile(os.path.join(outbox, n))]
+            if not n.startswith('.') and not n.endswith(('.partial', TARGET_SUFFIX))
+            and os.path.isfile(os.path.join(outbox, n))]
+
+
+def target_of(path):
+    """The device a file was sent to (its sidecar, written by the panel or the
+    relay before the file itself), or None for the default."""
+    try:
+        with open(path + TARGET_SUFFIX, encoding='utf-8') as fh:
+            name = fh.read().strip()
+    except OSError:
+        return None
+    return name[:64] or None
+
+
+# --- nearby devices --------------------------------------------------------------
+
+ROW = re.compile(r'^([0-9a-f]{2}(?::[0-9a-f]{2}){5})\s+\S+(?:\s+dBm)?\s+\[[^\]]+\]:\d+\s+(.*\S)\s*$')
+UNNAMED = ('(no response)', '(anonymous)')
+
+
+def parse_nearby(lines):
+    """[(mac, name)] of the devices that said their name in a
+    `send-to-peer --list --names` listing."""
+    found = []
+    for line in lines:
+        m = ROW.match(line.strip())
+        if m and m.group(2) not in UNNAMED:
+            found.append((m.group(1), m.group(2)))
+    return found
+
+
+def write_nearby(path, devices, scanning):
+    """The latest scan: path as JSON for the panel, and path's .txt twin, a
+    name per line, for the relay (which carries it to the PC)."""
+    if not path:
+        return
+    data = {'time': int(time.time()), 'scanning': scanning,
+            'devices': [{'mac': mac, 'name': name} for mac, name in devices]}
+    stem = os.path.splitext(path)[0]
+    lines = (['scanning'] if scanning else []) + [f'device\t{name}' for _, name in devices]
+    try:
+        for target, text in ((path, json.dumps(data)), (stem + '.txt', ''.join(line + '\n' for line in lines))):
+            with open(target + '.new', 'w', encoding='utf-8') as fh:
+                fh.write(text)
+            os.replace(target + '.new', target)
+    except OSError:
+        pass
+
+
+def scan(tool, name, env, nearby, previous):
+    """Ask every AirDrop device in range for its name (waking them first):
+    only those listening now answer, so phones set to Everyone, not Contacts
+    Only. Returns what answered."""
+    say('looking for nearby devices')
+    write_nearby(nearby, previous, True)
+    code, lines = run([tool, '--list', '--names', '--name', name], env, 90)
+    devices = parse_nearby(lines)
+    write_nearby(nearby, devices, False)
+    say('nearby: ' + (', '.join(n for _, n in devices) or 'nothing answered (is AirDrop set to Everyone?)'))
+    return devices
 
 
 def main():
@@ -281,6 +342,8 @@ def main():
     ap.add_argument('--interval', type=float, default=1.0)
     ap.add_argument('--status', help='where to keep the latest sends as JSON, for the panel')
     ap.add_argument('--to', default='', help="the iPhone's name (send_to); empty: pick on its own")
+    ap.add_argument('--nearby', help='where to keep the latest scan (JSON, and a .txt twin for the relay)')
+    ap.add_argument('--scan-request', help='a file whose appearance asks for a scan (panel, relay)')
     a = ap.parse_args()
     tool = os.path.join(a.tools, 'send-to-peer')
     if not os.path.exists(tool):
@@ -296,8 +359,16 @@ def main():
     say(f'files put in {a.outbox} are AirDropped to a nearby iPhone set to Everyone for 10 Minutes')
     sizes = {}
     jobs = {}
+    devices = []
+    write_nearby(a.nearby, devices, False)
     while True:
         os.makedirs(a.outbox, exist_ok=True)  # the daily purge removes empty folders
+        if a.scan_request and os.path.exists(a.scan_request):
+            try:
+                os.unlink(a.scan_request)
+            except OSError:
+                pass
+            devices = scan(tool, a.name, env, a.nearby, devices)
         for path in waiting(a.outbox):
             try:
                 size = os.path.getsize(path)
@@ -312,16 +383,20 @@ def main():
             sizes.pop(path, None)
             job = jobs.pop(path)
             name = os.path.basename(path)
-            say(f'sending {name} ({size} bytes)')
-            status.update(job, 'sending', 'looking for the iPhone')
-            ok, detail = send(path, tool, a.name, env, a.window, lambda d, job=job: status.update(job, detail=d),
-                              a.to.strip() or None)
+            to = target_of(path) or a.to.strip() or None
+            say(f'sending {name} ({size} bytes)' + (f' to {to}' if to else ''))
+            status.update(job, 'sending', f'looking for {to}' if to else 'looking for the iPhone')
+            ok, detail = send(path, tool, a.name, env, a.window, lambda d, job=job: status.update(job, detail=d), to)
             where = 'sent' if ok else 'failed'
             try:
                 shutil.move(path, free_path(os.path.join(a.outbox, where), name))
             except OSError as e:
                 say(f'could not move {name} to {where}: {e}')
-            status.update(job, where, detail)
+            try:
+                os.unlink(path + TARGET_SUFFIX)
+            except OSError:
+                pass
+            status.update(job, where, f'on {to}' if ok and to else detail)
             say(f'{name}: {"sent" if ok else "not sent: " + detail}; moved to {where}/')
         time.sleep(a.interval)
 

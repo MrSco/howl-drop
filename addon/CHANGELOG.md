@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.0
+
+- Pick which device to send to: **Look for devices** in the panel, or in the PC's tray menu (Send to iPhone), lists the AirDrop devices nearby that are listening (an iPhone set to Everyone for 10 Minutes, a Mac with AirDrop open). Choose one, then send. Needs **howldrop.exe 0.15.0** on the PC.
+
 ## 0.14.0
 
 - Send to iPhone from the HowlDrop panel (upload a file and watch it go), or from a paired Windows PC: the tray menu, Explorer's Send to, or `howldrop iphone FILE`. Needs `send_to_iphone`, `pc_key` for the PC, and **howldrop.exe 0.14.0**.

@@ -77,6 +77,19 @@ h1 { margin: 0; font-size: 20px; font-weight: 600; }
 #sending[hidden] { display: none; }
 .sending-head h2 { margin: 0; font-size: 15px; }
 .sending-head p { margin: 2px 0 8px; color: var(--muted); font-size: 13px; }
+.nearby { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 10px; }
+.nearby-label { color: var(--muted); font-size: 13px; }
+.scan {
+  border: 1px dashed var(--line);
+  background: none;
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.scan:disabled { color: var(--muted); cursor: default; }
 #sends { list-style: none; margin: 0; padding: 0; }
 #sends li {
   display: flex;

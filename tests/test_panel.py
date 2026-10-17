@@ -262,6 +262,30 @@ class PanelTests(unittest.TestCase):
         self.assertFalse(Path(self.tmp.name, 'evil.sh').exists())
         self.assertEqual(sorted(p.name for p in outbox.iterdir()), ['IMG 1-1.jpg', 'IMG 1.jpg', 'evil.sh', 'hidden'])
 
+    def test_nearby_scan_and_a_chosen_device(self):
+        outbox = Path(self.tmp.name, 'share', 'send')
+        nearby = Path(self.tmp.name, 'nearby.json')
+        request = Path(self.tmp.name, 'scan.request')
+        nearby.write_text(json.dumps({'time': 5, 'scanning': False,
+                                      'devices': [{'mac': 'aa:bb:cc:dd:ee:ff', 'name': 'Rocco’s iPhone'}]}))
+        server = panel.serve(str(self.dest), 0, self.history, str(Path(self.tmp.name, 'thumbs')),
+                             str(ADDON / 'panel'), {'127.0.0.1'}, hosts=('127.0.0.1',), outbox=str(outbox),
+                             nearby=str(nearby), scan_request=str(request))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.servers.append(server)
+        base = f'http://127.0.0.1:{server.server_address[1]}'
+        listed = json.loads(self.get(base + '/api/nearby')[2])
+        self.assertEqual(listed['devices'], [{'name': 'Rocco’s iPhone'}])  # no MAC for the page
+        self.assertEqual(self.post(base + '/api/scan', {}, ctype='text/plain')[0], 415)
+        self.assertEqual(self.post(base + '/api/scan', {}), (200, {'requested': True}))
+        self.assertTrue(request.exists())
+        request_url = base + '/api/send?name=a.jpg&to=' + urllib.request.quote('Rocco’s iPhone\n')
+        req = urllib.request.Request(request_url, data=b'jpeg', method='POST',
+                                     headers={'Content-Type': 'application/octet-stream'})
+        with urllib.request.urlopen(req, timeout=5) as reply:
+            self.assertEqual(json.loads(reply.read()), {'name': 'a.jpg'})
+        self.assertEqual((outbox / 'a.jpg.howldrop-to').read_text(encoding='utf-8'), 'Rocco’s iPhone')
+
     def test_history_is_trimmed(self):
         for i in range(announce.HISTORY_KEPT * 2):
             announce.record(self.history, str(self.dest / f'f{i}.jpg'), str(self.dest), 'Pat')

@@ -147,6 +147,35 @@ class IdentityTests(unittest.TestCase):
                                                                     os.path.join(d, 'home'), os.path.join(d, 's')))
 
 
+class NearbyTests(unittest.TestCase):
+    ROWS = ['e2:9d:03:6c:58:23  ? dBm  [fe80::e09d:3ff:fe6c:5823%awdl0]:8770  Rocco’s iPhone',
+            '16:2f:da:27:3d:76  -33 dBm  [fe80::142f:daff:fe27:3d76%awdl0]:8770  (no response)',
+            'fe:63:e6:68:9f:12  -14 dBm  [fe80::fc63:e6ff:fe68:9f12%awdl0]:8770  (anonymous)',
+            'aa:bb:cc:dd:ee:ff  ? dBm  [fe80::1%awdl0]:8770  Office Mac ',
+            'waiting for names']
+
+    def test_only_devices_that_said_a_name(self):
+        self.assertEqual(outbox.parse_nearby(self.ROWS),
+                         [('e2:9d:03:6c:58:23', 'Rocco’s iPhone'), ('aa:bb:cc:dd:ee:ff', 'Office Mac')])
+
+    def test_written_for_the_panel_and_the_relay(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'nearby.json')
+            outbox.write_nearby(path, [('aa:bb:cc:dd:ee:ff', 'Rocco’s iPhone')], True)
+            data = json.loads(Path(path).read_text(encoding='utf-8'))
+            self.assertEqual((data['scanning'], data['devices'][0]['name']), (True, 'Rocco’s iPhone'))
+            self.assertEqual(Path(d, 'nearby.txt').read_text(encoding='utf-8'), 'scanning\ndevice\tRocco’s iPhone\n')
+
+    def test_a_file_names_its_device(self):
+        with tempfile.TemporaryDirectory() as d:
+            photo = os.path.join(d, 'a.jpg')
+            Path(photo).write_bytes(b'x')
+            self.assertIsNone(outbox.target_of(photo))
+            Path(photo + outbox.TARGET_SUFFIX).write_text('Pat’s iPhone\n', encoding='utf-8')
+            self.assertEqual(outbox.target_of(photo), 'Pat’s iPhone')
+            self.assertEqual(outbox.waiting(d), [photo])  # the sidecar is not a file to send
+
+
 class StatusTests(unittest.TestCase):
     def test_newest_first_and_capped(self):
         with tempfile.TemporaryDirectory() as d:

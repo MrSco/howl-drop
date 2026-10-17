@@ -274,6 +274,30 @@ def free_name(directory, name):
     return path
 
 
+TARGET_SUFFIX = '.howldrop-to'  # outbox.py: beside a file, the device it is for
+
+
+def clean_target(name):
+    """A device name to send to: one line, no control characters, 64 at most."""
+    return ''.join(c for c in name if c.isprintable()).strip()[:64]
+
+
+def nearby_status(outbox, nearby_file):
+    """For the page: the devices the latest scan heard (outbox.py)."""
+    empty = {'time': 0, 'scanning': False, 'devices': []}
+    if not outbox or not nearby_file:
+        return empty
+    try:
+        with open(nearby_file, encoding='utf-8') as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return empty
+    if not isinstance(data, dict) or not isinstance(data.get('devices'), list):
+        return empty
+    return {'time': data.get('time', 0), 'scanning': bool(data.get('scanning')),
+            'devices': [{'name': str(d.get('name', ''))} for d in data['devices'] if isinstance(d, dict)]}
+
+
 def send_status(outbox, status_file):
     """For the page: whether sending is on, and the latest sends (outbox.py)."""
     if not outbox:
@@ -340,6 +364,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_static(*STATIC[url.path])
         if url.path == '/api/send':
             return self.send_json(send_status(self.server.outbox, self.server.send_status))
+        if url.path == '/api/nearby':
+            return self.send_json(nearby_status(self.server.outbox, self.server.nearby))
         if url.path == '/api/drops':
             return self.send_json({'drops': listing(self.server.dest, self.server.history),
                                    'folder': self.server.dest})
@@ -369,6 +395,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         ctype = self.headers.get('Content-Type', '').split(';')[0].strip()
         if urllib.parse.urlsplit(self.path).path == '/api/send':
             return self.receive_upload(ctype)
+        if urllib.parse.urlsplit(self.path).path == '/api/scan':
+            return self.request_scan(ctype)
         # JSON only: a page elsewhere cannot send it here without the browser
         # asking first, so no other site can delete through a signed-in user.
         if ctype != 'application/json':
@@ -410,6 +438,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send_plain(413, 'too large')
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
         name = safe_name((query.get('name') or [''])[0], 'file')
+        to = clean_target((query.get('to') or [''])[0])
         os.makedirs(self.server.outbox, exist_ok=True)
         temp = os.path.join(self.server.outbox, f'.upload-{os.getpid()}-{threading.get_ident()}.partial')
         try:
@@ -422,6 +451,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     fh.write(chunk)
                     left -= len(chunk)
             final = free_name(self.server.outbox, name)
+            if to:  # before the file, so outbox.py never sends it to the default
+                with open(final + TARGET_SUFFIX, 'w', encoding='utf-8') as fh:
+                    fh.write(to)
             os.replace(temp, final)
         except OSError as e:
             try:
@@ -430,6 +462,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 pass
             return self.send_plain(500, f'could not take the file: {e}')
         return self.send_json({'name': os.path.basename(final)})
+
+    def request_scan(self, ctype):
+        """Look for nearby devices: outbox.py scans when the request file
+        appears. JSON only, as delete is."""
+        if not self.server.outbox or not self.server.scan_request:
+            return self.send_plain(404, 'send_to_iphone is off')
+        if ctype != 'application/json':
+            return self.send_plain(415, 'JSON only')
+        try:
+            with open(self.server.scan_request, 'w', encoding='utf-8') as fh:
+                fh.write('panel\n')
+        except OSError as e:
+            return self.send_plain(500, f'could not ask for a scan: {e}')
+        return self.send_json({'requested': True})
 
     def send_static(self, name, ctype):
         path = os.path.join(self.server.static, name)
@@ -522,7 +568,7 @@ def parse_allow(entries):
 
 
 def serve(dest, port, history, thumbs, static, allow, hosts=(HASSIO_GATEWAY, '0.0.0.0'), outbox=None,
-          send_status_file=None):
+          send_status_file=None, nearby=None, scan_request=None):
     """Listen on the first of hosts that can be bound; return the server.
     allow: the addresses and networks it answers (parse_allow). outbox: the
     send folder when send_to_iphone is on, with outbox.py's status file."""
@@ -542,6 +588,8 @@ def serve(dest, port, history, thumbs, static, allow, hosts=(HASSIO_GATEWAY, '0.
     server.allow = parse_allow(allow)
     server.outbox = outbox
     server.send_status = send_status_file
+    server.nearby = nearby
+    server.scan_request = scan_request
     return server
 
 
@@ -554,12 +602,15 @@ def main():
     ap.add_argument('--thumbs', default='/data/thumbs')
     ap.add_argument('--outbox', help='the send folder, when send_to_iphone is on')
     ap.add_argument('--send-status', help="outbox.py's status file")
+    ap.add_argument('--nearby', help="outbox.py's latest scan")
+    ap.add_argument('--scan-request', help='the file that asks outbox.py for a scan')
     ap.add_argument('--static', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'panel'))
     a = ap.parse_args()
     allow = [s.strip() for s in os.environ.get('HOWLDROP_PANEL_ALLOW', SUPERVISOR).split(',') if s.strip()]
     os.makedirs(a.dest, exist_ok=True)
     hosts = (a.bind,) if a.bind else (HASSIO_GATEWAY, '0.0.0.0')
-    server = serve(a.dest, a.port, a.history, a.thumbs, a.static, allow, hosts, a.outbox, a.send_status)
+    server = serve(a.dest, a.port, a.history, a.thumbs, a.static, allow, hosts, a.outbox, a.send_status,
+                   a.nearby, a.scan_request)
     host, port = server.server_address[:2]
     print(f'panel on {host}:{port} for {", ".join(sorted(allow))}', flush=True)
     server.serve_forever()
