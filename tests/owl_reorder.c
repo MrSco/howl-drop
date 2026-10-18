@@ -1,4 +1,4 @@
-/* Receive reordering for a Block Ack session (patches/owl-11-rx-reorder.patch):
+/* Receive reordering for a Block Ack session (patches/owl-12-rx-reorder.patch):
  * frames come out in sequence order, gaps are waited for until they fill,
  * the window moves past them, a Block Ack Request gives them up or they time
  * out; old and duplicate frames are dropped, and nothing leaks. Built against

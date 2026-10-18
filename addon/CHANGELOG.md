@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.0
+
+- Up to date with omdrop-owl 0.3.0 (upstream): its fix for a radiotap field OWL read uninitialized on receive, channel lists read the way newer `iw` prints them (and No IR or radar channels skipped), and new card records (Intel BE200 tested; Realtek RTL8852BE in shared mode; several recorded as failing). The add-on's receive reordering is unchanged, rebuilt on top.
+
 ## 0.15.1
 
 - The relay a PC sends through starts (0.14.0 and 0.15.0 logged "Relay: unknown command relay").

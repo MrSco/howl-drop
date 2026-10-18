@@ -24,15 +24,17 @@
 #                           it (tests/owl_amsdu.c)
 #   owl-09-action-zero-padding.patch  accept the zero padding iPhones end
 #                           some MIFs with, instead of refusing the frame and
-#                           so never validating the peer (tests/owl_padding.c;
-#                           upstream 809769d)
+#                           so never validating the peer (tests/owl_padding.c)
 #   owl-10-addba-accept.patch  -A: answer a peer's Block Ack session request
 #                           (ADDBA) with success, so it may send A-MPDUs
 #                           (tests/owl_addba.c)
-#   owl-11-rx-reorder.patch  with -A, hold a Block Ack session's frames until
+#   owl-11-rx-flags-init.patch  treat a missing radiotap Flags field as zero,
+#                           instead of reading an uninitialized byte
+#                           (tests/owl_rx_flags.c)
+#   owl-12-rx-reorder.patch  with -A, hold a Block Ack session's frames until
 #                           the gaps before them fill, as mac80211 does, so
 #                           TCP gets them in order (src/reorder.c,
-#                           tests/owl_reorder.c)
+#                           tests/owl_reorder.c; upstream PR 59)
 # Applied in name order: each is a diff against the tree with the previous ones.
 set -eu
 
