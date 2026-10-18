@@ -1,5 +1,5 @@
 diff --git a/daemon/core.c b/daemon/core.c
-index 0862603..d963252 100644
+index db63db7..8f25b69 100644
 --- a/daemon/core.c
 +++ b/daemon/core.c
 @@ -110,6 +110,55 @@ void host_device_ready(struct ev_loop *loop, ev_io *handle, int revents) {
@@ -58,8 +58,8 @@ index 0862603..d963252 100644
  static void awdl_send_addba_response(struct daemon_state *state) {
  	uint8_t buf[256];
  	const struct awdl_state *awdl = &state->awdl_state;
-@@ -120,6 +169,8 @@ static void awdl_send_addba_response(struct daemon_state *state) {
- 	          (unsigned) (((awdl->addba.params >> 6) & 0x3ff) ? ((awdl->addba.params >> 6) & 0x3ff) : 64));
+@@ -123,6 +172,8 @@ static void awdl_send_addba_response(struct daemon_state *state) {
+ 	          (unsigned) ((awdl->addba.params >> 2) & 0xf), window);
  	wlan_send(&state->io, buf, len);
  	state->awdl_state.stats.tx_action++;
 +	reorder_start(&state->reorder, &awdl->addba.peer, (uint8_t) ((awdl->addba.params >> 2) & 0xf),
@@ -67,7 +67,7 @@ index 0862603..d963252 100644
  }
  
  void awdl_receive_frame(uint8_t *user, const struct pcap_pkthdr *hdr, const uint8_t *buf) {
-@@ -129,9 +180,31 @@ void awdl_receive_frame(uint8_t *user, const struct pcap_pkthdr *hdr, const uint
+@@ -132,9 +183,31 @@ void awdl_receive_frame(uint8_t *user, const struct pcap_pkthdr *hdr, const uint
  	const struct buf *frame = buf_new_const(buf, hdr->caplen);
  	struct buf *data_arr[MAX_NUM_AMPDU];
  	struct buf **data = &data_arr[0];
@@ -99,7 +99,7 @@ index 0862603..d963252 100644
  	/* An A-MSDU that fails part way has converted the subframes before the
  	 * failure: free those too, unsent. */
  	for (struct buf **data_start = &data_arr[0]; data_start < data; data_start++) {
-@@ -715,6 +788,7 @@ int awdl_init(struct daemon_state *state, const char *wlan, const char *host, st
+@@ -718,6 +791,7 @@ int awdl_init(struct daemon_state *state, const char *wlan, const char *host, st
  }
  
  void awdl_free(struct daemon_state *state) {
@@ -107,7 +107,7 @@ index 0862603..d963252 100644
  	circular_buf_free(state->tx_queue_multicast);
  	io_state_free(&state->io);
  	netutils_cleanup();
-@@ -744,6 +818,14 @@ void awdl_schedule(struct ev_loop *loop, struct daemon_state *state) {
+@@ -747,6 +821,14 @@ void awdl_schedule(struct ev_loop *loop, struct daemon_state *state) {
  	ev_io_init(&state->ev_state.read_host, host_device_ready, state->io.host_fd, EV_READ);
  	ev_io_start(loop, &state->ev_state.read_host);
  
@@ -492,7 +492,7 @@ index 0000000..567d873
 +
 +#endif /* AWDL_REORDER_H_ */
 diff --git a/src/rx.c b/src/rx.c
-index 4e5dfcd..c0e57f2 100644
+index a4b8694..05fe0e0 100644
 --- a/src/rx.c
 +++ b/src/rx.c
 @@ -292,9 +292,21 @@ int awdl_rx_action(const struct buf *frame, signed char rssi, uint64_t tsft,

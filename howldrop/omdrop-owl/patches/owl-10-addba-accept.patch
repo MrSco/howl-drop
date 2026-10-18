@@ -1,8 +1,8 @@
 diff --git a/daemon/core.c b/daemon/core.c
-index 214c80d..0862603 100644
+index 214c80d..db63db7 100644
 --- a/daemon/core.c
 +++ b/daemon/core.c
-@@ -110,6 +110,18 @@ void host_device_ready(struct ev_loop *loop, ev_io *handle, int revents) {
+@@ -110,6 +110,21 @@ void host_device_ready(struct ev_loop *loop, ev_io *handle, int revents) {
  		awdl_send_unicast(loop, &state->ev_state.tx_timer, 0);
  }
  
@@ -10,10 +10,13 @@ index 214c80d..0862603 100644
 +	uint8_t buf[256];
 +	const struct awdl_state *awdl = &state->awdl_state;
 +	int len = awdl_init_addba_response(buf, awdl, &state->ieee80211_state);
++	unsigned window = (awdl->addba.params >> 6) & 0x3ff;
 +
++	/* The window we answered with: capped as in awdl_init_addba_response */
++	if (window == 0 || window > 64)
++		window = 64;
 +	log_debug("Block Ack session accepted for peer %s (TID %u, window %u)", ether_ntoa(&awdl->addba.peer),
-+	          (unsigned) ((awdl->addba.params >> 2) & 0xf),
-+	          (unsigned) (((awdl->addba.params >> 6) & 0x3ff) ? ((awdl->addba.params >> 6) & 0x3ff) : 64));
++	          (unsigned) ((awdl->addba.params >> 2) & 0xf), window);
 +	wlan_send(&state->io, buf, len);
 +	state->awdl_state.stats.tx_action++;
 +}
@@ -21,7 +24,7 @@ index 214c80d..0862603 100644
  void awdl_receive_frame(uint8_t *user, const struct pcap_pkthdr *hdr, const uint8_t *buf) {
  #define MAX_NUM_AMPDU 16 /* TODO lookup this constant from the standard */
  	struct daemon_state *state = (void *) user;
-@@ -118,6 +130,8 @@ void awdl_receive_frame(uint8_t *user, const struct pcap_pkthdr *hdr, const uint
+@@ -118,6 +133,8 @@ void awdl_receive_frame(uint8_t *user, const struct pcap_pkthdr *hdr, const uint
  	struct buf *data_arr[MAX_NUM_AMPDU];
  	struct buf **data = &data_arr[0];
  	result = awdl_rx(frame, &data, &data_arr[MAX_NUM_AMPDU], &state->awdl_state);
