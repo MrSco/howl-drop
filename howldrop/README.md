@@ -65,7 +65,7 @@ own that `howldrop.exe` downloads, starts and stops. You need:
   to WSL. HowlDrop offers to install it (`winget install usbipd`).
 
 Turn on **AirDrop on this PC** in the menu. The first time, HowlDrop
-downloads its Linux part (a few hundred MB, from its release, checked against
+downloads its Linux part (about 250 MB, from its release, checked against
 the SHA-256 built into the exe) and imports it as the WSL distro `HowlDrop`,
 and Windows asks once for permission to share the stick with WSL. The dot on
 the icon says how it is going: amber while it starts, green when the PC is
