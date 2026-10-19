@@ -8,6 +8,7 @@
 // replace the tray's notifications for transfers. Windows only.
 
 #include "transfers.hpp"
+#include "ui_win.hpp"
 
 #include <windows.h>
 
@@ -19,6 +20,17 @@
 #include <vector>
 
 namespace howldrop {
+
+// What a transfer says, on a card or in the HowlDrop window's Now list.
+struct CardText {
+    const wchar_t* glyph;
+    ui::Color tint;
+    std::wstring title;  // Receive, Receiving, Received, Sending, Sent, ...
+    std::wstring line;   // who, and what
+};
+CardText card_text(const Transfers::Transfer& t);
+std::wstring card_status(const Transfers::Transfer& t);  // under the progress bar
+double card_fraction(const Transfers::Transfer& t);      // the bar: 0..1, or -1 moving
 
 class Cards {
 public:
@@ -39,6 +51,9 @@ public:
     // The model changed. finished_too: show transfers that just ended (the
     // notifications setting); an ask is always shown.
     void update(const Transfers& model, bool finished_too);
+    // While the HowlDrop window is open it shows the transfers: the cards
+    // keep their state, out of sight.
+    void set_hidden(bool hidden);
 
     struct Card;
 
@@ -52,6 +67,7 @@ private:
     std::wstring inbox_label_;
     Actions actions_;
     bool available_ = false;
+    bool hidden_ = false;
     std::vector<std::unique_ptr<Card>> cards_;  // oldest first, lowest on screen
     std::set<std::string> dismissed_;           // closed by the user: not shown again
 };

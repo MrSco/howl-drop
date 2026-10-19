@@ -16,6 +16,7 @@ add_library(howldrop-core STATIC
     src/purge.cpp
     src/wsl_text.cpp
     src/transfers.cpp
+    src/history.cpp
 )
 target_include_directories(howldrop-core PUBLIC src)
 target_compile_features(howldrop-core PUBLIC cxx_std_17)
@@ -48,7 +49,7 @@ if(WIN32)
     # a terminal attach to it (main.cpp).
     enable_language(RC)
     target_sources(howldrop PRIVATE src/tray_win.cpp src/wsl_win.cpp src/ble_wake_win.cpp src/ui_win.cpp
-                   src/cards_win.cpp res/howldrop.rc)
+                   src/cards_win.cpp src/window_win.cpp res/howldrop.rc)
     set_target_properties(howldrop PROPERTIES WIN32_EXECUTABLE TRUE)
     target_link_libraries(howldrop PRIVATE shell32 user32 advapi32 comdlg32 ole32 uuid winhttp runtimeobject
                           d2d1 dwrite dwmapi windowscodecs)

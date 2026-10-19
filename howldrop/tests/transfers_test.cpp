@@ -1,8 +1,12 @@
 // The transfer cards' model (transfers.hpp): event sequences from the radio
 // in WSL and the Home Assistant route's callbacks, and what each card shows.
+#include "history.hpp"
+#include "text.hpp"
 #include "transfers.hpp"
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -118,6 +122,32 @@ int main() {
         expect(t.all().back().stage == Stage::Declined, "declined, even unannounced");
         t.forget(no);
         expect(!t.find(no), "forgotten");
+    }
+    {
+        // The window's Recent list.
+        namespace history = howldrop::history;
+        const auto dir = std::filesystem::temp_directory_path() / "howldrop-history-test";
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+        const auto file = dir / "history.tsv";
+        const auto photo = dir / "IMG_1.HEIC";
+        std::ofstream(photo) << "x";
+        history::append(file, {100, false, "Rocco’s\tiPhone", howldrop::path_to_utf8(photo)});
+        history::append(file, {200, true, "Rocco’s iPhone", "japan-trip.png"});
+        history::append(file, {300, false, "Pat", howldrop::path_to_utf8(dir / "gone.jpg")});
+        auto recent = history::load(file, 10);
+        expect(recent.size() == 2, "a received file that's gone is left out");
+        expect(recent.size() == 2 && recent[0].out && recent[0].item == "japan-trip.png" && recent[0].time == 200,
+               "newest first");
+        expect(recent.size() == 2 && recent[1].peer == "Rocco’s iPhone", "a tab in a name can't split a line");
+        expect(history::load(file, 1).size() == 1, "at most the limit");
+        for (int i = 0; i < 2 * static_cast<int>(history::kKept) + 1; ++i) {
+            history::append(file, {1000 + i, true, "Pat", "f" + std::to_string(i)});
+        }
+        recent = history::load(file, 1000);
+        expect(recent.size() <= 2 * history::kKept && recent.front().item == "f400", "trimmed, newest kept");
+        expect(history::load(dir / "none.tsv", 10).empty(), "no file, no history");
+        std::filesystem::remove_all(dir);
     }
     expect(Transfers::kind_of("x/IMG.HEIC") == "image" && Transfers::kind_of("x/a.MOV") == "video" &&
                Transfers::kind_of("x/text/t.txt") == "text" && Transfers::kind_of("x/a.url") == "link" &&

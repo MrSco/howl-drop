@@ -76,17 +76,7 @@ struct Cards::Card {
     }
 };
 
-namespace {
-
-// What a card says, by direction and stage.
-struct Words {
-    const wchar_t* glyph;
-    ui::Color tint;
-    std::wstring title;
-    std::wstring line;
-};
-
-Words words(const Transfers::Transfer& t) {
+CardText card_text(const Transfers::Transfer& t) {
     const std::wstring peer = t.peer.empty() ? (t.direction == Direction::In ? L"Someone" : L"your iPhone")
                                              : wide(t.peer);
     const std::wstring items = plural(std::max<std::size_t>(t.count, t.names.size()), L"file", L"files");
@@ -123,6 +113,27 @@ Words words(const Transfers::Transfer& t) {
     }
 }
 
+std::wstring card_status(const Transfers::Transfer& t) {
+    if (t.direction == Direction::In) {
+        if (t.stage == Stage::Moving && t.total) {
+            std::wstring status = ui::size_text(t.bytes) + L" of " + ui::size_text(t.total);
+            if (t.rate > 0) status += L" · " + ui::size_text(static_cast<unsigned long long>(t.rate)) + L"/s";
+            return status;
+        }
+        return t.stage == Stage::Saving ? L"Saving…" : L"Starting…";
+    }
+    std::wstring status = t.detail.empty() ? L"Starting…" : wide(t.detail);
+    if (!status.empty()) status[0] = static_cast<wchar_t>(towupper(status[0]));
+    return status;
+}
+
+double card_fraction(const Transfers::Transfer& t) {
+    if (t.stage == Stage::Saving) return 1.0;
+    return t.direction == Direction::In && t.stage == Stage::Moving ? t.fraction() : -1.0;
+}
+
+namespace {
+
 // Lays the card out and, with paint, draws it. Returns its height.
 float render(Cards::Card& c, const std::wstring& inbox_label, bool paint) {
     ui::Canvas& g = *c.canvas;
@@ -133,7 +144,7 @@ float render(Cards::Card& c, const std::wstring& inbox_label, bool paint) {
     c.buttons.clear();
     if (paint) g.clear(ui::theme::card);
 
-    const Words say = words(t);
+    const CardText say = card_text(t);
     // Header: icon, title, close.
     if (paint) {
         g.text(say.glyph, D2D1::RectF(kPad, y, kPad + 22, y + 24), ui::Font::Icon, say.tint);
@@ -194,24 +205,9 @@ float render(Cards::Card& c, const std::wstring& inbox_label, bool paint) {
     // Progress, with the numbers or the sender's stage under it.
     const bool moving = !t.finished() && t.stage != Stage::Asking;
     if (moving) {
-        const double fraction = t.direction == Direction::In && t.stage == Stage::Moving ? t.fraction()
-                                : t.stage == Stage::Saving                              ? 1.0
-                                                                                        : -1.0;
-        if (paint) g.progress(D2D1::RectF(kPad, y, w - kPad, y + 6), fraction, c.phase);
+        if (paint) g.progress(D2D1::RectF(kPad, y, w - kPad, y + 6), card_fraction(t), c.phase);
         y += 14;
-        std::wstring status;
-        if (t.direction == Direction::In) {
-            if (t.stage == Stage::Moving && t.total) {
-                status = ui::size_text(t.bytes) + L" of " + ui::size_text(t.total);
-                if (t.rate > 0) status += L" · " + ui::size_text(static_cast<unsigned long long>(t.rate)) + L"/s";
-            } else {
-                status = t.stage == Stage::Saving ? L"Saving…" : L"Starting…";
-            }
-        } else {
-            status = t.detail.empty() ? L"Starting…" : wide(t.detail);
-            if (!status.empty()) status[0] = static_cast<wchar_t>(towupper(status[0]));
-        }
-        if (paint) g.text(status, D2D1::RectF(kPad, y, w - kPad, y + 18), ui::Font::Small, ui::theme::dim);
+        if (paint) g.text(card_status(t), D2D1::RectF(kPad, y, w - kPad, y + 18), ui::Font::Small, ui::theme::dim);
         y += 22;
     } else if ((t.stage == Stage::Failed || t.stage == Stage::Declined) && !t.detail.empty()) {
         std::wstring why = wide(t.detail);
@@ -411,9 +407,16 @@ void Cards::place() {
         const int margin = static_cast<int>(std::lround(kMargin * scale));
         const int x = work.right - margin - w;
         const int y = bottom - margin - h;
-        SetWindowPos(c->window, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SetWindowPos(c->window, HWND_TOPMOST, x, y, w, h,
+                     SWP_NOACTIVATE | (hidden_ ? SWP_HIDEWINDOW : SWP_SHOWWINDOW));
         bottom = y - static_cast<int>(std::lround((kGap - kMargin) * scale));
     }
+}
+
+void Cards::set_hidden(bool hidden) {
+    if (hidden == hidden_) return;
+    hidden_ = hidden;
+    place();
 }
 
 void Cards::retire(Card* card) {
