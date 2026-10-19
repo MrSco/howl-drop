@@ -29,7 +29,11 @@ SEND_STATUS=/data/send-status.json
 # Nearby devices: a scan's result (JSON for the panel, a .txt twin for the
 # relay, which tells the PC), and the file whose appearance asks for one.
 NEARBY=/data/send-nearby.json
-SCAN_REQUEST=/data/send-scan.request
+SCAN_REQUEST=${HOWLDROP_SCAN_REQUEST:-/data/send-scan.request}
+# howldrop.exe running this stack in WSL (wsl-run.sh) gives its own outbox
+# (HOWLDROP_OUTBOX), reads events from this script's output
+# (HOWLDROP_EVENTS=stdout, announce.event) and has no use for the panel
+# (HOWLDROP_PANEL=off).
 # Who may send: the senders option, as the receiver's Contacts Only files.
 SENDERS=/senders.py
 SENDERS_CONFIG=${XDG_CONFIG_HOME:-${HOME:-/root}/.config}/omdrop
@@ -1250,6 +1254,11 @@ case "${SAVE_FOLDER:-/share/howldrop}" in
     /*) INBOX=${SAVE_FOLDER:-/share/howldrop} ;;
     *) say "save_folder must be an absolute path such as /share/howldrop; using /share/howldrop." ;;
 esac
+# What is AirDropped to the iPhone: save_folder/send, kept afterwards in its
+# sent/ and failed/. howldrop.exe's own outbox holds copies, deleted once tried.
+SEND_DIR=${HOWLDROP_OUTBOX:-$INBOX/send}
+OUTBOX_ARGS=()
+[ -z "${HOWLDROP_OUTBOX:-}" ] || OUTBOX_ARGS+=(--discard)
 FETCH=$(option fetch_links)
 case "$FETCH" in
     False|false|0|no) FETCH=false ;;
@@ -1275,11 +1284,13 @@ esac
 PANEL_ARGS=(--dest "$INBOX" --history "$HISTORY")
 case "$(option send_to_iphone)" in
     True|true|1|yes)
-        PANEL_ARGS+=(--outbox "$INBOX/send" --send-status "$SEND_STATUS" --nearby "$NEARBY"
+        PANEL_ARGS+=(--outbox "$SEND_DIR" --send-status "$SEND_STATUS" --nearby "$NEARBY"
                      --scan-request "$SCAN_REQUEST") ;;
 esac
-python3 "$PANEL" "${PANEL_ARGS[@]}" 2>&1 | sed -u 's/^/Panel: /' &
-PANEL_PID=$!
+if [ "${HOWLDROP_PANEL:-on}" != off ]; then
+    python3 "$PANEL" "${PANEL_ARGS[@]}" 2>&1 | sed -u 's/^/Panel: /' &
+    PANEL_PID=$!
+fi
 # Off unless asked for: the share folder is the way to use this, and a PC
 # running howldrop.exe is an extra.
 FORWARD=$(option forward_to_pc)
@@ -1430,6 +1441,10 @@ fi
 nmcli device set awdl0 managed no 2>/dev/null || true
 
 touch /tmp/howldrop-running
+if [ "${HOWLDROP_BLE:-on}" = off ]; then
+    # howldrop.exe in WSL: no Bluetooth here; Windows sends the wake itself.
+    vsay "Bluetooth wake: sent by howldrop.exe from Windows' Bluetooth."
+else
 vsay "Bluetooth wake: company id 0x004C, type 0x05, through the host bluetoothd on D-Bus."
 vsay "A Bluetooth 4.2 controller often has one advertising slot. If Home Assistant is already advertising on it, registration fails and the log says REGISTER FAILED. The window still stays up."
 (
@@ -1445,6 +1460,7 @@ vsay "A Bluetooth 4.2 controller often has one advertising slot. If Home Assista
     done
 ) &
 BLE_PID=$!
+fi
 
 if ! ensure_identity || ! ensure_awdl_ipv6; then
     stop_stack
@@ -1532,17 +1548,20 @@ fi
 
 case "$(option send_to_iphone)" in
     True|true|1|yes)
-        mkdir -p "$INBOX/send"
-        say "send_to_iphone (experimental): files copied into ${INBOX}/send, uploaded in the panel or sent from a paired PC are AirDropped to a nearby iPhone set to Everyone for 10 Minutes."
-        python3 "$OUTBOX" --outbox "$INBOX/send" --name "$PC_NAME" --status "$SEND_STATUS" \
-            --to "$(option send_to)" --nearby "$NEARBY" --scan-request "$SCAN_REQUEST" 2>&1 \
+        mkdir -p "$SEND_DIR"
+        say "send_to_iphone (experimental): files copied into ${SEND_DIR}, uploaded in the panel or sent from a paired PC are AirDropped to a nearby iPhone set to Everyone for 10 Minutes."
+        python3 "$OUTBOX" --outbox "$SEND_DIR" --name "$PC_NAME" --status "$SEND_STATUS" \
+            --to "$(option send_to)" --nearby "$NEARBY" --scan-request "$SCAN_REQUEST" "${OUTBOX_ARGS[@]}" 2>&1 \
             | sed -u 's/^/Send: /' &
         # The relay: a paired PC sends here (tray, Explorer's Send to,
         # `howldrop iphone`), into the send folder. Restarted if it exits.
-        if pc_key_ok; then
+        # Not under howldrop.exe in WSL: that PC writes into SEND_DIR itself.
+        if [ -n "${HOWLDROP_OUTBOX:-}" ]; then
+            :
+        elif pc_key_ok; then
             (
                 while [ -f /tmp/howldrop-running ]; do
-                    HOWLDROP_PC_KEY=$PC_KEY "$BRIDGE" relay --inbox "$INBOX/send" \
+                    HOWLDROP_PC_KEY=$PC_KEY "$BRIDGE" relay --inbox "$SEND_DIR" \
                         --nearby "${NEARBY%.json}.txt" --scan-request "$SCAN_REQUEST" 2>&1 | sed -u 's/^/Relay: /'
                     [ -f /tmp/howldrop-running ] || break
                     sleep 5
@@ -1555,6 +1574,7 @@ case "$(option send_to_iphone)" in
 esac
 
 say "Window is up on ${IFACE}. Stopping this add-on gives the card back."
+[ "${HOWLDROP_EVENTS:-}" != stdout ] || printf '@howldrop\tup\t%s\n' "$IFACE"
 # debug_capture: what the radio and the AirDrop TCP carried, as pcap files in
 # save_folder/debug. mon0 keeps each frame's first 256 bytes (radiotap,
 # 802.11, LLC, IPv6, TCP headers), so a stalled upload can be followed frame

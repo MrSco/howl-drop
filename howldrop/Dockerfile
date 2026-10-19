@@ -22,12 +22,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
         cmake \
+        dbus \
         ethtool \
         g++ \
         git \
         gir1.2-glib-2.0 \
         iproute2 \
         iw \
+        kmod \
         libev-dev \
         libnl-3-dev \
         libnl-genl-3-dev \
@@ -44,7 +46,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-gi \
         python3-pip \
         python3-libarchive-c \
+        wireless-regdb \
     && rm -rf /var/lib/apt/lists/*
+
+# For howldrop.exe's WSL distro only (wsl-run.sh): there WSL's kernel drives
+# the stick and finds no firmware of its own. The add-on never loads these;
+# Home Assistant OS has its own. Pinned by hash; linux-firmware's mt7662 files
+# date from 2015.
+ARG LINUX_FIRMWARE=https://gitlab.com/kernel-firmware/linux-firmware/-/raw/main/mediatek
+RUN mkdir -p /usr/lib/howldrop/firmware && cd /usr/lib/howldrop/firmware \
+    && python3 -c "import sys, urllib.request; [urllib.request.urlretrieve(sys.argv[1] + '/' + n, n) for n in sys.argv[2:]]" \
+        "$LINUX_FIRMWARE" mt7662.bin mt7662_rom_patch.bin \
+    && printf '%s\n' \
+        'f7e52492f58088cae50e51a54cca68e4abc5b74f7d0b6b731dbb4c04465a94b6  mt7662.bin' \
+        '6f0e871268f6e4d99196d90d89bcc09fe493d010366260a2cfcaa5dd66095f8c  mt7662_rom_patch.bin' \
+        | sha256sum -c - \
+    && test -f /lib/firmware/regulatory.db-upstream && test -f /lib/firmware/regulatory.db.p7s-upstream
 
 # 0.16.3. Since 0.16.2 the receiver stores an upload whose closing chunk
 # never comes (upstream pull requests 41 and 47).
@@ -109,6 +126,7 @@ assert Image.open('/tmp/t.heic').convert('RGB').getpixel((5, 5))[0] > 150" \
 COPY icon.png /panel/icon.png
 COPY senders.py /senders.py
 COPY run.sh /run.sh
-RUN chmod 755 /run.sh
+COPY wsl-run.sh /wsl-run.sh
+RUN chmod 755 /run.sh /wsl-run.sh
 
 ENTRYPOINT ["/bin/bash", "/run.sh"]

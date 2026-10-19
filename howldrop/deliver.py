@@ -226,6 +226,8 @@ def deliver(path, staging, dest, fetch_links, max_bytes, allow_private=False, an
         line = f'delivered {os.path.relpath(final, dest)}'
     lines = [line]
     announce.record(history, final, dest, sender, url)
+    announce.event('received', os.path.relpath(final, dest).replace(os.sep, '/'), sender,
+                   announce.kind_of(final, url))
     if announcer:
         lines += announcer.drop(final, dest, sender, url)
     return lines

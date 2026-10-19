@@ -109,6 +109,17 @@ def senders(history):
     return out
 
 
+def event(*fields, out=None):
+    """One line for howldrop.exe, when it runs this stack in WSL and reads its
+    output (HOWLDROP_EVENTS=stdout, set by wsl-run.sh): @howldrop, then the
+    fields, tab-separated. A tab or line break inside a field becomes a space,
+    so a line is always one event. Nothing is printed otherwise."""
+    if os.environ.get('HOWLDROP_EVENTS') != 'stdout':
+        return
+    clean = [' '.join(str(f).replace('\t', ' ').splitlines()) for f in fields]
+    print('\t'.join(['@howldrop'] + clean), file=out, flush=True)
+
+
 def text_preview(path):
     try:
         with open(path, encoding='utf-8', errors='replace') as fh:

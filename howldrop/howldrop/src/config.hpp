@@ -7,7 +7,7 @@ namespace howldrop {
 
 // First slice of HowlDrop for Windows. Peers share an ordinary IP network.
 // Nothing here talks to a Wi-Fi driver, Bluetooth, or AWDL.
-constexpr const char* kVersion = "0.15.0";
+constexpr const char* kVersion = "0.17.0";
 constexpr std::uint16_t kDiscoveryPort = 47631;
 constexpr std::uint16_t kTransferPort = 47632;
 constexpr std::uint16_t kControlPort = 47633;

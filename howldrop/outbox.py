@@ -5,7 +5,8 @@
 
 Each file in DIR, once it stops growing, is sent with omdrop-awdl's
 send-to-peer (shipped in /usr/lib/omdrop with the radio tools), then moved
-to DIR/sent, or DIR/failed when it could not be. Files get there by Samba,
+to DIR/sent, or DIR/failed when it could not be (--discard deletes it
+instead: howldrop.exe's outbox holds copies). Files get there by Samba,
 from the panel's Send to iPhone (panel.py), or from a paired PC through the
 relay (howldrop-bridge relay). --status keeps the latest sends, with how
 far each got, as JSON for the panel.
@@ -35,6 +36,9 @@ import sys
 import tempfile
 import threading
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import announce  # noqa: E402
 
 SETTLE_SCANS = 2
 TARGET_SUFFIX = '.howldrop-to'  # beside a file: the device it is for
@@ -242,11 +246,15 @@ def send(path, tool, name, env, window, progress=None, to=None):
             return False, 'several devices nearby, and none (or more than one) called iPhone'
         if 'declined' in text:
             return False, 'declined on the iPhone'
+        if 'ask failed' in text and ('remotedisconnected' in text or 'timed out' in text):
+            # The phone drops the ask when nobody taps Accept (about 30 s).
+            return False, 'not accepted on the iPhone in time: send it again and tap Accept'
         if 'never opened' in text or 'not in the peer table' in text:
             mac = None  # its address rotates; look again
             continue
         last = next((line for line in reversed(lines) if useful(line)), f'the sender exited {code}')
-        return False, last.strip()
+        # A sender log line: its message, without the time and level.
+        return False, re.sub(r'^\d{4}-\d\d-\d\d [\d:,]+ \w+ \w+: \+\s*[\d.]+s\s*', '', last.strip())
     say(f'gave up after {window} s')
     return False, f'the iPhone did not answer within {window // 60} minutes: is AirDrop set to Everyone?'
 
@@ -320,15 +328,23 @@ def write_nearby(path, devices, scanning):
         pass
 
 
+def tell_nearby(devices, scanning):
+    """The scan, for howldrop.exe (announce.event): nearby, scanning or done,
+    then each device's name."""
+    announce.event('nearby', 'scanning' if scanning else 'done', *[name for _, name in devices])
+
+
 def scan(tool, name, env, nearby, previous):
     """Ask every AirDrop device in range for its name (waking them first):
     only those listening now answer, so phones set to Everyone, not Contacts
     Only. Returns what answered."""
     say('looking for nearby devices')
     write_nearby(nearby, previous, True)
+    tell_nearby(previous, True)
     code, lines = run([tool, '--list', '--names', '--name', name], env, 90)
     devices = parse_nearby(lines)
     write_nearby(nearby, devices, False)
+    tell_nearby(devices, False)
     say('nearby: ' + (', '.join(n for _, n in devices) or 'nothing answered (is AirDrop set to Everyone?)'))
     return devices
 
@@ -344,6 +360,7 @@ def main():
     ap.add_argument('--to', default='', help="the iPhone's name (send_to); empty: pick on its own")
     ap.add_argument('--nearby', help='where to keep the latest scan (JSON, and a .txt twin for the relay)')
     ap.add_argument('--scan-request', help='a file whose appearance asks for a scan (panel, relay)')
+    ap.add_argument('--discard', action='store_true', help='delete each file once tried, instead of keeping it')
     a = ap.parse_args()
     tool = os.path.join(a.tools, 'send-to-peer')
     if not os.path.exists(tool):
@@ -389,15 +406,19 @@ def main():
             ok, detail = send(path, tool, a.name, env, a.window, lambda d, job=job: status.update(job, detail=d), to)
             where = 'sent' if ok else 'failed'
             try:
-                shutil.move(path, free_path(os.path.join(a.outbox, where), name))
+                if a.discard:
+                    os.unlink(path)
+                else:
+                    shutil.move(path, free_path(os.path.join(a.outbox, where), name))
             except OSError as e:
-                say(f'could not move {name} to {where}: {e}')
+                say(f'could not {"delete" if a.discard else "move"} {name}: {e}')
             try:
                 os.unlink(path + TARGET_SUFFIX)
             except OSError:
                 pass
             status.update(job, where, f'on {to}' if ok and to else detail)
-            say(f'{name}: {"sent" if ok else "not sent: " + detail}; moved to {where}/')
+            announce.event('sent', name, where, f'on {to}' if ok and to else detail)
+            say(f'{name}: {"sent" if ok else "not sent: " + detail}' + ('' if a.discard else f'; moved to {where}/'))
         time.sleep(a.interval)
 
 
