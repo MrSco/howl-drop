@@ -4,10 +4,15 @@
 
 #include "tray.hpp"
 
+#include "cards_win.hpp"
 #include "clipboard.hpp"
+#include "history.hpp"
 #include "open_policy.hpp"
 #include "purge.hpp"
 #include "text.hpp"
+#include "transfers.hpp"
+#include "ui_win.hpp"
+#include "window_win.hpp"
 #include "wsl_win.hpp"
 
 #include <windows.h>
@@ -15,8 +20,10 @@
 #include <commdlg.h>
 #include <shlobj.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <set>
 #include <cwchar>
 #include <fstream>
 #include <memory>
@@ -33,6 +40,8 @@ constexpr UINT kDropMessage = WM_APP + 2;
 constexpr UINT kRefusedMessage = WM_APP + 3;
 constexpr UINT kSentMessage = WM_APP + 4;
 constexpr UINT kRadioMessage = WM_APP + 5;
+constexpr UINT kTransferMessage = WM_APP + 6;      // a transfer's news from the radio
+constexpr UINT kRadioStoppedMessage = WM_APP + 7;  // a radio turned off has given the stick back
 // Files older than this go from the inbox while the cleanup setting is on,
 // as with the add-on's delete_after_days.
 constexpr int kKeepDays = 30;
@@ -52,6 +61,10 @@ enum : UINT {
     kMenuOpenFolder = 100,
     kMenuRadio,
     kMenuCleanup,
+    kMenuReceiveEveryone,
+    kMenuReceiveAsk,
+    kMenuReceiveContacts,
+    kMenuOpenWindow,
     kMenuNotify,
     kMenuOpenLinks,
     kMenuOpenMedia,
@@ -74,6 +87,10 @@ struct Settings {
     bool send_to_menu = true;      // "iPhone (HowlDrop)" in Explorer's Send to
     bool radio = false;            // AirDrop on this PC: the USB stick, in WSL (wsl_win.hpp)
     bool cleanup = true;           // delete files from the inbox after kKeepDays
+    // Who may send to AirDrop on this PC (WslRadioConfig::receive): everyone,
+    // ask (contacts at once, anyone else after Accept), contacts.
+    std::string receive = "ask";
+    std::string senders;  // the contacts: phone numbers and emails, comma-separated
 };
 
 // A send to the iPhone relay finished, posted from its worker thread.
@@ -90,6 +107,8 @@ struct Drop {
     std::string from;
     bool is_text = false;
     bool to_clipboard = false;  // from this PC's radio: the node did not put it there
+    bool radio = false;         // from this PC's radio, not Home Assistant
+    std::string kind;           // deliver.py's word for it, when the radio said
 };
 
 // From this PC's radio (wsl_win.hpp), posted from its thread. generation
@@ -126,6 +145,13 @@ struct App {
     std::filesystem::path home;  // %LOCALAPPDATA%\HowlDrop
     std::string name;            // this PC's name, for the share sheet
     ULONGLONG last_purge = 0;
+    bool restart_radio = false;  // start it again once the old one has stopped
+    int radios_stopping = 0;     // turned off, still giving the stick back
+    Transfers transfers;
+    std::unique_ptr<Cards> cards;  // the transfer cards, when Direct2D works
+    std::unique_ptr<HowlWindow> howl_window;
+    std::filesystem::path history_file;  // %LOCALAPPDATA%\HowlDrop\history.tsv
+    std::set<std::string> logged;        // transfers already in it
     std::wstring click_target;  // what clicking the last notification opens
     bool click_selects = false;  // show it in its folder instead of opening it
 };
@@ -153,6 +179,13 @@ void load_settings(App& app) {
         if (eq == std::string::npos) continue;
         const std::string key = line.substr(0, eq);
         const bool on = line.compare(eq + 1, 1, "1") == 0;
+        std::string value = line.substr(eq + 1);
+        if (!value.empty() && value.back() == '\r') value.pop_back();
+        if (key == "receive" && (value == "everyone" || value == "ask" || value == "contacts")) {
+            app.settings.receive = value;
+        } else if (key == "senders") {
+            app.settings.senders = value;
+        }
         if (key == "notify") app.settings.notify = on;
         else if (key == "open_links") app.settings.open_links = on;
         else if (key == "open_media") app.settings.open_media = on;
@@ -173,7 +206,9 @@ void save_settings(const App& app) {
         << "share_clipboard=" << app.settings.share_clipboard << '\n'
         << "send_to_menu=" << app.settings.send_to_menu << '\n'
         << "radio=" << app.settings.radio << '\n'
-        << "cleanup=" << app.settings.cleanup << '\n';
+        << "cleanup=" << app.settings.cleanup << '\n'
+        << "receive=" << app.settings.receive << '\n'
+        << "senders=" << app.settings.senders << '\n';
 }
 
 bool starts_with_windows() {
@@ -216,6 +251,8 @@ void show_in_folder(const std::wstring& path) {
 
 void notify(App& app, const std::wstring& title, const std::wstring& message) {
     if (!app.settings.notify) return;
+    // The HowlDrop window is open: it says this itself.
+    if (app.howl_window && app.howl_window->showing()) return;
     NOTIFYICONDATAW data = app.icon;
     data.uFlags = NIF_INFO;
     data.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
@@ -236,10 +273,46 @@ std::wstring preview(const std::string& text) {
     return wide(flat);
 }
 
+bool cards_on(const App& app) { return app.cards && app.cards->available(); }
+
+// Finished transfers go into the window's Recent list, once each.
+void record_history(App& app) {
+    const std::int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+                                 std::chrono::system_clock::now().time_since_epoch())
+                                 .count();
+    for (const auto& t : app.transfers.all()) {
+        if (t.stage != Transfers::Stage::Done || app.logged.count(t.id)) continue;
+        app.logged.insert(t.id);
+        if (t.direction == Transfers::Direction::Out) {
+            for (const auto& name : t.names) history::append(app.history_file, {now, true, t.peer, name});
+        } else {
+            for (const auto& saved : t.saved) {
+                if (saved.is_absolute()) history::append(app.history_file, {now, false, t.peer, path_to_utf8(saved)});
+            }
+        }
+    }
+}
+
+// The transfers changed: the cards, the history and the window follow.
+void update_cards(App& app) {
+    record_history(app);
+    if (cards_on(app)) app.cards->update(app.transfers, app.settings.notify);
+    if (app.howl_window) app.howl_window->refresh();
+}
+
 void handle_drop(App& app, const Drop& drop) {
     const std::wstring from = drop.from.empty() ? L"" : L" from " + wide(drop.from);
     if (drop.is_text) {
         if (drop.to_clipboard && app.clipboard) app.clipboard->set_text(drop.text);
+        if (cards_on(app)) {
+            // From Home Assistant the text has no file here: a stand-in name.
+            const std::filesystem::path where = drop.path.empty() ? std::filesystem::path("text") / "text.txt"
+                                                                  : drop.path;
+            app.transfers.received(where, drop.from, "text", !drop.radio, Transfers::Clock::now());
+            update_cards(app);
+            if (!drop.radio && app.howl_window) app.howl_window->raise();
+            return;
+        }
         app.click_target.clear();
         notify(app, L"Text" + from + L", on the clipboard", preview(drop.text));
         return;
@@ -272,9 +345,31 @@ void handle_drop(App& app, const Drop& drop) {
         open_target(path);
         opened = true;
     }
+    if (cards_on(app)) {
+        app.transfers.received(drop.path, drop.from, drop.kind, !drop.radio, Transfers::Clock::now());
+        update_cards(app);
+        if (!drop.radio && app.howl_window) app.howl_window->raise();  // from Home Assistant: just arrived
+        return;
+    }
     std::wstring title = wide(kind_word(kind)) + from;
     if (opened) title += L", opened";
     notify(app, title, message);
+}
+
+// A card's Open, by the rules a notification's click had: a link's shortcut
+// only as its http(s) address, and nothing that runs (open_policy.hpp): that
+// is shown in its folder instead.
+void open_from_card(const std::filesystem::path& file) {
+    const OpenKind kind = classify(file);
+    if (kind == OpenKind::Link) {
+        const std::string url = shortcut_url(file);
+        if (!url.empty()) open_target(wide(url));
+        else show_in_folder(file.wstring());
+    } else if (kind == OpenKind::Other) {
+        show_in_folder(file.wstring());
+    } else {
+        open_target(file.wstring());
+    }
 }
 
 // --- tray icon and menu ------------------------------------------------------
@@ -288,12 +383,25 @@ void add_icon(App& app) {
 void show_menu(App& app) {
     HMENU menu = CreatePopupMenu();
     const auto check = [](bool on) { return static_cast<UINT>(MF_STRING | (on ? MF_CHECKED : MF_UNCHECKED)); };
+    if (cards_on(app)) {
+        AppendMenuW(menu, MF_STRING, kMenuOpenWindow, L"Open HowlDrop");
+        SetMenuDefaultItem(menu, kMenuOpenWindow, FALSE);
+    }
     AppendMenuW(menu, MF_STRING, kMenuOpenFolder, L"Open HowlDrop folder");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, check(app.settings.radio), kMenuRadio, L"AirDrop on this PC (USB Wi-Fi stick)");
     if (app.settings.radio && !app.radio_state.empty()) {
         AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, (L"      " + app.radio_state).c_str());
     }
+    HMENU who = CreatePopupMenu();
+    const std::string& receive = app.settings.receive;
+    AppendMenuW(who, check(receive == "everyone"), kMenuReceiveEveryone, L"Everyone, without asking");
+    AppendMenuW(who, check(receive == "ask"), kMenuReceiveAsk, L"Everyone, but ask me (contacts without asking)");
+    AppendMenuW(who, check(receive == "contacts") | (app.settings.senders.empty() ? MF_GRAYED : 0),
+                kMenuReceiveContacts,
+                app.settings.senders.empty() ? L"Contacts only (add contacts in the HowlDrop window)"
+                                             : L"Contacts only");
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(who), L"Who can send to this PC");
     AppendMenuW(menu, check(app.settings.cleanup), kMenuCleanup,
                 (L"Delete files here after " + std::to_wstring(kKeepDays) + L" days").c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -381,8 +489,10 @@ void update_send_to(const App& app) {
     link->Release();
 }
 
-// Pick files and send each to the relay in the background, to the device
-// named to (empty: the add-on's default); on_sent reports.
+void send_files(App& app, const std::vector<std::filesystem::path>& files, const std::string& to);
+
+// Pick files and send each in the background, to the device named to
+// (empty: any nearby iPhone); on_sent reports.
 void send_files_to_iphone(App& app, const std::string& to) {
     std::vector<wchar_t> buffer(64 * 1024, L'\0');
     OPENFILENAMEW ofn{};
@@ -406,7 +516,20 @@ void send_files_to_iphone(App& app, const std::string& to) {
     } else {
         for (; *next; next += std::wcslen(next) + 1) files.push_back(std::filesystem::path(first) / next);
     }
+    send_files(app, files, to);
+}
+
+// Send files to the iPhone in the background (this PC's radio, or the
+// add-on's relay), to the device named to (empty: any nearby iPhone).
+void send_files(App& app, const std::vector<std::filesystem::path>& files, const std::string& to) {
     Node* node = app.node.get();
+    if (!node || files.empty()) return;
+    // A card for each at once, before the phone is even found.
+    const bool local = node->iphone_nearby().local;
+    for (const auto& file : files) {
+        app.transfers.sending(filename_utf8(file), to, !local, Transfers::Clock::now());
+    }
+    update_cards(app);
     app.senders.emplace_back([node, files, to]() {
         for (const auto& file : files) node->send_to_iphone(file, to);
     });
@@ -564,18 +687,30 @@ void post_radio(unsigned generation, std::string state, int up, RadioLevel level
 
 void start_radio(App& app) {
     if (app.radio) return;
+    if (app.radios_stopping > 0) {
+        // The stick is still on its way back from the last one.
+        app.restart_radio = true;
+        return;
+    }
     const unsigned generation = ++app.radio_generation;
     WslRadioConfig config;
     config.inbox = app.inbox;
     config.home = app.home;
     config.name = app.name;
+    config.receive = app.settings.receive;
+    config.senders = app.settings.senders;
+    config.on_event = [](const std::vector<std::string>& event) {
+        auto* copy = new std::vector<std::string>(event);
+        if (!g_app || !g_app->window || !PostMessageW(g_app->window, kTransferMessage, 0, reinterpret_cast<LPARAM>(copy)))
+            delete copy;
+    };
     config.on_state = [generation](const std::string& state, RadioLevel level) {
         post_radio(generation, state, -1, level);
     };
     config.on_up = [generation](bool up) { post_radio(generation, {}, up ? 1 : 0); };
     config.on_received = [](const std::filesystem::path& saved, const std::string& from, const std::string& kind) {
         if (kind != "text") {
-            post_drop(new Drop{saved, {}, from, false});
+            post_drop(new Drop{saved, {}, from, false, false, true, kind});
             return;
         }
         // Text: onto the clipboard, as from Home Assistant.
@@ -583,7 +718,7 @@ void start_radio(App& app) {
         std::string text(kMaxClipBytes, '\0');
         in.read(text.data(), static_cast<std::streamsize>(text.size()));
         text.resize(static_cast<std::size_t>(in.gcount()));
-        post_drop(new Drop{saved, text, from, true, true});
+        post_drop(new Drop{saved, text, from, true, true, true, kind});
     };
     config.on_sent = [](const std::string& file, const Status& status) { post_sent(file, status); };
     config.ask = [](const std::wstring& question) {
@@ -609,8 +744,20 @@ void stop_radio(App& app, bool wait) {
     if (wait) {
         radio->stop();
     } else {
-        app.senders.emplace_back([radio]() { radio->stop(); });
+        ++app.radios_stopping;
+        HWND window = app.window;
+        app.senders.emplace_back([radio, window]() {
+            radio->stop();
+            PostMessageW(window, kRadioStoppedMessage, 0, 0);
+        });
     }
+}
+
+// Who can send changed: the receiver reads it as it starts.
+void restart_radio(App& app) {
+    if (!app.radio) return;
+    stop_radio(app, false);
+    start_radio(app);  // after the old one has stopped (restart_radio)
 }
 
 void handle_radio(App& app, const RadioNote& note) {
@@ -627,6 +774,63 @@ void handle_radio(App& app, const RadioNote& note) {
         set_tip(app);
         log_line(app, "AirDrop on this PC: " + note.state);
     }
+}
+
+// --- the HowlDrop window ----------------------------------------------------------
+
+WindowSettings window_settings(const App& app) {
+    WindowSettings s;
+    s.radio = app.settings.radio;
+    s.cleanup = app.settings.cleanup;
+    s.notify = app.settings.notify;
+    s.open_links = app.settings.open_links;
+    s.open_media = app.settings.open_media;
+    s.open_documents = app.settings.open_documents;
+    s.start_with_windows = starts_with_windows();
+    s.receive = app.settings.receive;
+    s.senders = app.settings.senders;
+    return s;
+}
+
+void purge_inbox(App& app);
+
+// The window's settings page changed something: as the menu would.
+void apply_window_settings(App& app, const WindowSettings& s) {
+    const bool radio_changed = s.radio != app.settings.radio;
+    const bool who_changed = s.receive != app.settings.receive || s.senders != app.settings.senders;
+    const bool cleanup_on = s.cleanup && !app.settings.cleanup;
+    app.settings.radio = s.radio;
+    app.settings.cleanup = s.cleanup;
+    app.settings.notify = s.notify;
+    app.settings.open_links = s.open_links;
+    app.settings.open_media = s.open_media;
+    app.settings.open_documents = s.open_documents;
+    app.settings.receive = s.receive;
+    app.settings.senders = s.senders;
+    if (s.start_with_windows != starts_with_windows()) set_start_with_windows(s.start_with_windows);
+    save_settings(app);
+    if (radio_changed) {
+        if (s.radio) start_radio(app);
+        else stop_radio(app, false);
+    } else if (who_changed) {
+        restart_radio(app);
+    }
+    if (cleanup_on) {
+        app.last_purge = 0;
+        purge_inbox(app);
+    }
+    if (app.howl_window) app.howl_window->refresh();
+}
+
+std::wstring status_text(const App& app) {
+    if (app.settings.radio) {
+        const std::string& r = app.settings.receive;
+        const std::wstring who = r == "everyone" ? L"everyone can send" : r == "ask" ? L"asks first" : L"contacts only";
+        return (app.radio_state.empty() ? std::wstring(L"Starting") : app.radio_state) + L" · " + who;
+    }
+    const Node::Nearby around = app.node ? app.node->iphone_nearby() : Node::Nearby{};
+    if (around.relay) return L"Through Home Assistant";
+    return L"AirDrop on this PC is off: turn it on in Settings";
 }
 
 // Once a day while the cleanup setting is on.
@@ -658,7 +862,8 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                     return 0;
                 case NIN_SELECT:  // a click, or Enter on the icon
                 case NIN_KEYSELECT:
-                    open_folder(*app);
+                    if (app->howl_window && cards_on(*app)) app->howl_window->show();
+                    else open_folder(*app);
                     return 0;
                 case NIN_BALLOONUSERCLICK:
                     if (app->click_target.empty()) open_folder(*app);
@@ -675,6 +880,11 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         }
         case kSentMessage: {
             std::unique_ptr<Sent> sent(reinterpret_cast<Sent*>(lparam));
+            if (cards_on(*app)) {
+                app->transfers.sent(sent->file, sent->ok, sent->message, Transfers::Clock::now());
+                update_cards(*app);
+                return 0;
+            }
             app->click_target.clear();
             // Said even with notifications off: it answers what was just asked.
             const bool notify_was = app->settings.notify;
@@ -693,6 +903,21 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             handle_radio(*app, *note);
             return 0;
         }
+        case kTransferMessage: {
+            std::unique_ptr<std::vector<std::string>> event(reinterpret_cast<std::vector<std::string>*>(lparam));
+            if (!app->transfers.apply(*event, Transfers::Clock::now()).empty()) update_cards(*app);
+            // An AirDrop coming in: an open window comes to the top to show it.
+            const std::string& what = event->empty() ? std::string() : event->front();
+            if ((what == "ask" || what == "incoming") && app->howl_window) app->howl_window->raise();
+            return 0;
+        }
+        case kRadioStoppedMessage:
+            if (app->radios_stopping > 0) --app->radios_stopping;
+            if (app->radios_stopping == 0 && app->restart_radio) {
+                app->restart_radio = false;
+                if (app->settings.radio) start_radio(*app);
+            }
+            return 0;
         case kRefusedMessage: {
             // A sender without this PC's pairing key: most likely the add-on
             // before pc_key is set. Said at most every 10 minutes.
@@ -710,6 +935,9 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         case WM_COMMAND:
             switch (LOWORD(wparam)) {
                 case kMenuOpenFolder: open_folder(*app); break;
+                case kMenuOpenWindow:
+                    if (app->howl_window) app->howl_window->show();
+                    return 0;
                 case kMenuRadio:
                     app->settings.radio = !app->settings.radio;
                     if (app->settings.radio) start_radio(*app);
@@ -720,6 +948,19 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                     app->last_purge = 0;
                     purge_inbox(*app);
                     break;
+                case kMenuReceiveEveryone:
+                case kMenuReceiveAsk:
+                case kMenuReceiveContacts: {
+                    const UINT id = LOWORD(wparam);
+                    const std::string mode = id == kMenuReceiveEveryone ? "everyone"
+                                             : id == kMenuReceiveAsk    ? "ask"
+                                                                        : "contacts";
+                    if (mode != app->settings.receive) {
+                        app->settings.receive = mode;
+                        restart_radio(*app);
+                    }
+                    break;
+                }
                 case kMenuNotify: app->settings.notify = !app->settings.notify; break;
                 case kMenuOpenLinks: app->settings.open_links = !app->settings.open_links; break;
                 case kMenuOpenMedia: app->settings.open_media = !app->settings.open_media; break;
@@ -754,6 +995,17 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             }
             check_scan(*app);
             purge_inbox(*app);
+            if (!app->transfers.expire(Transfers::Clock::now()).empty()) update_cards(*app);
+            {
+                // Long over and in the history: the model lets them go.
+                std::vector<std::string> old;
+                const auto now = Transfers::Clock::now();
+                for (const auto& t : app->transfers.all()) {
+                    if (t.finished() && now - t.updated > std::chrono::minutes(5)) old.push_back(t.id);
+                }
+                for (const auto& id : old) app->transfers.forget(id);
+            }
+            if (app->howl_window) app->howl_window->refresh();  // status, nearby devices
             return 0;
         case WM_DESTROY:
             KillTimer(window, kStopTimer);
@@ -773,6 +1025,8 @@ void post_drop(Drop* drop) {
 }  // namespace
 
 int run_tray(Node::Config config) {
+    // Sharp text in the cards and the window on any monitor's scale.
+    ui::enable_dpi_awareness();
     // One tray app per user: a second start would only fail to bind the ports.
     HANDLE single = CreateMutexW(nullptr, TRUE, L"Local\\HowlDropTray");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -792,6 +1046,7 @@ int run_tray(Node::Config config) {
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     app.settings_file = dir / L"settings.ini";
+    app.history_file = dir / L"history.tsv";
     app.log_file = dir / L"howldrop.log";
     app.home = dir;
     app.name = config.name;
@@ -830,11 +1085,12 @@ int run_tray(Node::Config config) {
     copy_into(app.icon.szTip, ARRAYSIZE(app.icon.szTip), L"HowlDrop: files go to " + app.inbox.wstring());
     add_icon(app);
 
+    // From Home Assistant (or another HowlDrop PC), through the node.
     config.on_file = [](const std::filesystem::path& saved, const std::string& from) {
-        post_drop(new Drop{saved, {}, from, false});
+        post_drop(new Drop{saved, {}, from, false, false, false, {}});
     };
     config.on_text = [](const std::string& text, const std::string& from) {
-        post_drop(new Drop{{}, text, from, true});
+        post_drop(new Drop{{}, text, from, true, false, false, {}});
     };
     config.on_sent = [](const std::string& file, const Status& status) { post_sent(file, status); };
     const std::filesystem::path log_file = app.log_file;
@@ -862,6 +1118,63 @@ int run_tray(Node::Config config) {
     }
     SetTimer(app.window, kStopTimer, 1000, nullptr);
     const bool com = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED));
+    // The transfer cards (COM first: thumbnails come from the shell).
+    {
+        const auto downloads = app.inbox.parent_path().filename().wstring();
+        const std::wstring label = (downloads.empty() ? std::wstring() : downloads + L"\\") +
+                                   app.inbox.filename().wstring();
+        Cards::Actions actions;
+        actions.decide = [](const std::string& id, bool accept) {
+            if (g_app && g_app->radio) g_app->radio->decide(id, accept);
+        };
+        actions.open = [](const std::filesystem::path& file) { open_from_card(file); };
+        actions.show = [](const std::filesystem::path& file) { show_in_folder(file.wstring()); };
+        actions.retired = [](const std::string& id) {
+            if (g_app) g_app->transfers.forget(id);
+        };
+        app.cards = std::make_unique<Cards>(instance, label, std::move(actions));
+    }
+    // The HowlDrop window, opened from the icon.
+    {
+        HowlWindow::Hooks hooks;
+        hooks.settings = []() { return g_app ? window_settings(*g_app) : WindowSettings{}; };
+        hooks.apply = [](const WindowSettings& s) {
+            if (g_app) apply_window_settings(*g_app, s);
+        };
+        hooks.nearby = []() { return g_app && g_app->node ? g_app->node->iphone_nearby() : Node::Nearby{}; };
+        hooks.scan = []() {
+            if (g_app) look_for_devices(*g_app);
+        };
+        hooks.send = [](const std::vector<std::filesystem::path>& files, const std::string& to) {
+            if (g_app) send_files(*g_app, files, to);
+        };
+        hooks.open = [](const std::filesystem::path& file) { open_from_card(file); };
+        hooks.show = [](const std::filesystem::path& file) { show_in_folder(file.wstring()); };
+        hooks.open_folder = []() {
+            if (g_app) open_folder(*g_app);
+        };
+        hooks.status = []() { return g_app ? status_text(*g_app) : std::wstring(); };
+        hooks.level = []() { return g_app && g_app->radio ? g_app->radio_level : RadioLevel::Off; };
+        hooks.transfers = []() {
+            std::vector<Transfers::Transfer> out;
+            if (!g_app) return out;
+            const auto now = Transfers::Clock::now();
+            for (const auto& t : g_app->transfers.all()) {
+                // Under way, or just over (a card would still show it).
+                if (!t.finished() || now - t.updated < std::chrono::seconds(10)) out.push_back(t);
+            }
+            return out;
+        };
+        hooks.decide = [](const std::string& id, bool accept) {
+            if (!g_app) return;
+            if (g_app->radio) g_app->radio->decide(id, accept);
+            if (g_app->cards) g_app->cards->dismiss(id);  // answered here: no card later
+        };
+        hooks.on_visibility = [](bool showing) {
+            if (g_app && g_app->cards) g_app->cards->set_hidden(showing);
+        };
+        app.howl_window = std::make_unique<HowlWindow>(instance, wide(app.name), app.history_file, std::move(hooks));
+    }
     update_send_to(app);
     purge_inbox(app);
     if (app.settings.radio) start_radio(app);
@@ -882,6 +1195,8 @@ int run_tray(Node::Config config) {
         if (sender.joinable()) sender.join();
     }
     app.node->stop();
+    app.howl_window.reset();  // thumbnails are COM objects
+    app.cards.reset();
     g_app = nullptr;
     if (com) CoUninitialize();
     if (single) CloseHandle(single);

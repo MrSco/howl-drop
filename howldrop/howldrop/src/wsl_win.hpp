@@ -37,12 +37,20 @@ struct WslRadioConfig {
     std::filesystem::path inbox;  // where files land (the tray's, Downloads\HowlDrop)
     std::filesystem::path home;   // %LOCALAPPDATA%\HowlDrop: the distro, the outbox, radio.log
     std::string name;             // what the iPhone's share sheet shows
+    // Who may send: "everyone", "ask" (contacts at once, anyone else after
+    // Accept on the PC) or "contacts"; senders: comma-separated phone
+    // numbers and emails (wsl-run.sh --receive, --senders).
+    std::string receive = "ask";
+    std::string senders;
     // All called on the radio's own thread.
     std::function<void(const std::string& state, RadioLevel level)> on_state;  // a line for the menu
     std::function<void(bool up)> on_up;                      // on the share sheet, or not any more
     std::function<void(const std::filesystem::path& saved, const std::string& from, const std::string& kind)>
         on_received;
     std::function<void(const std::string& file, const Status& status)> on_sent;
+    // A transfer's news for its card (transfers.hpp): ask, asked, incoming,
+    // receiving, stored, failed, sending; the fields after @howldrop.
+    std::function<void(const std::vector<std::string>& event)> on_event;
     // A yes/no question for the user (installing usbipd-win).
     std::function<bool(const std::wstring& question)> ask;
 };
@@ -59,6 +67,9 @@ public:
     // Stops the stack, detaches the stick and stops the distro; blocks
     // until done (up to about a minute).
     void stop();
+
+    // The user's answer to an ask (howl_ask.py waits for it).
+    void decide(const std::string& id, bool accept);
 
     Status queue(const std::filesystem::path& path, const std::string& to) override;
     Node::Nearby nearby() const override;
@@ -87,6 +98,7 @@ private:
     WslRadioConfig config_;
     std::filesystem::path outbox_;
     std::filesystem::path scan_request_;
+    std::filesystem::path asks_;  // the answers to asks, one file each
     std::filesystem::path usbipd_;
     std::thread thread_;
     std::atomic<bool> stop_{false};

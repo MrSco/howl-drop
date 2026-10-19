@@ -12,6 +12,11 @@ It also stays off the share sheet of a sender it can identify as unknown.
 An empty `senders` means everyone nearby, as before. The files are rewritten
 on every start, so removing the last sender turns the restriction off.
 
+howldrop.exe's "Everyone, ask me" (option `receive` = `ask`, written by
+wsl-run.sh) keeps visibility `everyone` and still writes known-senders: the
+receiver then accepts those contacts at once and asks the PC's user about
+anyone else (howl_ask.py).
+
 The log names counts, never identifiers.
 
   senders.py --options /data/options.json --config /root/.config/omdrop
@@ -72,7 +77,17 @@ def write(config, options):
             bucket.append(value)
     known = config / 'known-senders'
     visibility = config / 'visibility'
-    if not phones and not emails:
+    ask = options.get('receive') == 'ask'
+    if ask:
+        visibility.write_text('everyone\n')
+        if phones or emails:
+            known.write_text(''.join(f'{v}\n' for v in phones + emails))
+            known.chmod(0o600)
+        else:
+            known.unlink(missing_ok=True)
+        lines = [f'Senders: everyone nearby; {len(phones) + len(emails)} contact(s) are accepted at once, '
+                 'anyone else is asked about on the PC.']
+    elif not phones and not emails:
         visibility.write_text('everyone\n')
         known.unlink(missing_ok=True)
         lines = ['Senders: everyone nearby can send (the senders option is empty).']

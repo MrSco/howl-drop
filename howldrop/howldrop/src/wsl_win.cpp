@@ -285,6 +285,7 @@ std::string lower(std::string s) {
 WslRadio::WslRadio(WslRadioConfig config) : config_(std::move(config)) {
     outbox_ = config_.home / L"outbox";
     scan_request_ = outbox_ / L".scan-request";
+    asks_ = config_.home / L"asks";
     // wsl.exe's own messages (and --list) in UTF-8, not UTF-16.
     SetEnvironmentVariableW(L"WSL_UTF8", L"1");
 }
@@ -615,15 +616,18 @@ void WslRadio::run_stack(const std::string& busid) {
     const auto save = wsl::wsl_path(path_to_utf8(config_.inbox));
     const auto outbox = wsl::wsl_path(path_to_utf8(outbox_));
     const auto scan = wsl::wsl_path(path_to_utf8(scan_request_));
+    const auto asks = wsl::wsl_path(path_to_utf8(asks_));
     std::error_code ec;
     fs::remove(scan_request_, ec);
+    fs::create_directories(asks_, ec);
     if (stopping()) return;
     state("Starting");
     auto stack = std::make_shared<ChildProcess>();
     std::string error;
     if (!stack->start(wsl_exe(),
                       in_distro({L"/wsl-run.sh", L"--name", wide(config_.name), L"--save", wide(*save), L"--outbox",
-                                 wide(*outbox), L"--scan-request", wide(*scan)}),
+                                 wide(*outbox), L"--scan-request", wide(*scan), L"--receive", wide(config_.receive),
+                                 L"--senders", wide(config_.senders), L"--ask-dir", wide(asks.value_or(""))}),
                       error)) {
         state("Couldn't start the Linux part: " + error, RadioLevel::Problem);
         return;
@@ -696,6 +700,9 @@ void WslRadio::handle_line(const std::string& line, const std::string& busid) {
         if (config_.on_sent) {
             config_.on_sent(field(1), field(2) == "sent" ? Status::success(field(3)) : Status::failure(field(3)));
         }
+    } else if (what == "ask" || what == "asked" || what == "incoming" || what == "receiving" || what == "stored" ||
+               what == "failed" || what == "sending") {
+        if (config_.on_event) config_.on_event(f);
     } else if (what == "nearby") {
         bool done = false;
         {
@@ -722,6 +729,15 @@ void WslRadio::give_back(const std::string& busid) {
     std::string out;
     run_command(usbipd_, {L"detach", L"--busid", wide(busid)}, out, 30000);
     log("usbipd detach: " + trim(out));
+}
+
+void WslRadio::decide(const std::string& id, bool accept) {
+    // An id is howl_ask.new_id()'s hex; anything else names no ask.
+    if (id.empty() || id.size() > 32 || id.find_first_not_of("0123456789abcdef") != std::string::npos) return;
+    std::error_code ec;
+    fs::create_directories(asks_, ec);
+    std::ofstream(asks_ / (id + (accept ? ".accept" : ".decline")), std::ios::binary) << '\n';
+    log(std::string("ask ") + id + (accept ? ": accepted on the PC" : ": declined on the PC"));
 }
 
 // --- sending to the iPhone (Node::LocalIphone) ----------------------------------------
@@ -768,7 +784,7 @@ Node::Nearby WslRadio::nearby() const {
 
 Status WslRadio::scan() {
     if (!up_.load()) return Status::failure("AirDrop on this PC isn't on yet");
-    hold_wake(100);  // the scan asks for 90 s; the phone only answers once woken
+    hold_wake(150);  // up to three tries (outbox.py scan); the phone only answers once woken
     std::ofstream(scan_request_, std::ios::binary) << "scan\n";
     {
         std::lock_guard<std::mutex> hold(nearby_mu_);

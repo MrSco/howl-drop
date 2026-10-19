@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.0
+
+- Look for devices asks again, up to three times, when nothing answers: a phone that has just finished a transfer can be out of reach for a few seconds.
+- For **howldrop.exe 0.18.0** only (AirDrop on a Windows PC): the receiver can hold an incoming AirDrop for Accept or Decline on the PC, tell contacts from others in Everyone mode, and report an upload's progress. None of it is on in the add-on.
+
 ## 0.17.0
 
 - Nothing changes for the add-on itself. This image is also the Linux part of **howldrop.exe 0.17.0**'s new AirDrop on this PC (a Windows PC with a USB MT7612U stick, no Home Assistant), so it carries the stick's firmware, the wireless regulatory database and `kmod` for that, which the add-on never uses.
