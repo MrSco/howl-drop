@@ -57,6 +57,8 @@ public:
     // While the HowlDrop window is open it shows the transfers: the cards
     // keep their state, out of sight.
     void set_hidden(bool hidden);
+    // A transfer the window dealt with (answered there): no card for it.
+    void dismiss(const std::string& id);
 
     struct Card;
 

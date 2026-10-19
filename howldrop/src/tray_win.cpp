@@ -996,6 +996,15 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             check_scan(*app);
             purge_inbox(*app);
             if (!app->transfers.expire(Transfers::Clock::now()).empty()) update_cards(*app);
+            {
+                // Long over and in the history: the model lets them go.
+                std::vector<std::string> old;
+                const auto now = Transfers::Clock::now();
+                for (const auto& t : app->transfers.all()) {
+                    if (t.finished() && now - t.updated > std::chrono::minutes(5)) old.push_back(t.id);
+                }
+                for (const auto& id : old) app->transfers.forget(id);
+            }
             if (app->howl_window) app->howl_window->refresh();  // status, nearby devices
             return 0;
         case WM_DESTROY:
@@ -1157,7 +1166,9 @@ int run_tray(Node::Config config) {
             return out;
         };
         hooks.decide = [](const std::string& id, bool accept) {
-            if (g_app && g_app->radio) g_app->radio->decide(id, accept);
+            if (!g_app) return;
+            if (g_app->radio) g_app->radio->decide(id, accept);
+            if (g_app->cards) g_app->cards->dismiss(id);  // answered here: no card later
         };
         hooks.on_visibility = [](bool showing) {
             if (g_app && g_app->cards) g_app->cards->set_hidden(showing);

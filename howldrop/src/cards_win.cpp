@@ -428,7 +428,32 @@ void Cards::place() {
 void Cards::set_hidden(bool hidden) {
     if (hidden == hidden_) return;
     hidden_ = hidden;
+    if (!hidden_) {
+        // Back from the window, which showed how these ended: only what's
+        // still under way comes back as a card.
+        std::vector<std::string> over;
+        for (const auto& c : cards_) {
+            if (c->t.finished()) over.push_back(c->t.id);
+        }
+        for (const auto& id : over) {
+            dismissed_.insert(id);
+            auto it = std::find_if(cards_.begin(), cards_.end(), [&](const auto& c) { return c->t.id == id; });
+            if (it != cards_.end()) {
+                cards_.erase(it);
+                if (actions_.retired) actions_.retired(id);
+            }
+        }
+    }
     place();
+}
+
+void Cards::dismiss(const std::string& id) {
+    dismissed_.insert(id);
+    auto it = std::find_if(cards_.begin(), cards_.end(), [&](const auto& c) { return c->t.id == id; });
+    if (it == cards_.end()) return;
+    cards_.erase(it);
+    place();
+    // Not retired: the window still shows it, from the model.
 }
 
 void Cards::retire(Card* card) {

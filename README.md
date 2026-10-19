@@ -10,7 +10,8 @@ back to the phone.
 
 All it takes is `howldrop.exe` and a USB Wi-Fi stick with a MediaTek
 **MT7612U** (e.g. Alfa AWUS036ACM). No Mac, no Home Assistant, nothing on the
-phone.
+phone. **[Which Wi-Fi adapter?](docs/adapters.md)** lists what works, what
+might, and what can't (your PC's built-in Wi-Fi can't, on Windows).
 
 <p align="center">
   <img src="docs/screenshots/window.png" alt="The HowlDrop window: a transfer under way, the drop zone, nearby devices and recent transfers" width="320">
@@ -84,6 +85,7 @@ There the radio can be any Wi-Fi card
 that is not the machine's network uplink runs exclusive mode for as long as
 the add-on runs; one that is the uplink can run shared mode. The MT7612U is
 the tested choice: it follows the iPhone onto 5 GHz, where transfers run. See
+[Which Wi-Fi adapter?](docs/adapters.md) and
 [docs/hardware-notes.md](docs/hardware-notes.md).
 
 The `ha-addon` branch is the add-on assembled from `main` by CI
