@@ -14,6 +14,7 @@
 #include <shellapi.h>
 #include <winhttp.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cwchar>
 #include <fstream>
