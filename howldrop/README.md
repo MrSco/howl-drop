@@ -1,11 +1,15 @@
 # HowlDrop for Windows
 
-`howldrop.exe` gets what an iPhone AirDrops to the HowlDrop Home Assistant
-add-on (with the add-on's `forward_to_pc` on), and sends files and clipboard
-text between HowlDrop PCs on the same network. Ethernet is enough: the PC
-needs no Wi-Fi card, Bluetooth or AWDL. The add-on (`addon/` in this repo)
-runs the AirDrop radio and `howldrop-bridge`, which forwards each file or
-shared text to this program.
+`howldrop.exe` gets what an iPhone AirDrops, and AirDrops to it, two ways:
+
+- **AirDrop on this PC**: with a USB MT7612U Wi-Fi stick in the PC, the PC
+  itself is on the iPhone's share sheet. No Home Assistant (below).
+- **Through Home Assistant**: the HowlDrop add-on (`addon/` in this repo)
+  runs the radio and forwards each file or text here (its `forward_to_pc`).
+  Ethernet is enough: the PC needs no Wi-Fi card or Bluetooth.
+
+It also sends files and clipboard text between HowlDrop PCs on the same
+network.
 
 Download `howldrop.exe` from
 [Releases](https://github.com/MrSco/howl-drop/releases/latest). It is one
@@ -25,11 +29,13 @@ Start `howldrop.exe` (double-click it). It runs by the clock, with no window:
 
 | Menu item | Default | |
 |---|---|---|
+| AirDrop on this PC (USB Wi-Fi stick) | off | The PC's own radio (below). The line under it says how it is going. |
+| Delete files here after 30 days | on | Files in `Downloads\HowlDrop` go 30 days after they arrived, as the add-on's `delete_after_days`. |
 | Show notifications | on | |
 | Open links in the browser | on | A shared web page opens, as on a Mac. Only `http` and `https` addresses. |
 | Open photos and videos | off | Opens each one in your photo or video app. |
 | Open PDFs and text files | off | `.pdf` and `.txt` only. |
-| Send to iPhone | | **Look for devices**, then a device (or **Any nearby iPhone**), then files: AirDropped through the add-on (below). |
+| Send to iPhone | | **Look for devices**, then a device (or **Any nearby iPhone**), then files: AirDropped by this PC's radio when it is on, else through the add-on (below). |
 | "iPhone" in Explorer's Send to menu | on | Right-click a file, **Send to**, **iPhone (HowlDrop)**. |
 | Copy pairing key | | For the add-on's `pc_key` (below). |
 | Share what I copy with my other HowlDrop PCs | off | Sends each copied text to your other paired PCs. |
@@ -45,13 +51,42 @@ in `%LOCALAPPDATA%\HowlDrop\settings.ini`, the log in
 Windows asks once whether to let `howldrop.exe` through the firewall: allow
 it on private networks (UDP 47631, TCP 47632).
 
+## AirDrop on this PC
+
+Windows' own Wi-Fi drivers cannot do AirDrop's Wi-Fi (AWDL), so the radio
+runs in Linux: the Home Assistant add-on's stack, in a WSL 2 distro of its
+own that `howldrop.exe` downloads, starts and stops. You need:
+
+- Windows 11 (or 10) with WSL 2 (`wsl --install` in an administrator terminal,
+  then restart). Its kernel has the stick's driver.
+- A USB Wi-Fi stick with a MediaTek **MT7612U** (`0e8d:7612`, e.g. Alfa
+  AWUS036ACM). A USB 2.0 port worked best.
+- [usbipd-win](https://github.com/dorssel/usbipd-win), which hands the stick
+  to WSL. HowlDrop offers to install it (`winget install usbipd`).
+
+Turn on **AirDrop on this PC** in the menu. The first time, HowlDrop
+downloads its Linux part (a few hundred MB, from its release, checked against
+the SHA-256 built into the exe) and imports it as the WSL distro `HowlDrop`,
+and Windows asks once for permission to share the stick with WSL. The dot on
+the icon says how it is going: amber while it starts, green when the PC is
+on the share sheet (by its name), red when it needs you (no stick, say), and
+none while it is off. Turning it off, or quitting, gives the stick back to
+Windows.
+
+Files land in `Downloads\HowlDrop` (one copy; the Linux side writes there
+directly), text goes on the clipboard, and nothing listens on the network
+between the two halves. Sending to the iPhone needs the PC's Bluetooth on:
+HowlDrop wakes the phone with a Bluetooth advert while it sends or looks for
+devices, and your Bluetooth devices stay connected. The radio's log is
+`%LOCALAPPDATA%\HowlDrop\radio.log`.
+
 ## Sending to your iPhone
 
-The PC has no AirDrop radio, so it sends to the add-on, which AirDrops it:
-turn on the add-on's `send_to_iphone` (with `pc_key` set), set the iPhone's
-AirDrop to **Everyone for 10 Minutes**, send, and accept on the phone. A
-notification says when the add-on has the file. The add-on's relay shows up
-in `howldrop peers` as **iPhone (HowlDrop)**.
+Set the iPhone's AirDrop to **Everyone for 10 Minutes**, send, and accept on
+the phone. With **AirDrop on this PC** on, the PC sends it itself. Otherwise
+it goes to the add-on, which AirDrops it: turn on the add-on's
+`send_to_iphone` (with `pc_key` set). The add-on's relay shows up in
+`howldrop peers` as **iPhone (HowlDrop)**. A notification says how it went.
 
 ## Pairing
 
@@ -86,8 +121,8 @@ howldrop peers           list PCs that are visible
 howldrop send NAME FILE  send FILE to the PC named NAME
 howldrop clip            send the current clipboard text
 howldrop stop            stop HowlDrop on this PC (the tray icon too)
-howldrop iphone [--to NAME] FILE...  AirDrop FILE through the add-on
-howldrop nearby [--scan]  the devices the add-on can send to
+howldrop iphone [--to NAME] FILE...  AirDrop FILE (this PC's radio, or the add-on)
+howldrop nearby [--scan]  the devices it can send to
 howldrop key             show this PC's pairing key
 howldrop pair KEY        take another PC's key (then restart HowlDrop)
 howldrop serve --share-clipboard   serve, sending what you copy to paired PCs
@@ -113,10 +148,15 @@ A cross-build from Linux uses `cmake/mingw-w64-x86_64.cmake`. CI builds
 page).
 
 To release it: set `kVersion` in `src/config.hpp` to the add-on version it
-goes with, push, then push a tag `windows-vVERSION` (e.g. `windows-v0.12.0`).
-`.github/workflows/release-windows.yml` builds and tests it and publishes a
-GitHub release with `howldrop.exe` attached and `RELEASE.md` as its notes.
+goes with, push to main and let CI publish that add-on image, then push a tag
+`windows-vVERSION` (e.g. `windows-v0.17.0`).
+`.github/workflows/release-windows.yml` makes `howldrop-linux.tar.gz` from
+the amd64 add-on image of that version (`tools/wsl-distro`), builds and tests
+the exe with its address and SHA-256 built in, and publishes a GitHub release
+with both attached and `RELEASE.md` as its notes. A local build has no Linux
+part to download; it uses a `HowlDrop` distro already imported.
 
 `tests/` runs on Linux (`howldrop-test`, `howldrop-bridge-test`) and on
 both (`howldrop-open-test`, the rules for what opens by itself, in
-`src/open_policy.cpp`).
+`src/open_policy.cpp`; `howldrop-wsl-test`, what AirDrop on this PC reads
+from usbipd, wsl.exe and the stack, and the 30-day cleanup).

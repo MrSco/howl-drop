@@ -98,13 +98,26 @@ public:
     Status send_to_iphone(const std::filesystem::path& path, const std::string& to = {});
     // What the relay's latest scan heard, from its hello.
     struct Nearby {
-        bool relay = false;     // the relay is on the network
+        bool relay = false;     // the relay is on the network, or this PC's radio runs
+        bool local = false;     // it is this PC's radio (LocalIphone), not Home Assistant
         bool scanning = false;  // it is scanning now
         std::vector<std::string> devices;
     };
     Nearby iphone_nearby() const;
     // Ask the relay to look for nearby devices (about 30 s).
     Status request_iphone_scan();
+    // This PC's own radio (wsl_win.hpp), while it runs: sending to the
+    // iPhone, nearby devices and scans go to it instead of the add-on's
+    // relay. queue only hands the file over; it reports through on_sent
+    // once the phone took it or not.
+    class LocalIphone {
+    public:
+        virtual ~LocalIphone() = default;
+        virtual Status queue(const std::filesystem::path& path, const std::string& to) = 0;
+        virtual Nearby nearby() const = 0;
+        virtual Status scan() = 0;
+    };
+    void set_local_iphone(std::shared_ptr<LocalIphone> local);
     Status push_clipboard();
     std::vector<PeerView> peers() const;
     void set_share_clipboard(bool on) { share_clipboard_.store(on); }
@@ -154,6 +167,7 @@ private:
     void write_ack(Socket& socket, bool ok, const std::string& message, const std::string& saved);
     Status send_file_to(const Peer& peer, const std::filesystem::path& path, const std::string& to = {});
     std::optional<Peer> relay_peer() const;
+    std::shared_ptr<LocalIphone> local_iphone() const;
     bool send_clip_to(const Peer& peer, const std::string& text, std::string& error);
     Status flush_clips();
     void poll_clipboard();
@@ -193,6 +207,7 @@ private:
     std::mutex join_mu_;
     std::condition_variable start_cv_;
     std::vector<Peer> peers_;
+    std::shared_ptr<LocalIphone> local_iphone_;  // under mu_
     std::vector<Job> jobs_;
     std::thread thread_;
     std::atomic<bool> stop_{false};

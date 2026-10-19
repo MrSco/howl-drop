@@ -1,7 +1,9 @@
 """addon/deliver.py against a local web server: links to files are fetched,
 web pages and refused fetches stay shortcuts, other files are moved."""
+import contextlib
 import http.server
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -9,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location(
     'deliver', Path(__file__).resolve().parents[1] / 'addon' / 'deliver.py')
@@ -195,6 +198,22 @@ class AnnounceTests(unittest.TestCase):
 
     def call(self, path):
         return [c for c in HomeAssistant.calls if c[0] == path]
+
+    def test_howldrop_exe_gets_an_event_line(self):
+        # In WSL, howldrop.exe reads the stack's output for what arrived.
+        self.drop('text-1A-2.txt', b'hi', "Rocco's\tiPhone\n")
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {'HOWLDROP_EVENTS': 'stdout'}), contextlib.redirect_stdout(out):
+            self.deliver(token='')
+        events = [line for line in out.getvalue().splitlines() if line.startswith('@howldrop')]
+        self.assertEqual(events, ["@howldrop\treceived\ttext/text-1A-2.txt\tRocco's iPhone\ttext"])
+
+    def test_no_event_line_unless_asked(self):
+        self.drop('IMG_1.JPG', b'jpeg', 'x')
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {'HOWLDROP_EVENTS': ''}), contextlib.redirect_stdout(out):
+            self.deliver(token='')
+        self.assertNotIn('@howldrop', out.getvalue())
 
     def test_a_photo_fires_the_event_and_notifies(self):
         self.drop('IMG_1.JPG', b'jpeg', "Rocco's iPhone")

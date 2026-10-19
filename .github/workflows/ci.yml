@@ -19,7 +19,7 @@ jobs:
           shellcheck --severity=warning \
             userspace/omdrop-discoverable \
             tools/build-owl.sh tools/stage.sh tools/run-tests.sh tools/stage-addon.sh \
-            tools/publish-addon.sh addon/run.sh docker/install.sh \
+            tools/publish-addon.sh addon/run.sh addon/wsl-run.sh docker/install.sh \
             tests/helpers.bash
       - name: Unit tests
         run: tools/run-tests.sh
@@ -36,6 +36,7 @@ jobs:
         run: |
           build/howldrop/howldrop-open-test
           build/howldrop/howldrop-pairing-test
+          build/howldrop/howldrop-wsl-test
           build/howldrop/howldrop-bridge-test
           timeout 300 build/howldrop/howldrop-test
           # The commands run.sh starts are accepted (0.15.0 shipped a relay
@@ -56,7 +57,7 @@ jobs:
       - name: Build
         run: cmake -S howldrop -B build/howldrop -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/howldrop
       - name: Test
-        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe
+        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-wsl-test.exe
       - uses: actions/upload-artifact@v4
         with:
           name: howldrop-windows

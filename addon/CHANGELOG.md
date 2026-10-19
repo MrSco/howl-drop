@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.17.0
+
+- Nothing changes for the add-on itself. This image is also the Linux part of **howldrop.exe 0.17.0**'s new AirDrop on this PC (a Windows PC with a USB MT7612U stick, no Home Assistant), so it carries the stick's firmware, the wireless regulatory database and `kmod` for that, which the add-on never uses.
+- A failed send to the iPhone says why in words ("not accepted on the iPhone in time") instead of a sender log line.
+
 ## 0.16.0
 
 - Up to date with omdrop-owl 0.3.0 (upstream): its fix for a radiotap field OWL read uninitialized on receive, channel lists read the way newer `iw` prints them (and No IR or radar channels skipped), and new card records (Intel BE200 tested; Realtek RTL8852BE in shared mode; several recorded as failing). The add-on's receive reordering is unchanged, rebuilt on top.

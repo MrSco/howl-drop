@@ -623,7 +623,23 @@ std::optional<Node::Peer> Node::relay_peer() const {
     return std::nullopt;
 }
 
+void Node::set_local_iphone(std::shared_ptr<LocalIphone> local) {
+    std::lock_guard<std::mutex> lock(mu_);
+    local_iphone_ = std::move(local);
+}
+
+std::shared_ptr<Node::LocalIphone> Node::local_iphone() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return local_iphone_;
+}
+
 Node::Nearby Node::iphone_nearby() const {
+    if (const auto local = local_iphone()) {
+        Nearby out = local->nearby();
+        out.relay = true;
+        out.local = true;
+        return out;
+    }
     Nearby out;
     const auto relay = relay_peer();
     if (!relay) return out;
@@ -634,6 +650,7 @@ Node::Nearby Node::iphone_nearby() const {
 }
 
 Status Node::request_iphone_scan() {
+    if (const auto local = local_iphone()) return local->scan();
     const auto relay = relay_peer();
     if (!relay) {
         return Status::failure("Home Assistant's iPhone relay is not on the network: turn on the add-on's "
@@ -645,8 +662,14 @@ Status Node::request_iphone_scan() {
 }
 
 Status Node::send_to_iphone(const std::filesystem::path& path, const std::string& to) {
-    const auto relay = relay_peer();
     const std::string name = filename_utf8(path);
+    if (const auto local = local_iphone()) {
+        // Handed over: the radio reports how it went (on_sent) when it knows.
+        Status status = local->queue(path, one_line(to).substr(0, 64));
+        if (!status.ok && config_.on_sent) config_.on_sent(name, status);
+        return status;
+    }
+    const auto relay = relay_peer();
     Status status = relay ? send_file_to(*relay, path, one_line(to).substr(0, 64))
                           : Status::failure("Home Assistant's iPhone relay is not on the network: turn on the "
                                             "add-on's send_to_iphone, with pc_key set");
@@ -898,7 +921,7 @@ void Node::handle_control(Socket socket) {
     } else if (line == "nearby") {
         const Nearby nearby = iphone_nearby();
         if (!nearby.relay) {
-            response = "error Home Assistant's iPhone relay is not on the network";
+            response = "error neither AirDrop on this PC nor Home Assistant's iPhone relay is running";
         } else {
             response = std::string("ok ") + (nearby.scanning ? "scanning" : "done") + "\n";
             for (const auto& device : nearby.devices) response += device + "\n";
@@ -923,13 +946,14 @@ void Node::handle_control(Socket socket) {
         bool relay = false;
         {
             std::lock_guard<std::mutex> lock(mu_);
+            relay = local_iphone_ != nullptr;
             for (const auto& peer : peers_) relay = relay || peer.role == "iphone";
         }
         if (!std::filesystem::is_regular_file(path, ec)) {
             response = "error that path is not a file";
         } else if (!relay) {
-            response = "error Home Assistant's iPhone relay is not on the network: turn on the add-on's "
-                       "send_to_iphone, with pc_key set";
+            response = "error turn on AirDrop on this PC (the HowlDrop icon's menu), or the Home Assistant "
+                       "add-on's send_to_iphone with pc_key set";
         } else {
             spawn([this, path, to]() { send_to_iphone(path, to); });
             response = "ok sending";

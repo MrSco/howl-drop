@@ -13,6 +13,8 @@ add_library(howldrop-core STATIC
     src/forward.cpp
     src/open_policy.cpp
     src/pairing.cpp
+    src/purge.cpp
+    src/wsl_text.cpp
 )
 target_include_directories(howldrop-core PUBLIC src)
 target_compile_features(howldrop-core PUBLIC cxx_std_17)
@@ -44,9 +46,19 @@ if(WIN32)
     # The tray app, with its icon, and no console window: commands typed in
     # a terminal attach to it (main.cpp).
     enable_language(RC)
-    target_sources(howldrop PRIVATE src/tray_win.cpp res/howldrop.rc)
+    target_sources(howldrop PRIVATE src/tray_win.cpp src/wsl_win.cpp src/ble_wake_win.cpp res/howldrop.rc)
     set_target_properties(howldrop PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_link_libraries(howldrop PRIVATE shell32 user32 advapi32 comdlg32 ole32 uuid)
+    target_link_libraries(howldrop PRIVATE shell32 user32 advapi32 comdlg32 ole32 uuid winhttp runtimeobject)
+    # AirDrop on this PC downloads the Linux part this exe goes with (a
+    # release sets these; empty in a local build, wsl_win.cpp).
+    set(HOWLDROP_LINUX_URL "" CACHE STRING "https address of howldrop-linux.tar.gz")
+    set(HOWLDROP_LINUX_SHA256 "" CACHE STRING "its SHA-256, hex")
+    set(HOWLDROP_LINUX_VERSION "" CACHE STRING "the add-on version it was made from")
+    target_compile_definitions(howldrop PRIVATE
+        HOWLDROP_LINUX_URL="${HOWLDROP_LINUX_URL}"
+        HOWLDROP_LINUX_SHA256="${HOWLDROP_LINUX_SHA256}"
+        HOWLDROP_LINUX_VERSION="${HOWLDROP_LINUX_VERSION}"
+    )
     if(MINGW)
         target_link_options(howldrop PRIVATE -static -static-libgcc -static-libstdc++)
     endif()
@@ -62,9 +74,12 @@ add_executable(howldrop-open-test tests/open_policy_test.cpp)
 target_link_libraries(howldrop-open-test PRIVATE howldrop-core)
 add_executable(howldrop-pairing-test tests/pairing_test.cpp)
 target_link_libraries(howldrop-pairing-test PRIVATE howldrop-core)
+add_executable(howldrop-wsl-test tests/wsl_test.cpp)
+target_link_libraries(howldrop-wsl-test PRIVATE howldrop-core)
 if(NOT MSVC)
     target_compile_options(howldrop-open-test PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(howldrop-pairing-test PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(howldrop-wsl-test PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 if(NOT WIN32)

@@ -3,12 +3,49 @@ name: Release howldrop.exe
 # Push a tag windows-vVERSION (VERSION = kVersion in howldrop/src/config.hpp,
 # the add-on version it goes with) to build, test and publish howldrop.exe as
 # a GitHub release. howldrop/README.md has the steps.
+#
+# With it goes howldrop-linux.tar.gz, the WSL distro AirDrop on this PC
+# downloads the first time it is turned on: the add-on image of the same
+# version (CI's images job pushes it when main gets that version), with
+# tools/wsl-distro on top. The exe is built knowing its address and SHA-256,
+# and refuses any other file.
 on:
   push:
     tags: ['windows-v*']
 
 jobs:
+  linux-part:
+    runs-on: ubuntu-latest
+    outputs:
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches the version the exe reports and the add-on's
+        run: |
+          tag="${GITHUB_REF_NAME#windows-v}"
+          exe=$(sed -n 's/.*kVersion = "\(.*\)";/\1/p' howldrop/src/config.hpp)
+          addon=$(awk -F'"' '/^version:/ {print $2}' addon/config.yaml)
+          echo "tag $tag, kVersion $exe, add-on $addon"
+          [ "$tag" = "$exe" ] && [ "$tag" = "$addon" ]
+      - name: Make the distro from the add-on image
+        id: pack
+        run: |
+          version="${GITHUB_REF_NAME#windows-v}"
+          docker build tools/wsl-distro --build-arg IMAGE="ghcr.io/mrsco/howldrop-amd64:$version" \
+            --build-arg VERSION="$version" -t howldrop-wsl
+          cid=$(docker create howldrop-wsl)
+          docker export "$cid" | gzip -9 > howldrop-linux.tar.gz
+          docker rm "$cid"
+          ls -l howldrop-linux.tar.gz
+          echo "sha256=$(sha256sum howldrop-linux.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: howldrop-linux
+          path: howldrop-linux.tar.gz
+          compression-level: 0
+
   release:
+    needs: linux-part
     runs-on: windows-latest
     permissions:
       contents: write
@@ -21,21 +58,24 @@ jobs:
         with:
           msystem: MINGW64
           install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
-      - name: The tag matches the version the exe reports
-        run: |
-          tag="${GITHUB_REF_NAME#windows-v}"
-          version=$(sed -n 's/.*kVersion = "\(.*\)";/\1/p' howldrop/src/config.hpp)
-          echo "tag $tag, kVersion $version"
-          [ "$tag" = "$version" ]
+      - uses: actions/download-artifact@v4
+        with:
+          name: howldrop-linux
       - name: Build
-        run: cmake -S howldrop -B build/howldrop -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/howldrop
+        run: |
+          version="${GITHUB_REF_NAME#windows-v}"
+          cmake -S howldrop -B build/howldrop -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DHOWLDROP_LINUX_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/howldrop-linux.tar.gz" \
+            -DHOWLDROP_LINUX_SHA256="${{ needs.linux-part.outputs.sha256 }}" \
+            -DHOWLDROP_LINUX_VERSION="$version"
+          cmake --build build/howldrop
       - name: Test
-        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe
+        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-wsl-test.exe
       - name: Publish
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = "$env:GITHUB_REF_NAME".Substring("windows-v".Length)
-          gh release create "$env:GITHUB_REF_NAME" build/howldrop/howldrop.exe `
+          gh release create "$env:GITHUB_REF_NAME" build/howldrop/howldrop.exe howldrop-linux.tar.gz `
             --title "HowlDrop for Windows $version" --notes-file howldrop/RELEASE.md --verify-tag

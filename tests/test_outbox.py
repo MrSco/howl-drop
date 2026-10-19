@@ -1,12 +1,15 @@
 """addon/outbox.py against a fake send-to-peer: it waits for the phone to be
 heard, picks the iPhone among several peers, and files what happened."""
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import stat
 import tempfile
 import unittest
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location(
     'outbox', Path(__file__).resolve().parents[1] / 'addon' / 'outbox.py')
@@ -117,6 +120,21 @@ class OutboxTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(self.detail, 'declined on the iPhone')
 
+    def test_an_ask_nobody_accepts_says_so(self):
+        # 2026-10-18: the phone closed the ask after 30 s without an answer.
+        ok, _ = self.send([
+            "1 2026-10-18 21:24:49,564 INFO send: +  0.07s FOUND direct 'Rocco iPhone' at x; asking\\n"
+            "2026-10-18 21:25:20,007 INFO send: + 30.51s ASK failed: RemoteDisconnected('Remote end closed "
+            "connection without response')",
+        ])
+        self.assertFalse(ok)
+        self.assertEqual(self.detail, 'not accepted on the iPhone in time: send it again and tap Accept')
+
+    def test_another_failure_reads_without_the_log_prefix(self):
+        ok, _ = self.send(["1 2026-10-18 21:25:20,007 INFO send: + 30.51s UPLOAD failed: broken pipe"])
+        self.assertFalse(ok)
+        self.assertEqual(self.detail, 'UPLOAD failed: broken pipe')
+
     def test_gives_up_when_the_phone_never_shows(self):
         ok, calls = self.send(['2 no devices found'] * 500, window=0.2)
         self.assertFalse(ok)
@@ -165,6 +183,14 @@ class NearbyTests(unittest.TestCase):
             data = json.loads(Path(path).read_text(encoding='utf-8'))
             self.assertEqual((data['scanning'], data['devices'][0]['name']), (True, 'Rocco’s iPhone'))
             self.assertEqual(Path(d, 'nearby.txt').read_text(encoding='utf-8'), 'scanning\ndevice\tRocco’s iPhone\n')
+
+    def test_howldrop_exe_gets_the_scan_as_event_lines(self):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {'HOWLDROP_EVENTS': 'stdout'}), contextlib.redirect_stdout(out):
+            outbox.tell_nearby([], True)
+            outbox.tell_nearby([('aa:bb:cc:dd:ee:ff', 'Rocco’s iPhone'), ('e2:9d:03:6c:58:23', 'Office Mac')], False)
+        self.assertEqual(out.getvalue().splitlines(),
+                         ['@howldrop\tnearby\tscanning', '@howldrop\tnearby\tdone\tRocco’s iPhone\tOffice Mac'])
 
     def test_a_file_names_its_device(self):
         with tempfile.TemporaryDirectory() as d:
