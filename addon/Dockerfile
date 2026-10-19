@@ -89,8 +89,10 @@ RUN git clone https://github.com/netmojo-systems/omdrop-plugin.git /tmp/omdrop-p
     && rm -rf /tmp/omdrop-plugin
 
 # A stalled upload logs where its unread bytes are, and the log level
-# follows the verbose option (patch_receiver.py).
+# follows the verbose option (patch_receiver.py). For howldrop.exe in WSL
+# only: Accept / Decline on the PC and the upload's progress (howl_ask.py).
 COPY patch_receiver.py /tmp/patch_receiver.py
+COPY howl_ask.py /opt/omdrop-receiver/howl_ask.py
 RUN python3 /tmp/patch_receiver.py /opt/omdrop-receiver/airdrop-serve.py \
     && rm /tmp/patch_receiver.py
 

@@ -25,6 +25,17 @@ class SendersTest(unittest.TestCase):
         known = self.config / 'known-senders'
         return visibility, known.read_text().splitlines() if known.exists() else None
 
+    def test_ask_keeps_everyone_and_writes_the_contacts(self):
+        # howldrop.exe's "Everyone, ask me": contacts accepted, others asked.
+        lines = senders.write(self.config, {'senders': ['+1 555 123 4567'], 'receive': 'ask'})
+        self.assertEqual(self.files(), ('everyone', ['15551234567']))
+        self.assertIn('1 contact(s) are accepted at once', lines[0])
+
+    def test_ask_without_contacts_asks_about_everyone(self):
+        senders.write(self.config, {'senders': ['+1 555 123 4567']})
+        senders.write(self.config, {'senders': [], 'receive': 'ask'})
+        self.assertEqual(self.files(), ('everyone', None))
+
     def test_empty_means_everyone(self):
         lines = senders.write(self.config, {'senders': []})
         self.assertEqual(self.files(), ('everyone', None))

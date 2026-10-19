@@ -5,6 +5,7 @@
 # (mt76x2u ships as a module). Then run.sh, as in the add-on.
 #
 #   wsl-run.sh --name NAME --save DIR --outbox DIR --scan-request FILE
+#              [--receive everyone|ask|contacts] [--senders LIST] [--ask-dir DIR]
 #              [--send-to NAME] [--verbose]
 #   wsl-run.sh --stop
 #
@@ -16,7 +17,13 @@
 #   @howldrop  stick  ready IFACE  the stick has a Wi-Fi interface
 #   @howldrop  stick  failed WHY   it attached but the driver gave up
 #   @howldrop  up IFACE            the window is up (on the share sheet)
-# and from deliver.py and outbox.py: received, sent, nearby.
+# and from deliver.py and outbox.py: received, sending, sent, nearby; from the
+# receiver (howl_ask.py): ask, asked, incoming, receiving, stored, failed.
+#
+# Who may send (--receive): everyone (accepted as they come), ask (contacts
+# in --senders, comma-separated phone numbers or emails, are accepted; anyone
+# else waits for Accept or Decline on the PC, answered as a file in
+# --ask-dir), or contacts (only --senders see the PC; senders.py).
 set -uo pipefail
 
 FIRMWARE_SRC=/usr/lib/howldrop/firmware
@@ -49,6 +56,9 @@ OUTBOX=
 SCAN=
 SEND_TO=
 VERBOSE=false
+RECEIVE=everyone
+SENDERS=
+ASK_DIR=
 while [ $# -gt 0 ]; do
     case "$1" in
         --name) NAME=$2; shift 2 ;;
@@ -56,6 +66,9 @@ while [ $# -gt 0 ]; do
         --outbox) OUTBOX=$2; shift 2 ;;
         --scan-request) SCAN=$2; shift 2 ;;
         --send-to) SEND_TO=$2; shift 2 ;;
+        --receive) RECEIVE=$2; shift 2 ;;
+        --senders) SENDERS=$2; shift 2 ;;
+        --ask-dir) ASK_DIR=$2; shift 2 ;;
         --verbose) VERBOSE=true; shift ;;
         *) say "wsl-run.sh: unknown argument $1"; exit 2 ;;
     esac
@@ -63,6 +76,15 @@ done
 if [ -z "$SAVE" ] || [ -z "$OUTBOX" ] || [ -z "$SCAN" ]; then
     say "wsl-run.sh: --save, --outbox and --scan-request are required"
     exit 2
+fi
+case "$RECEIVE" in
+    everyone|contacts) ;;
+    ask) [ -n "$ASK_DIR" ] || { say "wsl-run.sh: --receive ask needs --ask-dir"; exit 2; } ;;
+    *) say "wsl-run.sh: --receive is everyone, ask or contacts"; exit 2 ;;
+esac
+if [ "$RECEIVE" = contacts ] && [ -z "$SENDERS" ]; then
+    say "Contacts only, but no contacts are set: everyone can send until some are."
+    RECEIVE=everyone
 fi
 
 say "HowlDrop for Windows: the radio in WSL ($(uname -r))."
@@ -138,11 +160,15 @@ fi
 event stick ready "$IFACE"
 
 mkdir -p /data "$SAVE" "$OUTBOX"
-python3 - "$NAME" "$SAVE" "$SEND_TO" "$VERBOSE" > /data/options.json <<'PY'
+python3 - "$NAME" "$SAVE" "$SEND_TO" "$VERBOSE" "$RECEIVE" "$SENDERS" > /data/options.json <<'PY'
 import json, sys
-name, save, send_to, verbose = sys.argv[1:5]
+name, save, send_to, verbose, receive, senders = sys.argv[1:7]
 json.dump({
-    "pc_name": name, "save_folder": save, "senders": [], "notify": [],
+    "pc_name": name, "save_folder": save, "notify": [],
+    # senders.py: Contacts Only from these, or (receive ask) the contacts
+    # accepted without asking.
+    "senders": [s.strip() for s in senders.split(",") if s.strip()] if receive != "everyone" else [],
+    "receive": receive,
     "fetch_links": True, "fetch_max_mb": 100,
     # howldrop.exe deletes old files from its inbox itself, on both routes.
     "delete_after_days": 0,
@@ -156,4 +182,9 @@ PY
 # No Bluetooth in WSL: howldrop.exe sends the AirDrop wake from Windows'.
 export HOWLDROP_EVENTS=stdout HOWLDROP_OUTBOX="$OUTBOX" HOWLDROP_SCAN_REQUEST="$SCAN" HOWLDROP_PANEL=off \
     HOWLDROP_BLE=off
+if [ "$RECEIVE" = ask ]; then
+    mkdir -p "$ASK_DIR"
+    rm -f "$ASK_DIR"/*.accept "$ASK_DIR"/*.decline 2>/dev/null || true
+    export HOWLDROP_ASK_DIR="$ASK_DIR"
+fi
 exec /run.sh

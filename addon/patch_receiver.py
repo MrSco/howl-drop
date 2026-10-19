@@ -41,6 +41,7 @@ DIAG = '''        except socket.timeout as e:
                 tls = '?'
             logging.warning('upload %s stalled: %s unread in the kernel socket queue, %s pending in the '
                             'TLS layer (%s)', tid, unread, pending, tls)
+            howl_ask.event('failed', getattr(self, '_howl_id', tid), 'the transfer stalled')
 '''
 
 
@@ -69,9 +70,62 @@ class Handler(BaseHTTPRequestHandler):
 ASK = "        files = ask.get('Files') or []\n"
 ASK_NEW = ASK + "        self._howl_sender = ask.get('SenderComputerName') or ''  # howl-drop\n"
 STORED = "            logging.info('upload %s: stored %s', tid, ', '.join(written))\n"
-STORED_NEW = STORED + "            howl_note(DEST, written, getattr(self, '_howl_sender', ''))\n"
+STORED_NEW = STORED + ("            howl_note(DEST, written, getattr(self, '_howl_sender', ''))\n"
+                       "            howl_ask.event('stored', getattr(self, '_howl_id', tid), *written)\n")
 LINK = "                logging.info('link stored as %s -> %s', stored, item)\n"
 LINK_NEW = LINK + "                howl_note(DEST, [stored], ask.get('SenderComputerName') or '', item)\n"
+
+# howldrop.exe in WSL (howl_ask.py): who may send, Accept / Decline on the
+# PC, and the upload's progress. Inert unless HOWLDROP_ASK_DIR or
+# HOWLDROP_EVENTS is set; the add-on sets neither.
+IMPORT = "import contacts  # noqa: E402  -- sibling module, found via the line above\n"
+IMPORT_NEW = IMPORT + "import howl_ask  # noqa: E402  -- howl-drop\n"
+
+# Telling a known contact from anyone else in Everyone mode takes the
+# sender's client certificate, which the receiver asks for only in Contacts
+# Only; ask for it whenever the PC asks too.
+TLS = "    if contacts.visibility() != 'contacts' and not PEERCERT_DIR:\n"
+TLS_NEW = "    if contacts.visibility() != 'contacts' and not PEERCERT_DIR and not howl_ask.ask_dir():  # howl-drop\n"
+
+# After the Contacts Only gate: in Everyone mode with the PC asking, a sender
+# who isn't a known contact waits for Accept; every accepted ask is announced.
+GATE = '''            logging.info('ask accepted: %s', contacts.WHY[outcome])
+            # Remembered per connection: Ask and Upload share one TLS session,
+            # so an Upload that never passed an Ask has nothing vouching for it.
+            self._contacts_ok = True
+'''
+GATE_NEW = GATE + '''
+        # howl-drop: howldrop.exe asks its user (howl_ask.py).
+        self._howl_id = howl_ask.new_id()
+        if mode != 'contacts' and howl_ask.ask_dir():
+            peer_cert = None
+            try:
+                peer_cert = self.connection.getpeercert(binary_form=True)
+            except (AttributeError, ValueError):
+                pass
+            try:
+                known = contacts.decide(ask.get('SenderRecordData'), peer_cert)[0] == contacts.ACCEPT
+            except Exception:  # noqa: BLE001 - not a contact, then: ask
+                known = False
+            if known:
+                logging.info('ask from a known contact: accepted without asking')
+            elif not howl_ask.ask_user(ask, self._howl_id, howl_ask.ask_dir()):
+                logging.info('ask declined on the PC')
+                self.send_response(403)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+        howl_ask.incoming(ask, self._howl_id)
+'''
+
+BODY = '''                    wire_bytes = read_request_body(
+                        patient, self.headers, raw, receive_budget.byte_limit,
+'''
+BODY_NEW = '''                    howl_progress = howl_ask.Progress(  # howl-drop
+                        raw, getattr(self, '_howl_id', tid), howl_ask.total_of(self.headers))
+                    wire_bytes = read_request_body(
+                        patient, self.headers, howl_progress, receive_budget.byte_limit,
+'''
 
 EDITS = [
     ('upload timeout handler', ANCHOR, DIAG),
@@ -80,6 +134,10 @@ EDITS = [
     ("handle_ask's file list", ASK, ASK_NEW),
     ("handle_upload's stored line", STORED, STORED_NEW),
     ("handle_ask's link line", LINK, LINK_NEW),
+    ('the contacts import', IMPORT, IMPORT_NEW),
+    ("tls_context's certificate request", TLS, TLS_NEW),
+    ("handle_ask's Contacts Only gate", GATE, GATE_NEW),
+    ("handle_upload's body read", BODY, BODY_NEW),
 ]
 
 # contacts.py, beside the receiver: Contacts Only refused an iPhone on the

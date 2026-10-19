@@ -59,6 +59,22 @@ class OutboxTests(unittest.TestCase):
                                       window, self.stages.append)
         return ok, self.calls.read_text().splitlines()
 
+    def test_a_scan_asks_again_when_nothing_answers(self):
+        self.plan.write_text('0 nobody\n0 e2:9d:03:6c:58:23  ? dBm  [fe80::1%awdl0]:8770  Rocco’s iPhone\n')
+        slept = []
+        nearby = os.path.join(self.tmp.name, 'nearby.json')
+        found = outbox.scan(str(self.tools / 'send-to-peer'), 'HowlDrop', self.env, nearby, [], sleep=slept.append)
+        self.assertEqual(found, [('e2:9d:03:6c:58:23', 'Rocco’s iPhone')])
+        self.assertEqual(slept, [outbox.SCAN_PAUSE_S])
+        self.assertEqual(len(self.calls.read_text().splitlines()), 2)
+
+    def test_a_scan_gives_up_after_its_attempts(self):
+        self.plan.write_text('0 nobody\n' * outbox.SCAN_ATTEMPTS)
+        found = outbox.scan(str(self.tools / 'send-to-peer'), 'HowlDrop', self.env,
+                            os.path.join(self.tmp.name, 'n.json'), [], sleep=lambda s: None)
+        self.assertEqual(found, [])
+        self.assertEqual(len(self.calls.read_text().splitlines()), outbox.SCAN_ATTEMPTS)
+
     def test_progress_follows_the_sender(self):
         ok, _ = self.send([
             "0 waiting up to 60s for aa:bb:cc:dd:ee:ff to start listening on 8770\\n"

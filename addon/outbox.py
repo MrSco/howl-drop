@@ -334,15 +334,29 @@ def tell_nearby(devices, scanning):
     announce.event('nearby', 'scanning' if scanning else 'done', *[name for _, name in devices])
 
 
-def scan(tool, name, env, nearby, previous):
+SCAN_ATTEMPTS = 3
+SCAN_PAUSE_S = 5
+
+
+def scan(tool, name, env, nearby, previous, attempts=SCAN_ATTEMPTS, pause=SCAN_PAUSE_S, sleep=time.sleep):
     """Ask every AirDrop device in range for its name (waking them first):
     only those listening now answer, so phones set to Everyone, not Contacts
-    Only. Returns what answered."""
+    Only. Returns what answered.
+
+    Asked again when nothing answers: a phone that has just finished a
+    transfer can drop out of OWL's peers for a few seconds (2026-10-19, out
+    at 06:09:25 during a scan, back at 06:09:39 after it)."""
     say('looking for nearby devices')
     write_nearby(nearby, previous, True)
     tell_nearby(previous, True)
-    code, lines = run([tool, '--list', '--names', '--name', name], env, 90)
-    devices = parse_nearby(lines)
+    devices = []
+    for attempt in range(attempts):
+        if attempt:
+            sleep(pause)
+        code, lines = run([tool, '--list', '--names', '--name', name], env, 90)
+        devices = parse_nearby(lines)
+        if devices:
+            break
     write_nearby(nearby, devices, False)
     tell_nearby(devices, False)
     say('nearby: ' + (', '.join(n for _, n in devices) or 'nothing answered (is AirDrop set to Everyone?)'))
@@ -402,8 +416,15 @@ def main():
             name = os.path.basename(path)
             to = target_of(path) or a.to.strip() or None
             say(f'sending {name} ({size} bytes)' + (f' to {to}' if to else ''))
-            status.update(job, 'sending', f'looking for {to}' if to else 'looking for the iPhone')
-            ok, detail = send(path, tool, a.name, env, a.window, lambda d, job=job: status.update(job, detail=d), to)
+            first = f'looking for {to}' if to else 'looking for the iPhone'
+            status.update(job, 'sending', first)
+            announce.event('sending', name, first)
+
+            def progress(detail, job=job, name=name):
+                status.update(job, detail=detail)
+                announce.event('sending', name, detail)  # howldrop.exe's transfer card
+
+            ok, detail = send(path, tool, a.name, env, a.window, progress, to)
             where = 'sent' if ok else 'failed'
             try:
                 if a.discard:
