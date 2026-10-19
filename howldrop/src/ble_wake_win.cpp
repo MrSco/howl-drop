@@ -11,6 +11,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <random>
 
 namespace howldrop {
