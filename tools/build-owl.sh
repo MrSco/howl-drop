@@ -51,6 +51,9 @@ if [ ! -d "$DIR/.git" ]; then
 fi
 git -C "$DIR" fetch -q origin || true
 git -C "$DIR" checkout -q -- .
+# Files a patch adds (src/reorder.c) survive `checkout -- .`, and the next
+# build's apply then refuses to create them again: remove them, keep build/.
+git -C "$DIR" clean -fdq -e build
 git -C "$DIR" -c advice.detachedHead=false checkout -q "$OWL_COMMIT"
 git -C "$DIR" submodule update -q --init --recursive
 for p in "$ROOT"/patches/owl-*.patch; do
