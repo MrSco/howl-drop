@@ -63,6 +63,14 @@ public:
     void refresh();  // nearby devices, status or history may have changed
     bool open() const;
     bool showing() const;  // open, and not minimized
+    // Something arrives: an open window comes to the top, so its Accept
+    // and progress are seen (Windows may keep the keyboard elsewhere).
+    void raise();
+
+    // The main page (or settings) as a PNG, from hooks with made-up data
+    // (`howldrop screenshots`).
+    static bool render(const std::filesystem::path& file, bool settings, float scale, std::wstring name,
+                       std::filesystem::path history, Hooks hooks);
 
     struct Impl;
 

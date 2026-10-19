@@ -12,6 +12,7 @@
 #include <wincodec.h>
 
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -71,6 +72,8 @@ std::wstring size_text(unsigned long long bytes);
 class Canvas {
 public:
     explicit Canvas(HWND window);
+    // Off screen, on target, width x height DIPs (render_png).
+    Canvas(ID2D1RenderTarget* target, float width, float height);
     ~Canvas();
     Canvas(const Canvas&) = delete;
     Canvas& operator=(const Canvas&) = delete;
@@ -100,8 +103,10 @@ private:
     bool make_target();
     void drop_target();
 
-    HWND window_;
-    ID2D1HwndRenderTarget* target_ = nullptr;
+    HWND window_ = nullptr;
+    ID2D1RenderTarget* target_ = nullptr;
+    ID2D1HwndRenderTarget* hwnd_target_ = nullptr;  // target_, when it is a window's
+    float width_ = 0, height_ = 0;                   // off screen
     ID2D1SolidColorBrush* brush_ = nullptr;
     // Pictures drawn lately, as bitmaps of this target (each source held).
     std::vector<std::pair<IWICBitmapSource*, ID2D1Bitmap*>> images_;
@@ -110,5 +115,10 @@ private:
 // A file's thumbnail as Explorer makes it (HEIC too, with the codec), or
 // nullptr. The caller releases it. COM must be initialised on this thread.
 IWICBitmapSource* thumbnail(const std::filesystem::path& file, int pixels);
+
+// A picture of what draw draws on width x height DIPs at scale, with
+// rounded, transparent corners, saved as PNG (`howldrop screenshots`).
+bool render_png(const std::filesystem::path& file, float width, float height, float scale, float radius,
+                const std::function<void(Canvas&)>& draw);
 
 }  // namespace howldrop::ui

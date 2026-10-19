@@ -310,6 +310,7 @@ void handle_drop(App& app, const Drop& drop) {
                                                                   : drop.path;
             app.transfers.received(where, drop.from, "text", !drop.radio, Transfers::Clock::now());
             update_cards(app);
+            if (!drop.radio && app.howl_window) app.howl_window->raise();
             return;
         }
         app.click_target.clear();
@@ -347,6 +348,7 @@ void handle_drop(App& app, const Drop& drop) {
     if (cards_on(app)) {
         app.transfers.received(drop.path, drop.from, drop.kind, !drop.radio, Transfers::Clock::now());
         update_cards(app);
+        if (!drop.radio && app.howl_window) app.howl_window->raise();  // from Home Assistant: just arrived
         return;
     }
     std::wstring title = wide(kind_word(kind)) + from;
@@ -904,6 +906,9 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         case kTransferMessage: {
             std::unique_ptr<std::vector<std::string>> event(reinterpret_cast<std::vector<std::string>*>(lparam));
             if (!app->transfers.apply(*event, Transfers::Clock::now()).empty()) update_cards(*app);
+            // An AirDrop coming in: an open window comes to the top to show it.
+            const std::string& what = event->empty() ? std::string() : event->front();
+            if ((what == "ask" || what == "incoming") && app->howl_window) app->howl_window->raise();
             return 0;
         }
         case kRadioStoppedMessage:

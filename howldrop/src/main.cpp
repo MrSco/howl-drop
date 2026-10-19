@@ -550,6 +550,10 @@ int main(int argc, char** argv) {
         }
         if (cmd == "iphone") return cmd_iphone(args);
         if (cmd == "nearby") return cmd_nearby(args);
+#ifdef _WIN32
+        // The README's pictures of the window and the cards, made-up data.
+        if (cmd == "screenshots") return howldrop::make_screenshots(howldrop::path_from_utf8(args.size() >= 3 ? args[2] : "."));
+#endif
         if (cmd == "peers") return cmd_peers();
         if (cmd == "clip") return cmd_simple("clip");
         if (cmd == "stop") return cmd_simple("quit");

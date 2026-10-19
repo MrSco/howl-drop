@@ -21,6 +21,14 @@ firewall rule remember its path.
 
 Start `howldrop.exe` (double-click it). It runs by the clock:
 
+<p>
+  <img src="../docs/screenshots/window.png" alt="The HowlDrop window" width="300">
+  &nbsp;
+  <img src="../docs/screenshots/card-ask.png" alt="An incoming AirDrop asking to be accepted" width="280">
+  <img src="../docs/screenshots/card-received.png" alt="A received video, with Open and Show in folder" width="280">
+  <img src="../docs/screenshots/card-sending.png" alt="Sending: accept it on the iPhone" width="280">
+</p>
+
 - A card above the tray for each transfer, coming in or going out: an
   incoming one asks first (below), then shows a progress bar with size and
   speed, and ends with a thumbnail, **Open** and **Show in folder**. Sending
@@ -32,7 +40,8 @@ Start `howldrop.exe` (double-click it). It runs by the clock:
   it, or click to choose), **Send to** (any nearby iPhone, or a device from
   **Look for devices**), and **Recent** (click to open, right-click to show in
   its folder). Its gear has the settings. While it is open it shows the
-  transfers itself, and no cards or notifications pop up.
+  transfers itself, and no cards or notifications pop up; an AirDrop coming
+  in brings it to the top.
 - Right-click the icon for the menu:
 
 | Menu item | Default | |
@@ -172,6 +181,14 @@ the amd64 add-on image of that version (`tools/wsl-distro`), builds and tests
 the exe with its address and SHA-256 built in, and publishes a GitHub release
 with both attached and `RELEASE.md` as its notes. A local build has no Linux
 part to download; it uses a `HowlDrop` distro already imported.
+
+The pictures in `docs/screenshots` are drawn by the app itself, from made-up
+data (`src/screenshots_win.cpp`); after changing the window or the cards,
+make them again:
+
+```powershell
+howldrop.exe screenshots docs\screenshots
+```
 
 `tests/` runs on Linux (`howldrop-test`, `howldrop-bridge-test`) and on
 both (`howldrop-open-test`, the rules for what opens by itself, in

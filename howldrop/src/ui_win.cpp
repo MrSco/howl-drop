@@ -152,11 +152,20 @@ void Canvas::drop_target() {
     images_.clear();
     release(brush_);
     release(target_);
+    hwnd_target_ = nullptr;
+}
+
+Canvas::Canvas(ID2D1RenderTarget* target, float width, float height)
+    : target_(target), width_(width), height_(height) {
+    if (target_) target_->AddRef();
 }
 
 bool Canvas::make_target() {
-    if (target_) return true;
-    if (!g_d2d) return false;
+    if (target_) {
+        if (!brush_ && FAILED(target_->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0), &brush_))) return false;
+        return true;
+    }
+    if (!g_d2d || !window_) return false;
     RECT rc;
     GetClientRect(window_, &rc);
     const UINT dpi = dpi_of(window_);
@@ -166,39 +175,45 @@ bool Canvas::make_target() {
             props,
             D2D1::HwndRenderTargetProperties(window_, D2D1::SizeU(static_cast<UINT32>(rc.right - rc.left),
                                                                   static_cast<UINT32>(rc.bottom - rc.top))),
-            &target_))) {
+            &hwnd_target_))) {
         return false;
     }
+    target_ = hwnd_target_;  // the one reference, released through target_
     target_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     return SUCCEEDED(target_->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0), &brush_));
 }
 
 bool Canvas::begin() {
     if (!make_target()) return false;
-    const float dpi = static_cast<float>(dpi_of(window_));
-    target_->SetDpi(dpi, dpi);
+    if (hwnd_target_) {
+        const float dpi = static_cast<float>(dpi_of(window_));
+        target_->SetDpi(dpi, dpi);
+    }
     target_->BeginDraw();
     return true;
 }
 
 void Canvas::end() {
-    if (target_ && target_->EndDraw() == static_cast<HRESULT>(D2DERR_RECREATE_TARGET)) drop_target();
+    if (target_ && target_->EndDraw() == static_cast<HRESULT>(D2DERR_RECREATE_TARGET) && hwnd_target_) drop_target();
 }
 
 void Canvas::resize() {
-    if (!target_) return;
+    if (!hwnd_target_) return;
     RECT rc;
     GetClientRect(window_, &rc);
-    target_->Resize(D2D1::SizeU(static_cast<UINT32>(rc.right - rc.left), static_cast<UINT32>(rc.bottom - rc.top)));
+    hwnd_target_->Resize(
+        D2D1::SizeU(static_cast<UINT32>(rc.right - rc.left), static_cast<UINT32>(rc.bottom - rc.top)));
 }
 
 float Canvas::width() const {
+    if (!window_) return width_;
     RECT rc;
     GetClientRect(window_, &rc);
     return static_cast<float>(rc.right - rc.left) * 96.0f / static_cast<float>(dpi_of(window_));
 }
 
 float Canvas::height() const {
+    if (!window_) return height_;
     RECT rc;
     GetClientRect(window_, &rc);
     return static_cast<float>(rc.bottom - rc.top) * 96.0f / static_cast<float>(dpi_of(window_));
@@ -299,6 +314,89 @@ void Canvas::image(IWICBitmapSource* source, D2D1_RECT_F r, float radius) {
     b->SetTransform(D2D1::Matrix3x2F::Scale(s, s) * D2D1::Matrix3x2F::Translation(ox, oy));
     target_->FillRoundedRectangle(D2D1::RoundedRect(r, radius, radius), b);
     b->Release();
+}
+
+namespace {
+
+// Pixels outside a rounded rectangle the bitmap's size become transparent;
+// the edge is antialiased. Premultiplied BGRA: every channel scales.
+void round_corners(IWICBitmap* bitmap, UINT w, UINT h, float r) {
+    WICRect all{0, 0, static_cast<INT>(w), static_cast<INT>(h)};
+    IWICBitmapLock* lock = nullptr;
+    if (FAILED(bitmap->Lock(&all, WICBitmapLockWrite, &lock))) return;
+    UINT stride = 0, size = 0;
+    BYTE* data = nullptr;
+    lock->GetStride(&stride);
+    lock->GetDataPointer(&size, &data);
+    const int ri = static_cast<int>(std::ceil(r));
+    for (UINT y = 0; y < h; ++y) {
+        for (UINT x = 0; x < w; ++x) {
+            const bool left = static_cast<int>(x) < ri;
+            const bool right = static_cast<int>(x) >= static_cast<int>(w) - ri;
+            const bool top = static_cast<int>(y) < ri;
+            const bool bottom = static_cast<int>(y) >= static_cast<int>(h) - ri;
+            if (!((left || right) && (top || bottom))) continue;
+            const float cx = left ? r : static_cast<float>(w) - r;
+            const float cy = top ? r : static_cast<float>(h) - r;
+            const float dx = static_cast<float>(x) + 0.5f - cx;
+            const float dy = static_cast<float>(y) + 0.5f - cy;
+            const float d = std::sqrt(dx * dx + dy * dy);
+            const float keep = std::clamp(r - d + 0.5f, 0.0f, 1.0f);
+            if (keep >= 1.0f) continue;
+            BYTE* p = data + y * stride + x * 4;
+            for (int c = 0; c < 4; ++c) p[c] = static_cast<BYTE>(std::lround(p[c] * keep));
+        }
+    }
+    lock->Release();
+}
+
+}  // namespace
+
+bool render_png(const std::filesystem::path& file, float width, float height, float scale, float radius,
+                const std::function<void(Canvas&)>& draw) {
+    if (!g_d2d || !g_wic) return false;
+    const UINT w = static_cast<UINT>(std::lround(width * scale));
+    const UINT h = static_cast<UINT>(std::lround(height * scale));
+    IWICBitmap* bitmap = nullptr;
+    if (FAILED(g_wic->CreateBitmap(w, h, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bitmap))) return false;
+    const D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+        D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96.0f * scale, 96.0f * scale);
+    ID2D1RenderTarget* target = nullptr;
+    if (FAILED(g_d2d->CreateWicBitmapRenderTarget(bitmap, props, &target))) {
+        bitmap->Release();
+        return false;
+    }
+    target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+    {
+        Canvas canvas(target, width, height);
+        if (canvas.begin()) {
+            draw(canvas);
+            canvas.end();
+        }
+    }
+    target->Release();
+    round_corners(bitmap, w, h, radius * scale);
+
+    bool ok = false;
+    IWICStream* stream = nullptr;
+    IWICBitmapEncoder* encoder = nullptr;
+    IWICBitmapFrameEncode* frame = nullptr;
+    if (SUCCEEDED(g_wic->CreateStream(&stream)) &&
+        SUCCEEDED(stream->InitializeFromFilename(file.c_str(), GENERIC_WRITE)) &&
+        SUCCEEDED(g_wic->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) &&
+        SUCCEEDED(encoder->Initialize(stream, WICBitmapEncoderNoCache)) &&
+        SUCCEEDED(encoder->CreateNewFrame(&frame, nullptr)) && SUCCEEDED(frame->Initialize(nullptr)) &&
+        SUCCEEDED(frame->SetSize(w, h))) {
+        WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;  // WriteSource converts
+        ok = SUCCEEDED(frame->SetPixelFormat(&format)) && SUCCEEDED(frame->WriteSource(bitmap, nullptr)) &&
+             SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
+    }
+    if (frame) frame->Release();
+    if (encoder) encoder->Release();
+    if (stream) stream->Release();
+    bitmap->Release();
+    return ok;
 }
 
 IWICBitmapSource* thumbnail(const std::filesystem::path& file, int pixels) {

@@ -135,8 +135,7 @@ double card_fraction(const Transfers::Transfer& t) {
 namespace {
 
 // Lays the card out and, with paint, draws it. Returns its height.
-float render(Cards::Card& c, const std::wstring& inbox_label, bool paint) {
-    ui::Canvas& g = *c.canvas;
+float render(Cards::Card& c, ui::Canvas& g, const std::wstring& inbox_label, bool paint) {
     const Transfers::Transfer& t = c.t;
     const float w = kWidth;
     const float inner = w - 2 * kPad;
@@ -271,7 +270,7 @@ LRESULT CALLBACK card_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
             PAINTSTRUCT ps;
             BeginPaint(window, &ps);
             if (c->canvas->begin()) {
-                render(*c, c->owner->inbox_label_, true);
+                render(*c, *c->canvas, c->owner->inbox_label_, true);
                 c->canvas->end();
             }
             EndPaint(window, &ps);
@@ -337,6 +336,19 @@ LRESULT CALLBACK card_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
     return DefWindowProcW(window, message, wparam, lparam);
 }
 
+bool render_card(const Transfers::Transfer& t, const std::wstring& inbox_label, const std::filesystem::path& file,
+                 float scale) {
+    if (!ui::init()) return false;
+    Cards::Card c;
+    c.t = t;
+    c.thumb_tried = true;  // no thumbnail: made-up files
+    c.phase = 0.35;
+    ui::Canvas measure(static_cast<HWND>(nullptr));
+    const float height = render(c, measure, inbox_label, false);
+    return ui::render_png(file, kWidth, height, scale, 12.0f,
+                          [&](ui::Canvas& g) { render(c, g, inbox_label, true); });
+}
+
 Cards::Cards(HINSTANCE instance, std::wstring inbox_label, Actions actions)
     : instance_(instance), inbox_label_(std::move(inbox_label)), actions_(std::move(actions)) {
     available_ = ui::init();
@@ -382,7 +394,7 @@ void Cards::update(const Transfers& model, bool finished_too) {
         if (finished && !card->was_finished) card->finished_at = now;
         card->was_finished = finished;
         card->t = t;
-        card->height = render(*card, inbox_label_, false);
+        card->height = render(*card, *card->canvas, inbox_label_, false);
         InvalidateRect(card->window, nullptr, FALSE);
     }
     // Too many: the oldest finished ones go first.
@@ -440,7 +452,7 @@ void Cards::act(Card& card, int action) {
                 card.finished_at = Clock::now();
                 card.was_finished = true;
             }
-            card.height = render(card, inbox_label_, false);
+            card.height = render(card, *card.canvas, inbox_label_, false);
             place();
             InvalidateRect(card.window, nullptr, FALSE);
             return;

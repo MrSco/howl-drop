@@ -12,6 +12,17 @@ All it takes is `howldrop.exe` and a USB Wi-Fi stick with a MediaTek
 **MT7612U** (e.g. Alfa AWUS036ACM). No Mac, no Home Assistant, nothing on the
 phone.
 
+<p align="center">
+  <img src="docs/screenshots/window.png" alt="The HowlDrop window: a transfer under way, the drop zone, nearby devices and recent transfers" width="320">
+  &nbsp;
+  <img src="docs/screenshots/settings.png" alt="HowlDrop's settings: AirDrop on this PC, who can send, contacts" width="320">
+</p>
+<p align="center">
+  <img src="docs/screenshots/card-ask.png" alt="A card asking to accept a video from Alex's iPhone" width="300">
+  &nbsp;
+  <img src="docs/screenshots/card-receiving.png" alt="A card showing the video's progress" width="300">
+</p>
+
 ```
 iPhone ──AWDL (Wi-Fi) + BLE──▶ USB MT7612U ──usbipd──▶ WSL 2: OWL, AirDrop receiver and sender
                                                           │  (a distro howldrop.exe downloads and runs)

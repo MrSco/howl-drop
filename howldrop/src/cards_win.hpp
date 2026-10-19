@@ -31,6 +31,9 @@ struct CardText {
 CardText card_text(const Transfers::Transfer& t);
 std::wstring card_status(const Transfers::Transfer& t);  // under the progress bar
 double card_fraction(const Transfers::Transfer& t);      // the bar: 0..1, or -1 moving
+// A card for t, as a PNG (`howldrop screenshots`).
+bool render_card(const Transfers::Transfer& t, const std::wstring& inbox_label, const std::filesystem::path& file,
+                 float scale);
 
 class Cards {
 public:

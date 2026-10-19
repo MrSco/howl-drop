@@ -245,7 +245,7 @@ struct HowlWindow::Impl {
             y = row.bottom + 8;
         }
         // The bars move between the tray's refreshes.
-        if (moving != animating) {
+        if (window && moving != animating) {
             animating = moving;
             if (moving) SetTimer(window, kAnimate, 40, nullptr);
             else KillTimer(window, kAnimate);
@@ -450,8 +450,16 @@ struct HowlWindow::Impl {
         }
         y += 8;
         section(L"CONTACTS");
-        place_edit(D2D1::RectF(kSide, y, right, y + 76));
         g.fill(D2D1::RectF(kSide, y, right, y + 76), 8, ui::theme::card);
+        if (window) {
+            place_edit(D2D1::RectF(kSide, y, right, y + 76));
+        } else {
+            // A picture of the page: the contacts as the box would show them.
+            std::string lines = s.senders;
+            std::replace(lines.begin(), lines.end(), ',', '\n');
+            g.text(wide(lines), D2D1::RectF(kSide + 10, y + 6, right - 10, y + 70), ui::Font::Body, ui::theme::text,
+                   DWRITE_TEXT_ALIGNMENT_LEADING, true);
+        }
         y += 82;
         g.text(L"Phone numbers with country code (+1 555 123 4567) or emails, one per line.",
                D2D1::RectF(kSide, y, right - 90, y + 34), ui::Font::Small, ui::theme::dim, DWRITE_TEXT_ALIGNMENT_LEADING,
@@ -790,6 +798,37 @@ HowlWindow::~HowlWindow() = default;
 bool HowlWindow::open() const { return impl_->window != nullptr; }
 
 bool HowlWindow::showing() const { return impl_->showing(); }
+
+void HowlWindow::raise() {
+    HWND w = impl_->window;
+    if (!impl_->showing()) return;
+    // Topmost and back: to the top of the others without taking the
+    // keyboard; then the foreground if Windows allows it, and a flash in
+    // the taskbar if it doesn't.
+    SetWindowPos(w, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SetWindowPos(w, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    if (!SetForegroundWindow(w)) {
+        FLASHWINFO flash{sizeof(flash), w, FLASHW_TRAY | FLASHW_TIMERNOFG, 0, 0};
+        FlashWindowEx(&flash);
+    }
+    refresh();
+}
+
+bool HowlWindow::render(const std::filesystem::path& file, bool settings, float scale, std::wstring name,
+                        std::filesystem::path history, Hooks hooks) {
+    if (!ui::init()) return false;
+    Impl d;
+    d.name = std::move(name);
+    d.history_file = std::move(history);
+    d.hooks = std::move(hooks);
+    d.phase = 0.35;
+    d.reload_history();
+    return ui::render_png(file, kWidth, kHeight, scale, 12.0f, [&](ui::Canvas& g) {
+        g.clear(ui::theme::window);
+        if (settings) d.paint_settings(g);
+        else d.paint_main(g);
+    });
+}
 
 void HowlWindow::show() {
     if (!ui::init()) return;
