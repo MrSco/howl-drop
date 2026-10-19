@@ -135,7 +135,11 @@ class Status:
 # --- one send ------------------------------------------------------------------------
 
 def useful(line):
-    """The lines worth logging: not the sender's debug detail."""
+    """The lines worth logging: not the sender's debug detail, except how the
+    phone answered each request ("/Ask answered 200 OK"): a decline or an
+    error is told apart by that."""
+    if ' answered ' in line:
+        return True
     return not (' DEBUG ' in line or 'DeprecationWarning' in line or line.lstrip().startswith('ctx.'))
 
 

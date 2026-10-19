@@ -236,6 +236,7 @@ class StatusTests(unittest.TestCase):
         self.assertFalse(outbox.useful('2026-10-16 20:50:42,465 DEBUG PIL.Image: Importing PngImagePlugin'))
         self.assertFalse(outbox.useful('/usr/lib/omdrop/airdrop-send.py:105: DeprecationWarning: ssl'))
         self.assertTrue(outbox.useful('2026-10-16 20:50:46,579 INFO send: +  6.16s ASK -> accepted (4.15s)'))
+        self.assertTrue(outbox.useful('2026-10-19 07:01:02,003 DEBUG wire: /Ask answered 403 Forbidden'))
 
 
 class FreePathTests(unittest.TestCase):

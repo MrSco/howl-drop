@@ -110,10 +110,15 @@ GATE_NEW = GATE + '''
             if known:
                 logging.info('ask from a known contact: accepted without asking')
             elif not howl_ask.ask_user(ask, self._howl_id, howl_ask.ask_dir()):
+                # Declined as an iPhone declines: 401 and no body (measured
+                # 2026-10-19, an iPhone tapping Decline on an Ask from here).
+                # The iPhone sending to us shows a 403 as "Waiting" forever.
                 logging.info('ask declined on the PC')
-                self.send_response(403)
+                self.send_response(401)
                 self.send_header('Content-Length', '0')
+                self.send_header('Connection', 'close')
                 self.end_headers()
+                self.close_connection = True
                 return
         howl_ask.incoming(ask, self._howl_id)
 '''
