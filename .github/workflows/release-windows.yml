@@ -70,7 +70,7 @@ jobs:
             -DHOWLDROP_LINUX_VERSION="$version"
           cmake --build build/howldrop
       - name: Test
-        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-wsl-test.exe
+        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-wsl-test.exe && build/howldrop/howldrop-transfers-test.exe
       - name: Publish
         shell: pwsh
         env:

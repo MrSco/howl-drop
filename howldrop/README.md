@@ -19,19 +19,29 @@ firewall rule remember its path.
 
 ## The tray app
 
-Start `howldrop.exe` (double-click it). It runs by the clock, with no window:
+Start `howldrop.exe` (double-click it). It runs by the clock:
 
-- A notification for each file and each text that arrives. Click it to open
-  what arrived (a link opens in the browser; anything else that is not
-  opened automatically is shown in its folder).
+- A card above the tray for each transfer, coming in or going out: an
+  incoming one asks first (below), then shows a progress bar with size and
+  speed, and ends with a thumbnail, **Open** and **Show in folder**. Sending
+  shows each stage (looking for the iPhone, accept it on the iPhone,
+  uploading, sent). Cards go by themselves a few seconds after the end,
+  unless the pointer is on them.
 - Files land in `Downloads\HowlDrop`. Shared text goes on the clipboard.
-- Click the icon to open `Downloads\HowlDrop`. Right-click it for the menu:
+- Click the icon to open the **HowlDrop window**: a drop zone (drag files on
+  it, or click to choose), **Send to** (any nearby iPhone, or a device from
+  **Look for devices**), and **Recent** (click to open, right-click to show in
+  its folder). Its gear has the settings. While it is open it shows the
+  transfers itself, and no cards or notifications pop up.
+- Right-click the icon for the menu:
 
 | Menu item | Default | |
 |---|---|---|
+| Open HowlDrop | | The window (also a click on the icon). |
 | AirDrop on this PC (USB Wi-Fi stick) | off | The PC's own radio (below). The line under it says how it is going. |
+| Who can send to this PC | Everyone, but ask me | **Everyone, without asking**; **Everyone, but ask me** (your contacts go straight through, anyone else waits for Accept); **Contacts only** (only your contacts see the PC). Contacts are set in the window's settings. |
 | Delete files here after 30 days | on | Files in `Downloads\HowlDrop` go 30 days after they arrived, as the add-on's `delete_after_days`. |
-| Show notifications | on | |
+| Show notifications | on | Cards for finished transfers, and notifications. An ask always shows. |
 | Open links in the browser | on | A shared web page opens, as on a Mac. Only `http` and `https` addresses. |
 | Open photos and videos | off | Opens each one in your photo or video app. |
 | Open PDFs and text files | off | `.pdf` and `.txt` only. |
@@ -75,7 +85,14 @@ Windows.
 
 Files land in `Downloads\HowlDrop` (one copy; the Linux side writes there
 directly), text goes on the clipboard, and nothing listens on the network
-between the two halves. Sending to the iPhone needs the PC's Bluetooth on:
+between the two halves.
+
+**Who can send** decides what happens when an iPhone sends. Contacts are
+phone numbers (with the country code, +1 555 123 4567) or Apple ID emails, in
+the window's settings; a sender counts as one only when its Apple-signed
+record says so, as with AirDrop's own Contacts Only. With **Everyone, but ask
+me**, anyone else's send waits on a card for **Accept** or **Decline**, and no
+answer in a minute is Decline. Changing it restarts the radio. Sending to the iPhone needs the PC's Bluetooth on:
 HowlDrop wakes the phone with a Bluetooth advert while it sends or looks for
 devices, and your Bluetooth devices stay connected. The radio's log is
 `%LOCALAPPDATA%\HowlDrop\radio.log`.
@@ -159,4 +176,6 @@ part to download; it uses a `HowlDrop` distro already imported.
 `tests/` runs on Linux (`howldrop-test`, `howldrop-bridge-test`) and on
 both (`howldrop-open-test`, the rules for what opens by itself, in
 `src/open_policy.cpp`; `howldrop-wsl-test`, what AirDrop on this PC reads
-from usbipd, wsl.exe and the stack, and the 30-day cleanup).
+from usbipd, wsl.exe and the stack, and the 30-day cleanup;
+`howldrop-transfers-test`, what the cards and the window show for each
+transfer, and the Recent list's history).

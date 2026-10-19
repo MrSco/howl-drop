@@ -38,10 +38,13 @@ against the SHA-256 built into the exe), and Windows asks once to share the
 stick. The dot on the icon then turns green: the PC is on the share sheet
 under its own name.
 
-Sending to the iPhone: set its AirDrop to **Everyone for 10 Minutes**, then
-**Send to iPhone** in the tray menu (Look for devices, pick the phone, pick
-files) and accept on the phone. The PC's Bluetooth wakes the phone; whatever
-else is connected to it stays connected.
+Click the tray icon for the HowlDrop window: drop files on it and pick the
+phone to AirDrop them (set the iPhone's AirDrop to **Everyone for 10
+Minutes**, then accept on the phone), and see what came and went. The PC's
+Bluetooth wakes the phone; whatever else is connected to it stays connected.
+Each transfer shows as a card by the tray, or in the window while it's
+open: an incoming one asks first (unless the sender is one of your
+contacts, or you let everyone through), then shows its progress.
 
 The tray app, its menu, the commands and how it works:
 [howldrop/README.md](howldrop/README.md).

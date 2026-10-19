@@ -37,6 +37,7 @@ jobs:
           build/howldrop/howldrop-open-test
           build/howldrop/howldrop-pairing-test
           build/howldrop/howldrop-wsl-test
+          build/howldrop/howldrop-transfers-test
           build/howldrop/howldrop-bridge-test
           timeout 300 build/howldrop/howldrop-test
           # The commands run.sh starts are accepted (0.15.0 shipped a relay
@@ -57,7 +58,7 @@ jobs:
       - name: Build
         run: cmake -S howldrop -B build/howldrop -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/howldrop
       - name: Test
-        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-wsl-test.exe
+        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-wsl-test.exe && build/howldrop/howldrop-transfers-test.exe
       - uses: actions/upload-artifact@v4
         with:
           name: howldrop-windows
