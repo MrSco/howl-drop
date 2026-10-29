@@ -54,7 +54,7 @@ pub trait Ops: Send + Sync {
     fn set_kind(&self, iface: &str, kind: Kind) -> io::Result<()>;
     fn set_mac(&self, iface: &str, mac: MacAddr) -> io::Result<()>;
     fn set_up(&self, iface: &str, up: bool) -> io::Result<()>;
-    /// Tunes a monitor interface (HT20).
+    /// Tunes a monitor interface (HT40+ on 5 GHz where it can, else HT20).
     fn set_freq(&self, iface: &str, freq: u32) -> io::Result<()>;
     /// Joins AWDL's BSSID as an HT20 ad-hoc cell on a fixed channel.
     fn join_ibss(&self, iface: &str, freq: u32) -> io::Result<()>;

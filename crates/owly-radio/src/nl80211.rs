@@ -60,6 +60,7 @@ const LIMIT_TYPES: u16 = 2;
 const MNTR_FLAG_OTHER_BSS: u16 = 4;
 const MNTR_FLAG_ACTIVE: u16 = 6;
 const CHAN_HT20: u32 = 1;
+const CHAN_HT40PLUS: u32 = 3;
 const FEATURE_ACTIVE_MONITOR: u32 = 1 << 17;
 
 /// An interface type, as nl80211 numbers them.
@@ -412,12 +413,24 @@ impl Nl80211 {
         self.genl.request(CMD_SET_INTERFACE, 0, &a).map(drop)
     }
 
-    /// Tunes a monitor interface, 20 MHz wide (HT20).
+    /// Tunes a monitor interface: on 5 GHz 40 MHz wide with the channel
+    /// above (HT40+) where the card and the domain allow it, else 20 MHz
+    /// (HT20). Fork: we announce 40 MHz in the HT Capabilities TLV, and an
+    /// iPhone sends to us at HT40 (MCS 7 on 149+153); tuned HT20 an MT7612U
+    /// heard a fraction of an upload, which crawled. AirDrop's 5 GHz
+    /// channels, 44 and 149, are each the lower half of their pair.
     pub fn set_freq(&mut self, ifindex: u32, freq: u32) -> io::Result<()> {
+        if freq >= 5000 && self.set_freq_as(ifindex, freq, CHAN_HT40PLUS).is_ok() {
+            return Ok(());
+        }
+        self.set_freq_as(ifindex, freq, CHAN_HT20)
+    }
+
+    fn set_freq_as(&mut self, ifindex: u32, freq: u32, channel_type: u32) -> io::Result<()> {
         let mut a = Attrs::new();
         a.u32(ATTR_IFINDEX, ifindex)
             .u32(ATTR_WIPHY_FREQ, freq)
-            .u32(ATTR_WIPHY_CHANNEL_TYPE, CHAN_HT20);
+            .u32(ATTR_WIPHY_CHANNEL_TYPE, channel_type);
         self.genl.request(CMD_SET_WIPHY, 0, &a).map(drop)
     }
 
