@@ -545,3 +545,62 @@ fn block_ack_sessions_are_accepted_only_when_asked_to() {
         assert_eq!(answered, accept);
     }
 }
+
+/// A QoS data frame from the phone on TID 0 with 802.11 sequence `sn`.
+fn qos_from_phone(p: &Ipv6Packet, sn: u16) -> Vec<u8> {
+    let mut f = frame::data_frame(PHONE, p.dst, sn, sn, &p.data);
+    f[0] = 0x88;
+    f.splice(24..24, [0, 0]);
+    f
+}
+
+fn delivered(actions: &[Action]) -> Vec<u8> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::Deliver(p) => Some(p.data[7]),
+            _ => None,
+        })
+        .collect()
+}
+
+// Fork: frames of an accepted Block Ack session reach the stack in order.
+#[test]
+fn a_block_ack_sessions_frames_are_put_back_in_order() {
+    let mut cfg = node(149, Presence::Fixed).config().clone();
+    cfg.accept_addba = true;
+    let mut n = Node::new(cfg, START);
+    let t = meet(&mut n, &seq(PHONE_SEQ));
+    // ADDBA Request: TID 0, window 64, starting sequence number 100.
+    let mut req = Vec::new();
+    frame::put_header(&mut req, frame::fc::ACTION, US, PHONE, 3);
+    req.extend_from_slice(&[3, 0, 9, 0x02, 0x10, 0, 0]);
+    req.extend_from_slice(&(100u16 << 4).to_le_bytes());
+    feed(&mut n, t, &req);
+    // Hop limits 100..=103 tell the packets apart.
+    let pkt = |hop: u8| {
+        let mut p = tcp_syn();
+        p.data[7] = hop;
+        p
+    };
+    let mut got = Vec::new();
+    for sn in [100u16, 102, 103] {
+        got.extend(delivered(&feed(
+            &mut n,
+            t,
+            &qos_from_phone(&pkt(sn as u8), sn),
+        )));
+    }
+    assert_eq!(got, [100]);
+    got.extend(delivered(&feed(
+        &mut n,
+        t.plus(5_000),
+        &qos_from_phone(&pkt(101), 101),
+    )));
+    assert_eq!(got, [100, 101, 102, 103]);
+    // A gap the phone never fills is given up after 100 ms.
+    feed(&mut n, t.plus(10_000), &qos_from_phone(&pkt(105), 105));
+    assert!(delivered(&tick(&mut n, t.plus(109_000))).is_empty());
+    assert_eq!(delivered(&tick(&mut n, t.plus(110_000))), [105]);
+    assert_eq!(n.reorder_stats().released_by_timeout, 1);
+}

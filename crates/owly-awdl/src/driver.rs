@@ -399,6 +399,18 @@ impl<A: Air, N: Netif> Driver<A, N> {
             l.total.checked_div(l.count).unwrap_or(0),
             l.max,
         );
+        if self.node.config().accept_addba {
+            let r = self.node.reorder_stats();
+            tracing::info!(
+                "REORDER held {} late {} | dropped old {} duplicate {} | released timeout {} bar {}",
+                r.held,
+                r.delivered_late,
+                r.dropped_old,
+                r.dropped_duplicate,
+                r.released_by_timeout,
+                r.released_by_bar,
+            );
+        }
         self.lateness = Lateness::default();
     }
 }

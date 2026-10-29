@@ -18,6 +18,7 @@ use crate::frame::{self, Frame, Received};
 use crate::ip::Ipv6Packet;
 use crate::peer::{Peer, PeerInfo};
 use crate::rate::TxRate;
+use crate::reorder::Reorder;
 use crate::sync::{Clock, MULTICAST_GUARD_US, SLOT_US, UNICAST_GUARD_US};
 use crate::tlv::{self, Advert, HtCapabilities, Own};
 use crate::{MacAddr, TU, Time};
@@ -196,6 +197,9 @@ const HELD_SYNS: usize = 128;
 /// hundreds of fakes fresher than that takes more airtime than the channel
 /// has (SEC-11).
 pub const MAX_PEERS: usize = 512;
+/// A Block Ack Request's type and subtype, and DELBA's action.
+const BLOCK_ACK_REQUEST: u16 = 0x0084;
+const DELBA: u8 = 2;
 /// Frames sent for one input at most; the rest follow half a millisecond
 /// later, so the host's queue isn't flooded.
 const BURST: usize = 64;
@@ -232,6 +236,8 @@ pub struct Node {
     /// The sync master and its channel, while its sequence has no slot on
     /// ours (a shared radio).
     no_overlap: Option<(MacAddr, u8)>,
+    /// The Block Ack sessions accepted, their frames put back in order.
+    reorder: Reorder,
     stats: Stats,
 }
 
@@ -256,6 +262,7 @@ impl Node {
             echo_seq: 0,
             resume: None,
             no_overlap: None,
+            reorder: Reorder::default(),
             stats: Stats::default(),
         }
     }
@@ -313,6 +320,10 @@ impl Node {
         &self.stats
     }
 
+    pub fn reorder_stats(&self) -> &crate::reorder::Stats {
+        self.reorder.stats()
+    }
+
     /// Whether a frame to `to` may go now: for a host that couldn't send
     /// one when asked and wants to try again.
     pub fn may_send(&self, to: MacAddr, now: Time) -> bool {
@@ -351,6 +362,7 @@ impl Node {
     }
 
     fn receive(&mut self, now: Time, rssi: Option<i8>, bytes: &[u8], out: &mut Vec<Action>) {
+        let raw = bytes;
         let parsed = match frame::parse(bytes) {
             Ok(p) => p,
             Err(_) => {
@@ -388,13 +400,62 @@ impl Node {
                         no_ack: false,
                     },
                 });
+                // The starting sequence number follows the timeout.
+                if let Some(ssc) = le16_at(raw, frame::HEADER_LEN + 7) {
+                    let mut ready = Vec::new();
+                    self.reorder.start(
+                        header.src,
+                        ((params >> 2) & 0xf) as u8,
+                        (params >> 6) & 0x3ff,
+                        ssc >> 4,
+                        &mut ready,
+                    );
+                    self.deliver(ready, out);
+                }
             }
             Received::Data {
                 header,
                 amsdu,
                 body,
-            } if header.src != self.cfg.addr => self.rx_data(now, &header, amsdu, body, out),
+            } if header.src != self.cfg.addr => self.rx_data(now, &header, amsdu, body, raw, out),
+            Received::Other if self.cfg.accept_addba => self.rx_block_ack(raw, out),
             _ => {}
+        }
+    }
+
+    /// A Block Ack Request or a DELBA to us, for a session's reordering.
+    fn rx_block_ack(&mut self, raw: &[u8], out: &mut Vec<Action>) {
+        let Some(fc) = le16_at(raw, 0) else {
+            return;
+        };
+        let mut ready = Vec::new();
+        if fc & frame::fc::TYPE_SUBTYPE == BLOCK_ACK_REQUEST && raw.len() >= 20 {
+            // RA, TA, BAR control (TID in bits 12-15), starting sequence
+            // control.
+            if raw[4..10] != self.cfg.addr.0 {
+                return;
+            }
+            let mut ta = [0; 6];
+            ta.copy_from_slice(&raw[10..16]);
+            let ssn = le16_at(raw, 18).unwrap_or(0) >> 4;
+            self.reorder.bar(MacAddr(ta), raw[17] >> 4, ssn, &mut ready);
+        } else if fc & frame::fc::TYPE_SUBTYPE == frame::fc::ACTION {
+            // DELBA: category, action, parameter set (TID in bits 12-15).
+            let (Some(h), Some(body)) = (frame::parse_header(raw), raw.get(frame::HEADER_LEN..))
+            else {
+                return;
+            };
+            if h.dst == self.cfg.addr && body.len() >= 4 && body[0] == 3 && body[1] == DELBA {
+                self.reorder.stop(h.src, body[3] >> 4, &mut ready);
+            }
+        }
+        self.deliver(ready, out);
+    }
+
+    fn deliver(&mut self, packets: Vec<Ipv6Packet>, out: &mut Vec<Action>) {
+        for p in packets {
+            self.stats.delivered += 1;
+            out.push(Action::Deliver(p));
         }
     }
 
@@ -455,7 +516,35 @@ impl Node {
         header: &frame::Header,
         amsdu: bool,
         body: &[u8],
+        raw: &[u8],
         out: &mut Vec<Action>,
+    ) {
+        // In a Block Ack session the frame's packets wait their turn
+        // (reorder.rs); a frame with none for us still takes its place.
+        let qos =
+            le16_at(raw, 0).is_some_and(|fc| fc & frame::fc::TYPE_SUBTYPE == frame::fc::QOS_DATA);
+        let tid = raw
+            .get(frame::HEADER_LEN)
+            .map(|q| q & 0xf)
+            .filter(|&t| qos && header.dst == self.cfg.addr && self.reorder.active(header.src, t));
+        let mut ready = Vec::new();
+        self.rx_packets(now, header, amsdu, body, &mut ready);
+        if let Some(tid) = tid {
+            let held = core::mem::take(&mut ready);
+            self.reorder
+                .rx(header.src, tid, header.seq, held, now, &mut ready);
+        }
+        self.deliver(ready, out);
+    }
+
+    /// A data frame's packets for the IP stack, into `ready`.
+    fn rx_packets(
+        &mut self,
+        now: Time,
+        header: &frame::Header,
+        amsdu: bool,
+        body: &[u8],
+        ready: &mut Vec<Ipv6Packet>,
     ) {
         let msdus = match frame::msdus(header, amsdu, body) {
             Ok(m) => m,
@@ -492,8 +581,7 @@ impl Node {
                 if packet.dst == self.cfg.addr && packet.is_echo_reply(ECHO_ID) {
                     continue;
                 }
-                self.stats.delivered += 1;
-                out.push(Action::Deliver(packet));
+                ready.push(packet);
             } else if packet.is_bare_syn_to(self.cfg.addr) {
                 // A phone can open its connection before the MIF that makes
                 // it valid. Delivered now, the kernel's answer would wait on
@@ -501,8 +589,7 @@ impl Node {
                 self.hold_syn(now, packet);
             } else if known {
                 // Legacy handed on data from any peer in its table.
-                self.stats.delivered += 1;
-                out.push(Action::Deliver(packet));
+                ready.push(packet);
             }
         }
     }
@@ -557,6 +644,9 @@ impl Node {
     }
 
     fn service(&mut self, now: Time, out: &mut Vec<Action>) {
+        let mut ready = Vec::new();
+        self.reorder.expire(now, &mut ready);
+        self.deliver(ready, out);
         if now >= self.next_tick {
             self.tick(now, out);
             while self.next_tick <= now {
@@ -866,6 +956,9 @@ impl Node {
         if let Some(r) = self.resume {
             t = t.min(r);
         }
+        if let Some(r) = self.reorder.deadline() {
+            t = t.min(r);
+        }
         if !self.multicast.is_empty() {
             t = t.min(now.plus(self.multicast_wait(now).max(1)));
         }
@@ -881,4 +974,8 @@ impl Node {
         }
         t.max(now)
     }
+}
+
+fn le16_at(b: &[u8], at: usize) -> Option<u16> {
+    Some(u16::from_le_bytes([*b.get(at)?, *b.get(at + 1)?]))
 }
