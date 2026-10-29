@@ -1,0 +1,85 @@
+# Fuzz targets for the parsers that face the network (docs/SPEC.md §9). Run
+# one with `cargo +nightly fuzz run <target>`, or all of them for a fixed time
+# with `just fuzz`. Never point fuzzers at devices you don't own
+# (docs/implementation.md).
+[package]
+name = "owly-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Not part of the main workspace: it needs nightly and libFuzzer.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+owly-airdrop = { path = "../crates/owly-airdrop", default-features = false }
+owly-awdl = { path = "../crates/owly-awdl" }
+owly-radio = { path = "../crates/owly-radio" }
+
+[[bin]]
+name = "plist"
+path = "fuzz_targets/plist.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http"
+path = "fuzz_targets/http.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cpio"
+path = "fuzz_targets/cpio.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dvzip"
+path = "fuzz_targets/dvzip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gzip"
+path = "fuzz_targets/gzip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mdns"
+path = "fuzz_targets/mdns.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "receiver"
+path = "fuzz_targets/receiver.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "awdl"
+path = "fuzz_targets/awdl.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "radiotap"
+path = "fuzz_targets/radiotap.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,26 @@
+# Spec coverage, checked by `cargo xtask coverage`.
+#
+# in_scope lists the requirement IDs (docs/SPEC.md, docs/implementation.md)
+# whose MUSTs need a test. Each
+# phase adds its IDs as it exits. The list only grows, so a test removed later
+# fails the check too.
+in_scope = [
+    # Phase 1a: layers 3–7 on the veth harness.
+    "ASK-1", "ASK-2", "ASK-2a", "ASK-3", "ASK-4", "ASK-5", "ASK-7",
+    "BLE-1", "BLE-2", "BLE-3",
+    "DISC-1", "DISC-3", "DISC-5",
+    "DVZ-1", "DVZ-2", "DVZ-3", "DVZ-4",
+    "HTTP-1", "HTTP-2", "HTTP-2a", "HTTP-3", "HTTP-4", "HTTP-5", "HTTP-6", "HTTP-7",
+    "MDNS-1", "MDNS-3", "MDNS-5", "MDNS-6",
+    "NET-1", "NET-2", "NET-3",
+    "SEC-1", "SEC-2", "SEC-3", "SEC-4", "SEC-6", "SEC-7", "SEC-8", "SEC-10", "SEC-11",
+    "TLS-1", "TLS-2", "TLS-3",
+    "UP-1", "UP-1a", "UP-2", "UP-2a", "UP-3", "UP-4", "UP-5", "UP-6", "UP-7", "UP-7a", "UP-9", "UP-10", "UP-11",
+    # Phase 1b: end to end on one card.
+    "MDNS-7",
+    # Phase 2: radio daemon, every supported card.
+    "AWDL-1", "AWDL-2", "AWDL-11", "AWDL-12", "NET-4",
+]
+
+# MUSTs that no test can cover, each with the reason.
+[policy]

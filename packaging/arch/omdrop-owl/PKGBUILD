@@ -1,0 +1,80 @@
+# Maintainer: T4T5 <t4t5@hey.com>
+
+# omdrop-owl: Omdrop's radio backend on Wi-Fi cards without Apple's Broadcom
+# firmware, as clients of owlyd, Owly's radio service (the owly package).
+# Replaces omdrop-owl 0.3.0 and older, which ran a patched OWL, and upgrades
+# it in place.
+#
+# It serves both of Omdrop's versions. omdrop-core, where it's installed,
+# runs the hooks in /usr/lib/omdrop/radio/. Without it, Omdrop's bash and
+# Python version runs omdrop-awdl's helper, /usr/lib/omdrop/omdrop-discoverable,
+# and its tools beside it, as with 0.3.0. So omdrop-core, which isn't on the
+# AUR, isn't a dependency.
+#
+# Build this checkout:  makepkg -si  (here, in packaging/arch/omdrop-owl)
+#
+# packaging/arch/aur.sh derives the AUR's PKGBUILD from this one, building
+# the release tagged v${pkgver} instead of this checkout. Bumping the
+# workspace version in Cargo.toml, and pkgver here, in owly's and in
+# omdrop-owl-bin's with it, publishes it (.github/workflows/release.yml).
+pkgname=omdrop-owl
+pkgver=0.4.1
+pkgrel=1
+pkgdesc="AirDrop radio backend for Omdrop on non-Broadcom Wi-Fi, on Owly"
+arch=('x86_64' 'aarch64')
+url="https://github.com/t4t5/owly"
+# omdrop-awdl's tools are GPL-2.0-only.
+license=('MIT' 'GPL-2.0-only')
+# After owly, what omdrop-awdl's tools need.
+depends=('glibc' 'gcc-libs' 'owly'
+         'polkit' 'python' 'iproute2' 'keyutils' 'bluez' 'python-dbus' 'python-gobject'
+         'python-ifaddr' 'python-libarchive-c' 'python-pillow' 'python-zeroconf')
+makedepends=('cargo')
+# dbus-daemon: the hooks' conformance tests run a fake owlyd on a private bus.
+checkdepends=('dbus')
+# Both provide /usr/lib/omdrop's helper and hooks: one radio backend at a time.
+conflicts=('brcmfmac-awdl-dkms')
+options=('!lto' '!debug')
+install="${pkgname}.install"
+source=()
+sha256sums=()
+
+# The tree to build: this checkout.
+_tree() { cd "${startdir}/../../.." && pwd; } # aur: tree
+_unpack() { :; } # aur: unpack
+
+_target() { rustc -vV | sed -n 's/^host: //p'; }
+
+# See packaging/arch/owly/PKGBUILD.
+_cargo_env() {
+  export CARGO_HOME="${srcdir}/cargo-home" CARGO_TARGET_DIR="${srcdir}/target"
+  local sysroot; sysroot=$(rustc --print sysroot)
+  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=${sysroot}=/usr/src/rust --remap-path-prefix=$(_tree)=/usr/src/debug/${pkgname} --remap-path-prefix=${srcdir}=/usr/src/debug/${pkgname}"
+}
+
+prepare() {
+  _unpack
+  local tree; tree=$(_tree)
+  grep -qx "version = \"${pkgver}\"" "${tree}/Cargo.toml" \
+    || { error "pkgver differs from the workspace version in Cargo.toml"; return 1; }
+  cd "${tree}"
+  export CARGO_HOME="${srcdir}/cargo-home"
+  cargo fetch --locked --target "$(_target)"
+}
+
+build() {
+  cd "$(_tree)"
+  _cargo_env
+  cargo build --frozen --release -p omdrop-owl
+}
+
+check() {
+  cd "$(_tree)"
+  _cargo_env
+  cargo test --frozen --release -p omdrop-owl
+}
+
+package() {
+  cd "$(_tree)"
+  DESTDIR="${pkgdir}" TARGET="${srcdir}/target" packaging/install.sh omdrop-owl
+}

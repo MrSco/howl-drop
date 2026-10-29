@@ -1,0 +1,51 @@
+# owly's .deb and .rpm (packaging/package.sh), as the artifacts deb and
+# rpm: for packages.yml, which installs them on each distribution release
+# they're for, and release.yml, which puts them on the GitHub release.
+name: Linux packages
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to build, if not the caller's
+        type: string
+        default: ''
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    # The oldest release the deb is for, so it needs no newer glibc than
+    # that. Its own Rust is too old for Owly: rustup's is used.
+    container: ubuntu:22.04
+    steps:
+      - name: Install the build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ca-certificates curl dpkg-dev
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - run: packaging/package.sh deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: owly_*.deb
+          if-no-files-found: error
+
+  rpm:
+    runs-on: ubuntu-latest
+    # Pinned, so a new Fedora release changes this job in a commit of its own.
+    container: fedora:44
+    steps:
+      - name: Install the build tools
+        run: dnf install -y --setopt=install_weak_deps=False cargo rpm-build
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - run: packaging/package.sh rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: owly-*.rpm
+          if-no-files-found: error

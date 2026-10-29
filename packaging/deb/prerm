@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+# Gives Wi-Fi back if a session is up.
+if [ "$1" = remove ]; then
+  systemctl stop owlyd.service 2>/dev/null || true
+fi
+
+exit 0

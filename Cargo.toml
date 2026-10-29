@@ -1,0 +1,21 @@
+[workspace]
+members = ["crates/*", "xtask"]
+# Built with nightly and cargo-fuzz, on its own.
+exclude = ["fuzz"]
+resolver = "3"
+
+[workspace.package]
+# The version of everything here: the published crates, owlyd, the CLI and
+# omdrop-owl, which continues legacy's numbering so that its package
+# upgrades in place. The packages and their `v<version>` tag follow it
+# (packaging/arch), and so does owly-radio's requirement on owly-awdl, which
+# publishing needs.
+version = "0.4.1"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/t4t5/owly"
+
+[workspace.lints.rust]
+# Code that needs unsafe allows it locally, with a SAFETY comment.
+unsafe_code = "deny"

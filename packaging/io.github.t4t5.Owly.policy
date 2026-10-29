@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
+
+<!--
+  owlyd asks this before Acquire() lends a caller the radio. Root may
+  always; omdrop-owl's hooks run as root through omdrop-radio.
+
+  allow_active is yes because becoming visible to AirDrop from your own seat
+  is an ordinary thing to do, like joining a network. Remote and inactive
+  sessions must authenticate as an administrator: nobody should turn on a
+  machine's radio for AirDrop, which in exclusive mode takes Wi-Fi down,
+  from somewhere else.
+-->
+<policyconfig>
+  <vendor>Owly</vendor>
+  <vendor_url>https://github.com/t4t5/owly</vendor_url>
+
+  <action id="io.github.t4t5.Owly.acquire">
+    <description>Use the Wi-Fi radio for AirDrop</description>
+    <message>Authentication is required to use the Wi-Fi radio for AirDrop</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

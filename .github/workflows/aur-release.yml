@@ -1,0 +1,128 @@
+# One package's release, for release.yml: build the AUR's PKGBUILD
+# (packaging/arch/aur.sh), tag v<pkgver> with a GitHub release (if that tag
+# is new: the first package of a version makes it, and a pkgrel bump reuses
+# it), and publish it to the AUR. A version the AUR already has does
+# nothing. omdrop-owl-bin adds the prebuilt tarball it installs to the
+# release.
+name: AUR release
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        type: string
+        required: true
+
+jobs:
+  release:
+    # Not in forks, which have no AUR key.
+    if: github.repository == 't4t5/owly'
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      PKG: ${{ inputs.package }}
+    steps:
+      - name: Install tools
+        run: pacman -Syu --noconfirm --needed git github-cli jq openssh pacman-contrib
+
+      - uses: actions/checkout@v4
+
+      - name: Compare with the AUR
+        id: version
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          pkgbuild=packaging/arch/$PKG/PKGBUILD
+          pkgver=$(sed -n 's/^pkgver=//p' "$pkgbuild")
+          version=$pkgver-$(sed -n 's/^pkgrel=//p' "$pkgbuild")
+          tag=v$pkgver
+          aur=$(curl -fsS "https://aur.archlinux.org/rpc/v5/info/$PKG" \
+            | jq -r '.results[0].Version // "none"')
+          echo "PKGBUILD: $version, AUR: $aur"
+          if [ "$version" = "$aur" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Fail before tagging anything that couldn't then be published.
+          if [ -z "$AUR_SSH_KEY" ]; then
+            echo "::error::The AUR_SSH_KEY secret isn't set."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            tagged=true
+            # The AUR's PKGBUILD comes from here, but what it builds comes
+            # from the tag's tarball: a change to that needs a new version.
+            # The checkout is shallow and has no tags.
+            git fetch --quiet --depth=1 origin tag "$tag"
+            if ! git diff --quiet "$tag" HEAD -- . ':!packaging/arch' ':!.github'; then
+              echo "::error::Files the package builds from changed since $tag: bump the version, not pkgrel."
+              git diff --stat "$tag" HEAD -- . ':!packaging/arch' ':!.github'
+              exit 1
+            fi
+          elif [ "$PKG" = omdrop-owl-bin ]; then
+            echo "::error::There's no release $tag for omdrop-owl-bin's tarball to go on."
+            exit 1
+          else
+            tagged=false
+          fi
+          { echo "release=true"; echo "tag=$tag"; echo "pkgver=$pkgver"; echo "tagged=$tagged"; } >> "$GITHUB_OUTPUT"
+
+      # makepkg won't run as root. omdrop-owl's build needs owly installed,
+      # which isn't in a repository, so it's built from this tree first.
+      # omdrop-owl-bin's tarball is built here too, with the repositories'
+      # Rust.
+      - name: Build the package
+        if: steps.version.outputs.release == 'true'
+        run: |
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          chown -R builder "$GITHUB_WORKSPACE"
+          sudo -u builder git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          mkdir -m 777 /tmp/pkgs
+          if [ "$PKG" = omdrop-owl ]; then
+            sudo -u builder OUT=/tmp/pkgs packaging/arch/aur-test.sh owly -s --noconfirm
+            pacman -U --noconfirm /tmp/pkgs/owly-*.pkg.tar.zst
+          fi
+          if [ "$PKG" = omdrop-owl-bin ]; then
+            pacman -S --noconfirm --needed rust
+          fi
+          sudo -u builder OUT=/tmp/pkgs packaging/arch/aur-test.sh "$PKG" -s --noconfirm
+
+      - name: Tag the release
+        if: steps.version.outputs.release == 'true' && steps.version.outputs.tagged == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PKGVER: ${{ steps.version.outputs.pkgver }}
+        run: gh release create "$TAG" --target "$GITHUB_SHA" --title "$PKGVER" --generate-notes
+
+      # The tarball the package was just built and tested with. A rerun
+      # leaves the one already there, which the AUR's checksum is of.
+      - name: Add the prebuilt tarball to the release
+        if: steps.version.outputs.release == 'true' && inputs.package == 'omdrop-owl-bin'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PKGVER: ${{ steps.version.outputs.pkgver }}
+        run: |
+          tarball=omdrop-owl-$PKGVER-x86_64.tar.gz
+          if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qxF "$tarball"; then
+            echo "$TAG already has $tarball."
+          else
+            gh release upload "$TAG" "/tmp/pkgs/$tarball"
+          fi
+
+      - name: Publish to the AUR
+        if: steps.version.outputs.release == 'true'
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          install -d -m700 -o builder /home/builder/.ssh
+          (umask 077; printf '%s\n' "$AUR_SSH_KEY" > /home/builder/.ssh/aur)
+          chown builder /home/builder/.ssh/aur
+          sudo -u builder git config --global user.name 'github-actions[bot]'
+          sudo -u builder git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          sudo -u builder packaging/arch/aur-publish.sh "$PKG" /home/builder/.ssh/aur

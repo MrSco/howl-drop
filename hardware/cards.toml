@@ -1,0 +1,202 @@
+# The Wi-Fi cards README.md's "Supported hardware" table lists, one
+# [[card]] each. `cargo xtask hardware` builds the table from this file,
+# the `owly test-card` reports in hardware/reports/, and
+# crates/owly-radio/drivers.toml; see xtask/src/hardware.rs for the rules.
+# Edit these, then run it: the table itself is generated.
+#
+#   name              the card as people know it, such as "Intel AX211"
+#   driver            its kernel driver, as in drivers.toml and the reports
+#   ids               its PCI or USB IDs (`lspci -nn`, `lsusb`), such as
+#                     "8086:51f1". A report is matched to its card by the
+#                     device ID it names, so every reported ID has to be
+#                     listed here. A card known only by name has none until
+#                     its first report
+#   status            its status cell, until a report gives it a new one
+#   tested_on         the machines that status came from, as its
+#                     "Tested on" cell lists them, before the reports'
+#                     machines
+#
+# The generator groups and sorts the cards; within a group they keep this
+# file's order.
+
+[[card]]
+name = "MediaTek MT7925"
+driver = "mt7925e"
+ids = ["14c3:0717"]
+status = "✅ Shared"
+tested_on = ["Framework 13, `14c3:0717`, Omarchy 4.0.4 (kernel 7.2.5)"]
+
+[[card]]
+name = "MediaTek MT7612U (USB)"
+driver = "mt76x2u"
+ids = ["0e8d:7612"]
+status = "✅ Exclusive"
+tested_on = ["`0e8d:7612` (kernel 7.2.9)"]
+
+[[card]]
+name = "Realtek RTL8822BE"
+driver = "rtw88_8822be"
+ids = ["10ec:b822"]
+status = "✅ Exclusive; shared untested"
+tested_on = ["Crosshair VII Hero, `10ec:b822`, NixOS 26.11 (kernel 7.2.9)"]
+
+[[card]]
+name = "Realtek RTL8852AE"
+driver = "rtw89_8852ae"
+ids = ["10ec:8852"]
+status = "✅ Shared (opt-in)"
+tested_on = ["ThinkPad P14s Gen 2a, `10ec:8852`, Ubuntu 26.04.1 (kernel 7.0)"]
+
+[[card]]
+name = "Realtek RTL8852BE"
+driver = "rtw89_8852be"
+ids = ["10ec:b852"]
+status = "✅ Shared (opt-in)"
+tested_on = ["ASUS PRIME B550M-A WIFI II, `10ec:b852`, CachyOS (kernel 7.2.9)"]
+
+[[card]]
+name = "Realtek RTL8852CE"
+driver = "rtw89_8852ce"
+ids = ["10ec:c852"]
+status = "✅ Shared and exclusive (opt-in)"
+tested_on = [
+    "Legion Slim 5 16AHP9, `10ec:c852`, Omarchy 4.0.4 (kernel 7.2.5)",
+    "ThinkBook 16 G7 IML, `10ec:c852`, Ubuntu 24.04.5 (kernel 7.0)",
+]
+
+[[card]]
+name = "Realtek RTL8188FTV (USB)"
+driver = "rtl8xxxu"
+ids = ["0bda:f179"]
+status = "⚠️ Exclusive (opt-in)"
+tested_on = []
+
+[[card]]
+name = "Realtek RTL8852BU (USB)"
+driver = "rtw89_8852bu"
+ids = ["35bc:0108"]
+status = "✅ Exclusive (opt-in), as a second card"
+tested_on = ["USB adapter, `35bc:0108`, NixOS 26.05 (kernel 7.2.9)"]
+
+[[card]]
+name = "Intel 9260"
+driver = "iwlwifi"
+ids = ["8086:2526"]
+status = "✅ Exclusive"
+tested_on = ["`8086:2526`, Debian 13 (kernel 7.2.12)"]
+
+[[card]]
+name = "Intel 9560"
+driver = "iwlwifi"
+ids = ["8086:a370"]
+status = "✅ Exclusive"
+tested_on = ["Lenovo 81SY, `8086:a370`, Omarchy 4.0.0 (kernel 7.2.8)"]
+
+[[card]]
+name = "Intel AX200"
+driver = "iwlwifi"
+ids = ["8086:2723"]
+status = "✅ Exclusive"
+tested_on = ["ThinkPad X1 Yoga, `8086:2723`, NixOS 26.05 (kernel 6.19.8)"]
+
+[[card]]
+name = "Intel AX201"
+driver = "iwlwifi"
+ids = ["8086:02f0"]
+status = "✅ Exclusive"
+tested_on = ["Ubuntu 24.04 (kernel 6.8)", "CachyOS (kernel 7.2.9)"]
+
+[[card]]
+name = "Intel AX210"
+driver = "iwlwifi"
+ids = ["8086:2725"]
+status = "❓ Exclusive untested"
+
+[[card]]
+name = "Intel AX211"
+driver = "iwlwifi"
+ids = ["8086:51f1", "8086:51f0", "8086:7a70", "8086:7740"]
+status = "✅ Exclusive"
+tested_on = [
+    "ThinkPad X1, `8086:51f1`, Ubuntu 26.04 (kernel 7.0)",
+    "XPS 9320, `8086:51f0`, Arch (kernel 7.2.3)",
+    "Legion Pro 7 16IRX8H, `8086:7a70`, Omarchy 4.0.4 (kernel 7.2.3)",
+    "TUXEDO InfinityBook Max 15 Gen10 (Arrow Lake), `8086:7740`, Kubuntu 26.04.1 (kernel 7.0)",
+]
+
+[[card]]
+name = "Intel BE (Panther Lake)"
+driver = "iwlwifi"
+ids = ["8086:e440"]
+status = "✅ Exclusive"
+tested_on = ["XPS 16, `8086:e440`, Arch (kernel 7.2)"]
+
+[[card]]
+name = "Intel BE200"
+driver = "iwlwifi"
+ids = ["8086:272b"]
+status = "✅ Exclusive"
+tested_on = ["GEEKOM IT13 Max, `8086:272b`, Omarchy 4.0.4 (kernel 7.2.5)"]
+
+[[card]]
+name = "MediaTek MT7921"
+driver = "mt7921e"
+ids = ["14c3:7961"]
+status = "⚠️ Exclusive, opt-in; shared fails ([#14](https://github.com/t4t5/owly/issues/14))"
+tested_on = ["`14c3:7961`, CachyOS (kernel 7.2.9)"]
+
+[[card]]
+name = "MediaTek MT7922 (RZ616)"
+driver = "mt7921e"
+ids = ["14c3:0616"]
+status = "⚠️ Exclusive, opt-in; shared fails ([#14](https://github.com/t4t5/owly/issues/14))"
+tested_on = ["Minisforum MS-A2, `14c3:0616`, NixOS 26.05 (kernels 6.18 and 7.2.5)"]
+
+[[card]]
+name = "MediaTek MT7927"
+driver = "mt7925e"
+ids = ["14c3:7927"]
+status = "❌ Shared: never heard; active monitor (opt-in) sends, but receiving times out ([#44](https://github.com/t4t5/owly/issues/44))"
+tested_on = ["TP-Link Archer TBE550E, `14c3:7927`, CachyOS (kernel 7.2.9)"]
+
+[[card]]
+name = "Realtek RTL8821CE"
+driver = "rtw88_8821ce"
+ids = ["10ec:c821"]
+status = "❌ Shared: OWL syncs but no transfer, Wi-Fi often lost after ([#60](https://github.com/t4t5/owly/issues/60)); exclusive receives nothing"
+tested_on = ["HP laptop, `10ec:c821`, Omarchy (kernel 7.2.5)"]
+
+[[card]]
+name = "Qualcomm WCN6855 (QCNFA765)"
+driver = "ath11k_pci"
+ids = ["17cb:1103"]
+status = "❌ Can't create the monitor interface both modes need ([#45](https://github.com/t4t5/owly/issues/45))"
+tested_on = ["ThinkPad, `17cb:1103`, CachyOS (kernel 7.2.9)"]
+
+[[card]]
+name = "Qualcomm WCN7850 (FastConnect 7800)"
+driver = "ath12k_wifi7_pci"
+ids = ["17cb:1107"]
+status = "❌ Shared: receives nothing from the phone ([#40](https://github.com/t4t5/owly/issues/40)); exclusive untested"
+tested_on = ["`17cb:1107`, Fedora 44 (kernel 7.2.9)"]
+
+[[card]]
+name = "Intel Dual Band Wireless-AC 7265"
+driver = "iwlwifi"
+ids = ["8086:095a"]
+status = "❌ Exclusive: firmware asserts on every ad-hoc start ([#16](https://github.com/t4t5/owly/issues/16))"
+tested_on = ["Zenbook UX305CA, `8086:095a`, Omarchy 4.0.4 (kernel 7.2.5)"]
+
+[[card]]
+name = "Intel Wireless-AC 8260"
+driver = "iwlwifi"
+ids = ["8086:24f3"]
+status = "❌ Exclusive: firmware resets on channel 44; no transfer on 6"
+tested_on = ["NUC6i7KYK, `8086:24f3`, Home Assistant OS (kernel 6.12)"]
+
+[[card]]
+name = "Intel Dual Band Wireless-AC 8265"
+driver = "iwlwifi"
+ids = ["8086:24fd"]
+status = "❌ Exclusive: firmware resets about 10 s after the ad-hoc cell starts; through a hidden AP, nothing heard from the phone"
+tested_on = ["EliteBook x360 1030 G3, `8086:24fd`, Manjaro (kernel 6.12)"]

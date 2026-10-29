@@ -1,151 +1,216 @@
-<img src="art/howldrop.png" alt="HowlDrop" width="128" align="right">
+# Owly
 
-# howl-drop
+https://github.com/user-attachments/assets/b195ce4c-e078-49be-bc13-44a72b6dc189
 
-AirDrop between an iPhone and a Windows PC. **HowlDrop** puts the PC on the
-iPhone's share sheet: photos, videos, files and links land in
-`Downloads\HowlDrop` with a notification, shared text goes on the clipboard,
-and **Send to iPhone** (the tray menu, or Explorer's Send to) AirDrops files
-back to the phone.
+AirDrop between iPhones and Linux devices whose Wi-Fi isn't Apple's Broadcom chip.
 
-All it takes is `howldrop.exe` and a USB Wi-Fi stick with a MediaTek
-**MT7612U** (e.g. Alfa AWUS036ACM). No Mac, no Home Assistant, nothing on the
-phone. **[Which Wi-Fi adapter?](docs/adapters.md)** lists what works, what
-might, and what can't (your PC's built-in Wi-Fi can't, on Windows).
+See [supported hardware](#supported-hardware).
 
-<p align="center">
-  <img src="docs/screenshots/window.png" alt="The HowlDrop window: a transfer under way, the drop zone, nearby devices and recent transfers" width="320">
-  &nbsp;
-  <img src="docs/screenshots/settings.png" alt="HowlDrop's settings: AirDrop on this PC, who can send, contacts" width="320">
-</p>
-<p align="center">
-  <img src="docs/screenshots/card-ask.png" alt="A card asking to accept a video from Alex's iPhone" width="300">
-  &nbsp;
-  <img src="docs/screenshots/card-receiving.png" alt="A card showing the video's progress" width="300">
-</p>
+## Install
 
-```
-iPhone ──AWDL (Wi-Fi) + BLE──▶ USB MT7612U ──usbipd──▶ WSL 2: OWL, AirDrop receiver and sender
-                                                          │  (a distro howldrop.exe downloads and runs)
-                                                          ▼
-                                howldrop.exe: tray, notifications, Downloads\HowlDrop, clipboard,
-                                Send to iPhone, the Bluetooth wake from Windows' own Bluetooth
+<details>
+<summary>Arch/Omarchy</summary>
+
+If using Omarchy, you can install Owly together with [omdrop](https://github.com/netmojo-systems/omdrop-plugin) to get it in your bar:
+
+```sh
+# Install Omdrop:
+omarchy plugin add https://github.com/netmojo-systems/omdrop-plugin.git
+
+# Install Owly (omdrop-owl):
+yay -S omdrop-owl
 ```
 
-## Windows
+If you're just using Arch, or don't want the UI, you can just install the CLI:
 
-1. Download `howldrop.exe` from
-   [Releases](https://github.com/MrSco/howl-drop/releases/latest) and put it
-   somewhere it can stay (say `%LOCALAPPDATA%\Programs\HowlDrop`). Nothing to
-   install. Windows SmartScreen may not recognize it (it is not code-signed):
-   **More info**, **Run anyway**.
-2. Have WSL 2: in an administrator terminal, `wsl --install`, then restart.
-3. Plug in the stick (a USB 2.0 port worked best), start `howldrop.exe`,
-   right-click its icon by the clock, and turn on **AirDrop on this PC**.
-
-The first time, HowlDrop offers to install
-[usbipd-win](https://github.com/dorssel/usbipd-win) (which hands the stick to
-WSL), downloads its Linux part (about 250 MB, from the same release, checked
-against the SHA-256 built into the exe), and Windows asks once to share the
-stick. The dot on the icon then turns green: the PC is on the share sheet
-under its own name.
-
-Click the tray icon for the HowlDrop window: drop files on it and pick the
-phone to AirDrop them (set the iPhone's AirDrop to **Everyone for 10
-Minutes**, then accept on the phone), and see what came and went. The PC's
-Bluetooth wakes the phone; whatever else is connected to it stays connected.
-Each transfer shows as a card by the tray, or in the window while it's
-open: an incoming one asks first (unless the sender is one of your
-contacts, or you let everyone through), then shows its progress.
-
-The tray app, its menu, the commands and how it works:
-[howldrop/README.md](howldrop/README.md).
-
-## Home Assistant, Raspberry Pi and Linux
-
-The same radio stack also runs as a Home Assistant add-on, for a home server
-that holds the stick instead of the PC: whatever the phone sends lands in
-Home Assistant's share folder, where any PC on the network can open it, and a
-PC running `howldrop.exe` also gets each file (the add-on's `forward_to_pc`,
-paired with the tray's key) and can send to the phone through it.
-
-[![Add the repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FMrSco%2Fhowl-drop%23ha-addon)
-
-Or in Home Assistant: Settings, Add-ons, Add-on store, menu, Repositories,
-and add `https://github.com/MrSco/howl-drop#ha-addon`. Then install HowlDrop,
-turn Protection mode off, and start it. Requirements and options:
-[addon/DOCS.md](addon/DOCS.md). Home Assistant OS on a Raspberry Pi 3, 4 or 5
-works the same way. Without Home Assistant OS, on Raspberry Pi OS (64-bit) or
-another Linux, the same image runs under Docker Compose:
-[docker/README.md](docker/README.md).
-
-There the radio can be any Wi-Fi card
-[omdrop-owl](https://github.com/t4t5/omdrop-owl) has a profile for
-(`userspace/owl-profiles`), driven by the host's own kernel driver. A card
-that is not the machine's network uplink runs exclusive mode for as long as
-the add-on runs; one that is the uplink can run shared mode. The MT7612U is
-the tested choice: it follows the iPhone onto 5 GHz, where transfers run. See
-[Which Wi-Fi adapter?](docs/adapters.md) and
-[docs/hardware-notes.md](docs/hardware-notes.md).
-
-The `ha-addon` branch is the add-on assembled from `main` by CI
-(`tools/publish-addon.sh`), since Home Assistant builds an add-on only from its
-own folder. It points Home Assistant at prebuilt images,
-`ghcr.io/mrsco/howldrop-amd64` and `-aarch64`, which CI builds for each new
-version in `addon/config.yaml` before it updates the branch: bump the version
-to release a change. The amd64 image is also the Windows version's Linux part
-(`tools/wsl-distro`).
-
-This is a fork of [t4t5/omdrop-owl](https://github.com/t4t5/omdrop-owl), the
-Linux radio backend for [omdrop](https://github.com/netmojo-systems/omdrop-plugin),
-with the Windows app, the add-on and delivery added, and its distribution
-packaging removed (upstream has it).
-
-## Layout
-
-| Path | What |
-|---|---|
-| `howldrop/` | `howldrop.exe` (the Windows app: tray, AirDrop on this PC in WSL, the Bluetooth wake) and `howldrop-bridge` (the add-on's forwarder and relay), C++17, one CMake tree. |
-| `addon/` | The radio stack's image, as a Home Assistant add-on and as the Windows version's Linux part: `config.yaml`, `Dockerfile`, `run.sh`, `wsl-run.sh` (its start under howldrop.exe), and the Python it ships (`deliver.py`, `announce.py`, `outbox.py`, `senders.py`, `patch_receiver.py`), and the sidebar panel (`panel.py`, `panel/`). |
-| `docker/` | The same image under Docker Compose, without Home Assistant OS: `compose.yaml`, default `options.json`, `install.sh`. |
-| `userspace/` | `omdrop-discoverable`, the radio helper, and `owl-profiles`, its per-driver table. |
-| `patches/`, `pins` | OWL's pinned upstream commit and the patches applied to it; `tools/build-owl.sh` applies them. |
-| `tools/` | `build-owl.sh` and `stage.sh` build the radio stack (inside the image); `stage-addon.sh` assembles the add-on folder; `wsl-distro/` makes the Windows version's WSL distro from the image; `build-howldrop.ps1` builds `howldrop.exe`; `make-icons.py` makes the icons from `art/howldrop.png`. |
-| `tests/` | The helper, the add-on's radio choice, delivery, sending and the allow list, against command doubles and local sockets: no radio needed. `howldrop/tests/` has the Windows app's. |
-
-## Develop
-
-`howldrop.exe` builds with CMake, Ninja and a MinGW-w64 g++ (Strawberry Perl
-ships all three), and CI builds it on every push:
-
-```powershell
-tools\build-howldrop.ps1 -Run
+```sh
+yay -S owly
 ```
 
-A local build has no Linux part to download: it runs a `HowlDrop` WSL distro
-already imported (a release's). Releasing is in
-[howldrop/README.md](howldrop/README.md): push the version to `main`, then a
-`windows-vVERSION` tag.
+</details>
 
-The radio stack's tests:
+<details>
+<summary>NixOS</summary>
 
-```bash
-tools/run-tests.sh
+```nix
+inputs.owly.url = "github:t4t5/owly";
 ```
 
-(or `python -m unittest discover -s tests` without bats). To try an add-on
-change on Home Assistant before pushing it, stage it into Home Assistant's
-`/addons` share and bump `version` in `addon/config.yaml` for every deploy, or
-Supervisor keeps the old image:
-
-```bash
-tools/stage-addon.sh //homeassistant/addons/howldrop
+```nix
+imports = [ inputs.owly.nixosModules.default ];
+services.owly.enable = true;
+services.owly.settings = { allow_untested = true; };
 ```
 
-In Home Assistant: Add-on store, menu, Check for updates, update HowlDrop,
-start it, and read its log. That's the local add-on (`local_howldrop`);
-pushing to `main` publishes it to the `ha-addon` branch once CI passes.
+</details>
 
-What runs in the image is Linux shell and Python, so `.gitattributes` keeps
-the checkout LF even with `core.autocrlf`; `stage-addon.sh` refuses a CRLF
-file.
+<details>
+<summary>Debian/Ubuntu</summary>
+
+Download the `.deb` from the [releases page](https://github.com/t4t5/owly/releases) and run:
+
+```sh
+sudo apt install ./owly_*_amd64.deb     # Debian 12, Ubuntu 22.04 and newer
+```
+
+</details>
+
+<details>
+<summary>Fedora</summary>
+
+Download the `.rpm` from the [releases page](https://github.com/t4t5/owly/releases) and run:
+
+```sh
+sudo dnf install ./owly-*.x86_64.rpm    # Fedora 44 and newer
+```
+
+</details>
+
+<details>
+<summary>From source</summary>
+
+Requires Rust 1.88 or newer:
+
+```sh
+cargo build --release --locked -p owlyd -p owly-cli
+sudo packaging/install.sh owly
+sudo systemctl daemon-reload && sudo nmcli general reload conf
+```
+
+</details>
+
+## Usage
+
+Start the radio in your terminal:
+
+```sh
+owly radio up
+```
+
+Then, in another terminal:
+
+```sh
+# To receive files:
+owly receive --dir ~/Downloads
+
+# To send files:
+owly browse    # (find nearby AirDrop receivers)
+owly send --to "Jane's iPhone" photo.jpg
+```
+
+Make sure you set your phone's Airdrop setting to "Everyone for 10 minutes".
+
+## Supported hardware
+
+**Status:** ✅ both directions work, ⚠️ unreliable (see [known issues](#known-issues)), ❌ fails, ❓ untested
+
+**Modes:** *Shared* keeps Wi-Fi connected; *Exclusive* and *Active monitor* turn it off while the radio is up (see [why?](#modes))
+
+<!-- hardware-table:start -->
+<!-- Generated by `cargo xtask hardware` from hardware/ and crates/owly-radio/drivers.toml: edit those, not this table. -->
+
+| Card | Driver | Status | Tested on |
+|---|---|---|---|
+| MediaTek MT7925 | `mt7925e` | ✅ Shared | Framework 13, `14c3:0717`, Omarchy 4.0.4 (kernel 7.2.5) |
+| MediaTek MT7612U (USB) | `mt76x2u` | ✅ Exclusive | `0e8d:7612` (kernel 7.2.9) |
+| Realtek RTL8822BE | `rtw88_8822be` | ✅ Exclusive; shared untested | Crosshair VII Hero, `10ec:b822`, NixOS 26.11 (kernel 7.2.9) |
+| Realtek RTL8852AE | `rtw89_8852ae` | ✅ Shared (opt-in) | ThinkPad P14s Gen 2a, `10ec:8852`, Ubuntu 26.04.1 (kernel 7.0) |
+| Realtek RTL8852BE | `rtw89_8852be` | ✅ Shared (opt-in) | ASUS PRIME B550M-A WIFI II, `10ec:b852`, CachyOS (kernel 7.2.9) |
+| Realtek RTL8852CE | `rtw89_8852ce` | ✅ Shared and exclusive (opt-in) | • Legion Slim 5 16AHP9, `10ec:c852`, Omarchy 4.0.4 (kernel 7.2.5)<br>• ThinkBook 16 G7 IML, `10ec:c852`, Ubuntu 24.04.5 (kernel 7.0) |
+| Realtek RTL8852BU (USB) | `rtw89_8852bu` | ✅ Exclusive (opt-in), as a second card | USB adapter, `35bc:0108`, NixOS 26.05 (kernel 7.2.9) |
+| Intel 9260 | `iwlwifi` | ✅ Exclusive | `8086:2526`, Debian 13 (kernel 7.2.12) |
+| Intel 9560 | `iwlwifi` | ✅ Exclusive | Lenovo 81SY, `8086:a370`, Omarchy 4.0.0 (kernel 7.2.8) |
+| Intel AX200 | `iwlwifi` | ✅ Exclusive | • ThinkPad X1 Yoga, `8086:2723`, NixOS 26.05 (kernel 6.19.8)<br>• Micro Computer (HK) Tech Limited MS-A2, `8086:2723`, NixOS 26.05 (kernel 7.2.5) |
+| Intel AX201 | `iwlwifi` | ✅ Exclusive | • Ubuntu 24.04 (kernel 6.8)<br>• CachyOS (kernel 7.2.9)<br>• Intel Client Systems NUC10i7FNK, `8086:02f0`, NixOS 26.05 (kernel 6.18.55) |
+| Intel AX210 | `iwlwifi` | ✅ Exclusive | Micro Computer (HK) Tech Limited MS-A2, `8086:2725`, NixOS 26.05 (kernel 7.2.5) |
+| Intel AX211 | `iwlwifi` | ✅ Exclusive | • ThinkPad X1, `8086:51f1`, Ubuntu 26.04 (kernel 7.0)<br>• XPS 9320, `8086:51f0`, Arch (kernel 7.2.3)<br>• Legion Pro 7 16IRX8H, `8086:7a70`, Omarchy 4.0.4 (kernel 7.2.3)<br>• TUXEDO InfinityBook Max 15 Gen10 (Arrow Lake), `8086:7740`, Kubuntu 26.04.1 (kernel 7.0) |
+| Intel BE (Panther Lake) | `iwlwifi` | ✅ Exclusive | XPS 16, `8086:e440`, Arch (kernel 7.2) |
+| Intel BE200 | `iwlwifi` | ✅ Exclusive | GEEKOM IT13 Max, `8086:272b`, Omarchy 4.0.4 (kernel 7.2.5) |
+| MediaTek MT7921 | `mt7921e` | ⚠️ Exclusive, opt-in; shared fails ([#14](https://github.com/t4t5/owly/issues/14)) | `14c3:7961`, CachyOS (kernel 7.2.9) |
+| MediaTek MT7922 (RZ616) | `mt7921e` | ⚠️ Exclusive, opt-in; shared fails ([#14](https://github.com/t4t5/owly/issues/14)) | Minisforum MS-A2, `14c3:0616`, NixOS 26.05 (kernels 6.18 and 7.2.5) |
+| Realtek RTL8188FTV (USB) | `rtl8xxxu` | ⚠️ Exclusive (opt-in) | INTEL H81, `0bda:f179`, Linux Mint 22.3 (kernel 6.14.0): partly |
+| MediaTek MT7927 | `mt7925e` | ❌ Shared: never heard; active monitor (opt-in) sends, but receiving times out ([#44](https://github.com/t4t5/owly/issues/44)) | TP-Link Archer TBE550E, `14c3:7927`, CachyOS (kernel 7.2.9) |
+| Realtek RTL8821CE | `rtw88_8821ce` | ❌ Shared: OWL syncs but no transfer, Wi-Fi often lost after ([#60](https://github.com/t4t5/owly/issues/60)); exclusive receives nothing | HP laptop, `10ec:c821`, Omarchy (kernel 7.2.5) |
+| Qualcomm WCN6855 (QCNFA765) | `ath11k_pci` | ❌ Can't create the monitor interface both modes need ([#45](https://github.com/t4t5/owly/issues/45)) | ThinkPad, `17cb:1103`, CachyOS (kernel 7.2.9) |
+| Qualcomm WCN7850 (FastConnect 7800) | `ath12k_wifi7_pci` | ❌ Shared: receives nothing from the phone ([#40](https://github.com/t4t5/owly/issues/40)); exclusive untested | `17cb:1107`, Fedora 44 (kernel 7.2.9) |
+| Intel Dual Band Wireless-AC 7265 | `iwlwifi` | ❌ Exclusive: firmware asserts on every ad-hoc start ([#16](https://github.com/t4t5/owly/issues/16)) | Zenbook UX305CA, `8086:095a`, Omarchy 4.0.4 (kernel 7.2.5) |
+| Intel Wireless-AC 8260 | `iwlwifi` | ❌ Exclusive: firmware resets on channel 44; no transfer on 6 | NUC6i7KYK, `8086:24f3`, Home Assistant OS (kernel 6.12) |
+| Intel Dual Band Wireless-AC 8265 | `iwlwifi` | ❌ Exclusive: firmware resets about 10 s after the ad-hoc cell starts; through a hidden AP, nothing heard from the phone | EliteBook x360 1030 G3, `8086:24fd`, Manjaro (kernel 6.12) |
+
+<!-- hardware-table:end -->
+
+One card name can cover chips that behave differently, so a report from a machine, PCI ID (`lspci -nn`) or kernel not listed here helps too.
+
+### Checking your card
+
+```sh
+owly doctor
+```
+
+This says which mode the card runs in, what's in the way (an AP on the wrong channel, a missing `hostapd`), and what's known to go wrong on it.
+
+
+### Adding your card
+
+```sh
+owly test-card
+```
+
+This walks you through a photo each way with an iPhone, watches Wi-Fi for five minutes, and writes a JSON report. Open a pull request adding it to [`hardware/reports/`](hardware/README.md), or attach it to an issue.
+
+A card with no entry in `drivers.toml` gets the `*` entry, which runs only with `allow_untested = true`. Cards that can inject frames from a monitor interface while connected to Wi-Fi are the likely candidates for shared mode. Most mac80211 drivers can, but how they behave around it varies, which is what `drivers.toml` records. To try other settings, copy the `*` entry to `/etc/owly/drivers.toml` under your driver's name (`basename $(readlink /sys/class/net/<wifi>/device/driver)`) and change it there.
+
+owlyd reads `/etc/owly/radio.toml` and `/etc/owly/drivers.toml` again for each `owly doctor` and each time the radio comes up, so changes to them need no restart.
+
+## Modes
+
+**Shared.** Wi-Fi stays connected, and AWDL shares the AP's channel, which has to be **6, 44 or 149**. Owly injects frames through a monitor interface with the station's MAC, and advertises only the phone's slots on that channel. The station ACKs the phone's frames.
+
+**Exclusive.** For cards that can't inject while connected, such as every Intel card tested. Wi-Fi is down while the radio is up, and comes back when it's given back. An ad-hoc cell on AWDL's BSSID takes the station's place to ACK the phone's frames, or a hidden AP (hostapd) on cards with no ad-hoc mode. It tries channels 44, 149 and 6 in that order, of those the card may transmit on, since an iPhone gives AWDL more slots on 5 GHz. Intel cards go straight to 6, the only channel where a phone has used their cell.
+
+**Active monitor.** For cards with neither, such as the MediaTek MT7612U and MT7921: an active monitor carrying the station's MAC ACKs in place of the cell.
+
+A USB adapter can run exclusive mode as a second card while the built-in one stays connected: set `station` to the adapter in `/etc/owly/radio.toml` and disconnect it (`nmcli device disconnect <adapter>`).
+
+## Configuration
+
+`/etc/owly/radio.toml`, all optional:
+
+```toml
+station = "wlan0"        # the Wi-Fi interface to use; else the first station
+allow_untested = false   # run on a card the quirks table doesn't mark tested
+reconnect_after = true   # overrides the driver's reconnect_after_monitor
+country = "DE"           # exclusive modes: the regulatory domain to ask for
+channels = [6]           # exclusive modes: overrides the driver's channel order
+aggregation = true       # overrides the driver's rx_ampdu: accept the phone's Block Ack session
+tx_rate = "mcs7"         # the data frame rate
+hostapd = "/usr/sbin/hostapd" # for a hidden AP, on cards with no ad-hoc mode; else found on PATH
+tx_amsdu = true          # send unicast as A-MSDUs where the peer takes them
+```
+
+What Owly does on each Wi-Fi driver comes from [`crates/owly-radio/drivers.toml`](crates/owly-radio/drivers.toml). `/etc/owly/drivers.toml`, in the same format, is read over it, so you can try settings for a new card without rebuilding.
+
+
+## Known issues
+
+`owly doctor` lists what's known to go wrong on your card. Beyond that:
+
+- **Shared mode needs your AP on channel 6, 44 or 149.** On any other channel, the radio won't come up, and `owly doctor` says so.
+- **The firewall can block the receiver**, so the phone never sees this computer. Allow TCP 8771 on `awdl0` (Omdrop: `omdrop firewall install`).
+- **The iPhone can stop answering.** If this computer stops showing up in the iPhone's share sheet, or transfers stay on "Waiting", restart the iPhone.
+- **Exclusive mode is slow on channel 6**, where Intel cards and others that refuse a 5 GHz cell run, since AWDL there gets few of the iPhone's slots: a 2.4 MB photo takes 10–17 s on an AX201.
+
+## How it works
+
+AirDrop runs over AWDL, a Wi-Fi link Apple devices use to talk to each other directly. Owly comes in two halves:
+
+- **`owlyd`**, a small system service, takes over your Wi-Fi card, runs AWDL on it, and hands the resulting `awdl0` network interface to the app that asked for it. When the app is done, or crashes, owlyd gives your Wi-Fi back.
+- **AirDrop itself** (`owly receive` or Omdrop) runs as your user, not as root, and talks over `awdl0` like any other network.
+
+The pieces are Rust crates you can use in other projects: `owly-awdl` (AWDL), `owly-airdrop` (AirDrop) and `owly-radio` (the Wi-Fi card on Linux). [docs/SPEC.md](docs/SPEC.md) describes the protocol they implement. To add a new kind of radio, such as an ESP32 over USB, implement `owly-awdl`'s `Air` trait if it only sends and receives Wi-Fi frames, or `owly-radio`'s `Backend` trait if it runs AWDL itself.
+
+## Development
+
+To try it with a phone, run `just radio` in one terminal (it installs owlyd first when it's missing or out of date), then `just receive` or `just send` in another. With no arguments, `just send` sends a test photo, `tests/photo.png`.
+
+The AirDrop tests run sender and receiver in a user network namespace (`unshare -rn`), so they need no root, but do need unprivileged user namespaces. `just install` installs a development build the way the packages lay it out, and `just uninstall` removes it. `packaging/arch/*/PKGBUILD` build packages from the checkout (`makepkg -si` there), and `packaging/package.sh deb` or `rpm` builds owly's `.deb` or `.rpm`.

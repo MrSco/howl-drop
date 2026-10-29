@@ -1,8 +1,20 @@
-# Fetched at a pinned commit by tools/stage.sh; never committed (GPL-2.0-only).
-/upstream/
-# The assembled runtime directory and the staged add-on.
-/build/
+# packaging/package.sh and packaging/arch/aur-test.sh, run from here.
+/*.pkg.tar.*
+/*.deb
+/*.rpm
+# packaging/package.sh tar, for omdrop-owl-bin.
+/omdrop-owl-*.tar.gz
 __pycache__
-# Prebuilt binaries: build them from howldrop/.
+
+/owly-test-*
+other-libs
+
+# Cargo build output.
+/target/
+
+.readme-preview.html
+
+# HowlDrop (this fork): the staged add-on and other build output, and
+# prebuilt binaries (build them from howldrop/).
+/build/
 *.exe
-owl-test-*

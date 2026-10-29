@@ -1,0 +1,33 @@
+[package]
+name = "owly-awdl"
+description = "Sans-IO AWDL: frames and TLVs, sync and election, channel sequence, data path and peer table."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["awdl", "airdrop", "wifi", "no-std", "sans-io"]
+categories = ["network-programming", "no-std", "embedded"]
+
+[features]
+# The driver: a Node on a thread of its own, between a radio and the host's
+# network interface. Needs std and tokio.
+driver = ["dep:tokio", "dep:tracing"]
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"], optional = true }
+tracing = { version = "0.1", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[[test]]
+name = "driver"
+required-features = ["driver"]
+
+[lints]
+workspace = true
+
+# The driver too: the crate docs link to it.
+[package.metadata.docs.rs]
+all-features = true

@@ -1,0 +1,79 @@
+{
+  "owly": "0.4.1",
+  "time": 1793012049,
+  "kernel": "7.2.5",
+  "os": "NixOS 26.05 (Yarara)",
+  "machine": "Micro Computer (HK) Tech Limited MS-A2",
+  "driver": "iwlwifi",
+  "device": "8086:2723",
+  "status": "tested",
+  "mode": "exclusive",
+  "channel": 6,
+  "transfers": "owly",
+  "steps": [
+    {
+      "step": "probe",
+      "result": "pass",
+      "detail": "ready"
+    },
+    {
+      "step": "NetworkManager",
+      "result": "pass",
+      "detail": "leaves Owly's interfaces alone"
+    },
+    {
+      "step": "baseline",
+      "result": "pass",
+      "detail": "10/10 replies"
+    },
+    {
+      "step": "start",
+      "result": "pass",
+      "ms": 318
+    },
+    {
+      "step": "phone heard",
+      "result": "pass"
+    },
+    {
+      "step": "shown on the phone",
+      "result": "pass"
+    },
+    {
+      "step": "phone -> computer",
+      "result": "pass"
+    },
+    {
+      "step": "computer -> phone",
+      "result": "pass",
+      "ms": 2908
+    },
+    {
+      "step": "stop",
+      "result": "pass",
+      "ms": 3444
+    },
+    {
+      "step": "Wi-Fi after teardown",
+      "result": "pass",
+      "detail": "2/3 replies, longest gap 1 s"
+    }
+  ],
+  "wifi": {
+    "baseline": {
+      "sent": 10,
+      "received": 10,
+      "longest_gap_s": 0
+    },
+    "window": {
+      "sent": 0,
+      "received": 0,
+      "longest_gap_s": 0
+    },
+    "after": {
+      "sent": 3,
+      "received": 2,
+      "longest_gap_s": 1
+    }
+  }
+}

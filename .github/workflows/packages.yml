@@ -1,0 +1,108 @@
+# Builds the packages from this tree: the AUR's PKGBUILDs (as
+# packaging/arch/aur.sh writes them, from an archive of the tree, or
+# omdrop-owl-bin's prebuilt tarball, standing in for the release's),
+# owly's .deb and .rpm, and the Nix flake with its module. A change that
+# would break the next release fails here instead.
+name: Packages
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  aur:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install tools
+        run: pacman -Syu --noconfirm --needed git
+
+      - uses: actions/checkout@v4
+
+      # makepkg won't run as root. omdrop-owl depends on owly, which isn't
+      # in a repository, so the owly just built is installed for it. Their
+      # check()s are left out: the tests are CI's check job's, and each
+      # check() would rebuild the workspace.
+      - name: Build owly and omdrop-owl
+        run: |
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          chown -R builder "$GITHUB_WORKSPACE"
+          sudo -u builder git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          mkdir -m 777 /tmp/pkgs
+          sudo -u builder OUT=/tmp/pkgs packaging/arch/aur-test.sh owly -s --noconfirm --nocheck
+          pacman -U --noconfirm /tmp/pkgs/owly-*.pkg.tar.zst
+          sudo -u builder OUT=/tmp/pkgs packaging/arch/aur-test.sh omdrop-owl -s --noconfirm --nocheck
+          pacman -U --noconfirm /tmp/pkgs/omdrop-owl-*.pkg.tar.zst
+
+      - name: Check what they installed
+        run: |
+          owly --version
+          test "$(readlink /usr/lib/omdrop/radio/probe)" = /usr/lib/omdrop-owl/omdrop-owl
+          /usr/lib/omdrop/radio/probe --json
+          /usr/lib/omdrop/omdrop-discoverable probe --json
+          /usr/lib/omdrop/omdrop-discoverable status --json
+          test -x /usr/lib/omdrop/send-to-peer
+
+      # From the tarball this tree makes, in place of the two packages, as
+      # someone switching to it would. It has to install their files,
+      # licenses apart, which it keeps under its own name.
+      - name: Build omdrop-owl-bin and switch to it
+        run: |
+          sudo -u builder OUT=/tmp/pkgs packaging/arch/aur-test.sh omdrop-owl-bin -s --noconfirm
+          pacman -Qlq owly omdrop-owl | grep -v '^/usr/share/licenses/' | sort -u > /tmp/source-files
+          pacman -R --noconfirm omdrop-owl owly
+          pacman -U --noconfirm /tmp/pkgs/omdrop-owl-bin-*.pkg.tar.zst
+          pacman -Qlq omdrop-owl-bin | grep -v '^/usr/share/licenses/' | sort -u | diff /tmp/source-files -
+
+      - name: Check what omdrop-owl-bin installed
+        run: |
+          owly --version
+          test "$(readlink /usr/lib/omdrop/radio/probe)" = /usr/lib/omdrop-owl/omdrop-owl
+          /usr/lib/omdrop/radio/probe --json
+          /usr/lib/omdrop/omdrop-discoverable probe --json
+          /usr/lib/omdrop/omdrop-discoverable status --json
+          test -x /usr/lib/omdrop/send-to-peer
+
+  linux:
+    uses: ./.github/workflows/linux-packages.yml
+
+  # The .deb and .rpm install, with their dependencies, on each release
+  # they're for, and run there.
+  linux-install:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12', 'debian:13', 'fedora:44']
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Install owly
+        run: |
+          if command -v apt-get > /dev/null; then
+            apt-get update
+            apt-get install -y ./owly_*.deb
+          else
+            dnf install -y ./owly-*.rpm
+          fi
+
+      - name: Check what it installed
+        run: |
+          owly --version
+          test -x /usr/lib/owly/owlyd
+          grep -qx 'ExecStart=/usr/lib/owly/owlyd' /usr/lib/systemd/system/owlyd.service
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix flake check -L

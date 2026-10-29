@@ -1,0 +1,98 @@
+# Releases each AUR package whose version on main is new, which for all
+# three is the workspace version in Cargo.toml (and their PKGBUILDs'
+# pkgver): one v<version> tag and GitHub release for them all. owly goes
+# first and makes the release, since omdrop-owl depends on it, and
+# omdrop-owl-bin last, since it adds its prebuilt tarball to the release.
+# Then the release gets owly's .deb and .rpm. After a failure, rerun it, or
+# run it from the Actions tab.
+#
+# Needs the secret AUR_SSH_KEY: a private key whose public half is on the AUR
+# account that maintains the three packages.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [packaging/arch/*/PKGBUILD]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+
+permissions:
+  contents: write
+
+jobs:
+  owly:
+    uses: ./.github/workflows/aur-release.yml
+    with:
+      package: owly
+    secrets: inherit
+
+  omdrop-owl:
+    needs: owly
+    uses: ./.github/workflows/aur-release.yml
+    with:
+      package: omdrop-owl
+    secrets: inherit
+
+  omdrop-owl-bin:
+    needs: omdrop-owl
+    uses: ./.github/workflows/aur-release.yml
+    with:
+      package: omdrop-owl-bin
+    secrets: inherit
+
+  # owly's .deb and .rpm, for the GitHub release (the owly job tags it):
+  # built from the tag when the release doesn't have them yet, so a rerun
+  # after a failure adds what's missing, and a later run nothing.
+  owly-assets:
+    needs: owly
+    # Not in forks, which have no release.
+    if: github.repository == 't4t5/owly'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      missing: ${{ steps.release.outputs.missing }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare with the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag=v$(sed -n 's/^pkgver=//p' packaging/arch/owly/PKGBUILD)
+          assets=$(gh release view "$tag" --json assets --jq '.assets[].name')
+          missing=
+          grep -q '^owly_.*\.deb$' <<< "$assets" || missing="$missing deb"
+          grep -q '^owly-.*\.rpm$' <<< "$assets" || missing="$missing rpm"
+          echo "$tag lacks:${missing:- nothing}"
+          { echo "tag=$tag"; echo "missing=$missing"; } >> "$GITHUB_OUTPUT"
+
+  owly-build:
+    needs: owly-assets
+    if: needs.owly-assets.outputs.missing != ''
+    uses: ./.github/workflows/linux-packages.yml
+    with:
+      ref: ${{ needs.owly-assets.outputs.tag }}
+
+  owly-upload:
+    needs: [owly-assets, owly-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Add them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.owly-assets.outputs.tag }}
+          MISSING: ${{ needs.owly-assets.outputs.missing }}
+        run: |
+          for format in $MISSING; do
+            gh release upload "$TAG" owly[-_]*."$format"
+          done

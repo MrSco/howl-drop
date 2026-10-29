@@ -1,0 +1,58 @@
+{
+  "owly": "0.1.0",
+  "time": 1792590102,
+  "kernel": "6.18.55",
+  "os": "NixOS 26.05 (Yarara)",
+  "machine": "Intel(R) Client Systems NUC10i7FNK",
+  "station": "wlp0s20f3",
+  "driver": "iwlwifi",
+  "device": "8086:02f0",
+  "status": "tested",
+  "mode": "exclusive",
+  "channel": 6,
+  "transfers": "owly",
+  "steps": [
+    {
+      "step": "probe",
+      "result": "pass",
+      "detail": "ready"
+    },
+    {
+      "step": "baseline",
+      "result": "skipped",
+      "detail": "Wi-Fi has no default route"
+    },
+    {
+      "step": "start",
+      "result": "pass",
+      "ms": 436
+    },
+    {
+      "step": "phone heard",
+      "result": "pass"
+    },
+    {
+      "step": "shown on the phone",
+      "result": "pass"
+    },
+    {
+      "step": "phone -> computer",
+      "result": "pass"
+    },
+    {
+      "step": "computer -> phone",
+      "result": "pass",
+      "ms": 13881
+    },
+    {
+      "step": "stop",
+      "result": "pass",
+      "ms": 354
+    }
+  ],
+  "wifi": {
+    "baseline": null,
+    "window": null,
+    "after": null
+  }
+}

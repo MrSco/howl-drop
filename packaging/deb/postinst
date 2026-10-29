@@ -1,0 +1,31 @@
+#!/bin/sh
+# packaging/arch/owly/owly.install's post_install and post_upgrade, and the
+# systemd reload Arch's and Fedora's triggers do for them.
+set -e
+
+if [ "$1" = configure ]; then
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+  fi
+  # NetworkManager reads conf.d only at startup or on a reload, so keeping
+  # Owly's interfaces unmanaged isn't in force until something rereads it.
+  # `reload conf` touches no connection.
+  if systemctl is-active --quiet NetworkManager 2>/dev/null; then
+    nmcli general reload conf >/dev/null 2>&1 \
+      || echo "  Could not reload NetworkManager's configuration. Run: sudo nmcli general reload conf"
+  fi
+  if [ -z "$2" ]; then
+    cat <<'MSG'
+  Owly's radio service, owlyd, starts when something asks for the radio.
+  `owly doctor` says whether this Wi-Fi card can do AirDrop and what, if
+  anything, is in the way.
+MSG
+  # A running owlyd keeps the old binary until it next starts. Restart it
+  # now only when it has no session, so an upgrade doesn't end a window.
+  elif [ "$(busctl get-property io.github.t4t5.Owly /io/github/t4t5/Owly \
+      io.github.t4t5.Owly.Radio1 State 2>/dev/null)" = 's "idle"' ]; then
+    systemctl try-restart owlyd.service || true
+  fi
+fi
+
+exit 0
