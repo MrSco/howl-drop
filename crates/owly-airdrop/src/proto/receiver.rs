@@ -233,8 +233,10 @@ impl Connection {
                 }
                 self.slots.ask = Some(ask);
             }
-            // ASK-2: answer a decline rather than leave the sender waiting.
-            Answer::Decline => self.fail(403),
+            // ASK-2: answer a decline rather than leave the sender waiting,
+            // with the 401 an iPhone sends; iOS keeps showing a 403 as
+            // "Waiting".
+            Answer::Decline => self.fail(401),
         }
     }
 

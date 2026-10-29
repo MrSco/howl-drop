@@ -522,7 +522,7 @@ mod tests {
     #[test]
     fn anything_but_200_is_a_decline() {
         let config = Config::new("Test", "0123456789ab");
-        for reply in [response(403, b""), response(500, b"")] {
+        for reply in [response(401, b""), response(403, b""), response(500, b"")] {
             let mut t = Transfer::new(&config, "ID", &file_offer(), Some((Compressor::Gzip, 10)));
             drain(&mut t);
             t.receive(&reply);

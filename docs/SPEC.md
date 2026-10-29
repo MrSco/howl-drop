@@ -528,7 +528,7 @@ A request MUST carry a non-empty `Files` or a non-empty `Items`, not both.
 
 **ASK-1** `200` means accepted. Any other status, a closed connection, or no response within the sender's timeout means declined or failed, and the sender MUST NOT send `/Upload`.
 
-**ASK-2** (receiver) A receiver that prompts its user MUST hold the `/Ask` request open until the user answers or 15 s pass. On a decline, or its own timeout, a receiver SHOULD respond with a non-200 status such as `403` and close the connection, so the sender doesn't wait out its own timeout. Some receivers send no response to a decline. Senders handle either under ASK-1.
+**ASK-2** (receiver) A receiver that prompts its user MUST hold the `/Ask` request open until the user answers or 15 s pass. On a decline, or its own timeout, a receiver SHOULD respond with `401` and no body, and close the connection, so the sender doesn't wait out its own timeout. That is what an iPhone answers when its user taps Decline (iOS 26, measured with omdrop-awdl's sender). An iPhone sending shows a `401` as "Declined", but a `403`, even with the connection closed, as "Waiting" until its user cancels. Some receivers send no response to a decline. Senders handle either under ASK-1.
 
 **ASK-2a** (sender) A sender MUST time out an unanswered `/Ask` and treat it as declined. The timeout MUST be longer than 15 s, so that a slow user isn't cut off before the receiver gives up.
 
