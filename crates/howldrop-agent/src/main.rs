@@ -201,6 +201,9 @@ async fn run(args: Args) -> Result<(), String> {
 
     let mut radio = radio::Radio::new(&radio_opts)?;
     radio.report();
+    if let Some(why) = radio.unusable() {
+        return Err(why);
+    }
     radio.recover().await;
     let station = radio.station();
 
@@ -303,6 +306,8 @@ async fn run(args: Args) -> Result<(), String> {
         ));
         tokio::time::sleep(Duration::from_secs(2)).await;
     };
-    say("The card is given back.");
+    if restarts > 0 || result.is_ok() {
+        say(format!("{station} is given back."));
+    }
     result
 }

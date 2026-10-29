@@ -11,11 +11,11 @@
 # DEST, when given, is where the folder is copied as well: Home Assistant's add-on
 # share, e.g. //homeassistant/addons/howldrop from Git Bash on Windows
 # (Samba share add-on), or /addons/howldrop from the SSH add-on. Its generated
-# omdrop-owl/ and howldrop/ are replaced whole; other files are overwritten.
+# rust/ and howldrop/ are replaced whole; other files are overwritten.
 #
-# The image builds OWL and the radio helper from this checkout (pins,
-# patches/, tools/, userspace/), and howldrop-bridge from howldrop/, so what
-# is edited here is what runs in Home Assistant.
+# The image builds howldrop-agent from this checkout's Rust workspace
+# (Owly's crates and ours, as rust/), and howldrop-bridge from howldrop/, so
+# what is edited here is what runs in Home Assistant.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -23,11 +23,11 @@ OUT=$ROOT/build/addon/howldrop
 DEST=${1:-}
 
 rm -rf "$OUT"
-mkdir -p "$OUT/omdrop-owl/tools" "$OUT/howldrop"
-cp "$ROOT"/addon/config.yaml "$ROOT"/addon/Dockerfile "$ROOT"/addon/run.sh "$ROOT"/addon/wsl-run.sh "$ROOT"/addon/deliver.py "$ROOT"/addon/announce.py "$ROOT"/addon/panel.py "$ROOT"/addon/outbox.py "$ROOT"/addon/senders.py "$ROOT"/addon/patch_receiver.py "$ROOT"/addon/howl_ask.py "$ROOT"/addon/README.md "$ROOT"/addon/DOCS.md "$ROOT"/addon/CHANGELOG.md "$ROOT"/addon/icon.png "$ROOT"/addon/logo.png "$OUT/"
+mkdir -p "$OUT/rust" "$OUT/howldrop"
+cp "$ROOT"/addon/config.yaml "$ROOT"/addon/Dockerfile "$ROOT"/addon/run.sh "$ROOT"/addon/wsl-run.sh "$ROOT"/addon/deliver.py "$ROOT"/addon/announce.py "$ROOT"/addon/panel.py "$ROOT"/addon/README.md "$ROOT"/addon/DOCS.md "$ROOT"/addon/CHANGELOG.md "$ROOT"/addon/icon.png "$ROOT"/addon/logo.png "$OUT/"
 cp -r "$ROOT/addon/translations" "$ROOT/addon/panel" "$OUT/"
-cp -r "$ROOT/pins" "$ROOT/patches" "$ROOT/userspace" "$OUT/omdrop-owl/"
-cp "$ROOT/tools/build-owl.sh" "$ROOT/tools/stage.sh" "$OUT/omdrop-owl/tools/"
+# The whole workspace, which cargo needs to read even to build one crate.
+cp -r "$ROOT/Cargo.toml" "$ROOT/Cargo.lock" "$ROOT/.cargo" "$ROOT/crates" "$ROOT/xtask" "$OUT/rust/"
 cp -r "$ROOT/howldrop/CMakeLists.txt" "$ROOT/howldrop/src" "$ROOT/howldrop/tests" "$OUT/howldrop/"
 
 # A Windows checkout with core.autocrlf would hand the Linux image CRLF
@@ -43,14 +43,14 @@ echo "staged $OUT (add-on $version)"
 
 if [ -n "$DEST" ]; then
   mkdir -p "$DEST"
-  # omdrop-owl/ and howldrop/ are generated here whole, so they are replaced
-  # whole: a renamed patch left behind would be applied twice and break the
-  # OWL build. Only in a folder that is this add-on already.
+  # rust/ and howldrop/ are generated here whole, so they are replaced
+  # whole: a file deleted here mustn't linger there. Only in a folder that
+  # is this add-on already.
   if [ -e "$DEST/config.yaml" ] && ! grep -q '^slug: howldrop$' "$DEST/config.yaml"; then
     echo "$DEST holds another add-on (no 'slug: howldrop'); not touching it"
     exit 1
   fi
-  rm -rf "$DEST/omdrop-owl" "$DEST/howldrop"
+  rm -rf "$DEST/omdrop-owl" "$DEST/rust" "$DEST/howldrop"
   cp -r "$OUT"/. "$DEST"/
   echo "copied to $DEST; in Home Assistant: Add-on store, menu, Check for updates, then update HowlDrop"
 fi

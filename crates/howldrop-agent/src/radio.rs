@@ -101,6 +101,20 @@ impl Radio {
         ]);
     }
 
+    /// Why no window can start here, when the probe found no card to use.
+    pub fn unusable(&self) -> Option<String> {
+        if self.probe.hardware && self.probe.station.is_some() {
+            return None;
+        }
+        Some(
+            self.probe
+                .missing
+                .first()
+                .map(|m| m.say.clone())
+                .unwrap_or_else(|| "No Wi-Fi card here can carry the AirDrop window.".into()),
+        )
+    }
+
     /// The Wi-Fi interface the window runs on.
     pub fn station(&self) -> String {
         self.probe.station.clone().unwrap_or_else(|| "?".into())

@@ -7,7 +7,7 @@ the add-on's environment). Nothing here can hold up or undo a delivery: a
 failed call is a log line.
 
 Who sent a file comes from the note the receiver leaves in staging,
-.howldrop-meta/<stored name>.json (patch_receiver.py, howl_note).
+.howldrop-meta/<stored name>.json (howldrop-agent, receive.rs).
 """
 import json
 import os

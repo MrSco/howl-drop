@@ -2,7 +2,8 @@
 # HowlDrop on a Windows PC: this image as a WSL 2 distro, which howldrop.exe
 # downloads, imports and starts as its child (wsl_win.cpp). The PC's USB
 # Wi-Fi stick reaches it through usbipd-win; WSL's own kernel drives it
-# (mt76x2u ships as a module). Then run.sh, as in the add-on.
+# (mt76x2u ships as a module). Then run.sh, as in the add-on: howldrop-agent
+# and delivery.
 #
 #   wsl-run.sh --name NAME --save DIR --outbox DIR --scan-request FILE
 #              [--receive everyone|ask|contacts] [--senders LIST] [--ask-dir DIR]
@@ -17,13 +18,13 @@
 #   @howldrop  stick  ready IFACE  the stick has a Wi-Fi interface
 #   @howldrop  stick  failed WHY   it attached but the driver gave up
 #   @howldrop  up IFACE            the window is up (on the share sheet)
-# and from deliver.py and outbox.py: received, sending, sent, nearby; from the
-# receiver (howl_ask.py): ask, asked, incoming, receiving, stored, failed.
+# from deliver.py: received; and from howldrop-agent: adapter, sending, sent,
+# nearby, ask, asked, incoming, receiving, stored, failed.
 #
 # Who may send (--receive): everyone (accepted as they come), ask (contacts
 # in --senders, comma-separated phone numbers or emails, are accepted; anyone
 # else waits for Accept or Decline on the PC, answered as a file in
-# --ask-dir), or contacts (only --senders see the PC; senders.py).
+# --ask-dir), or contacts (only --senders see the PC and may send).
 set -uo pipefail
 
 FIRMWARE_SRC=/usr/lib/howldrop/firmware
@@ -40,7 +41,7 @@ event() {
 }
 
 if [ "${1:-}" = --stop ]; then
-    # run.sh's TERM trap gives the card back and stops OWL.
+    # run.sh's TERM trap stops the agent, which gives the card back.
     pkill -TERM -x run.sh 2>/dev/null || true
     for _ in $(seq 1 25); do
         pgrep -x run.sh >/dev/null 2>&1 || exit 0
@@ -120,14 +121,6 @@ modprobe mt76x2u 2>/dev/null || say "modprobe mt76x2u failed: this WSL kernel ma
 modprobe tun 2>/dev/null || true
 iw reg reload 2>/dev/null || true
 
-# run.sh finds NetworkManager and bluetoothd on the system D-Bus; here there
-# are neither, but it needs a bus to ask.
-mkdir -p /run/dbus
-if [ ! -S /run/dbus/system_bus_socket ]; then
-    rm -f /run/dbus/pid
-    dbus-daemon --system --fork || say "dbus-daemon did not start."
-fi
-
 stick_iface() {
     local d drv
     for d in /sys/class/net/*; do
@@ -160,12 +153,12 @@ fi
 event stick ready "$IFACE"
 
 mkdir -p /data "$SAVE" "$OUTBOX"
-python3 - "$NAME" "$SAVE" "$SEND_TO" "$VERBOSE" "$RECEIVE" "$SENDERS" > /data/options.json <<'PY'
+python3 - "$NAME" "$SAVE" "$SEND_TO" "$VERBOSE" "$RECEIVE" "$SENDERS" "$IFACE" > /data/options.json <<'PY'
 import json, sys
-name, save, send_to, verbose, receive, senders = sys.argv[1:7]
+name, save, send_to, verbose, receive, senders, iface = sys.argv[1:8]
 json.dump({
     "pc_name": name, "save_folder": save, "notify": [],
-    # senders.py: Contacts Only from these, or (receive ask) the contacts
+    # The agent: Contacts Only from these, or (receive ask) the contacts
     # accepted without asking.
     "senders": [s.strip() for s in senders.split(",") if s.strip()] if receive != "everyone" else [],
     "receive": receive,
@@ -174,7 +167,7 @@ json.dump({
     "delete_after_days": 0,
     "forward_to_pc": False, "pc_host": "", "pc_key": "",
     "send_to_iphone": True, "send_to": send_to,
-    "interface": "auto", "allow_untested": False, "channels": "", "aggregation": "auto",
+    "interface": iface, "allow_untested": False, "channels": "", "aggregation": "auto",
     "verbose": verbose == "true", "debug_capture": False,
 }, sys.stdout, indent=2)
 PY
