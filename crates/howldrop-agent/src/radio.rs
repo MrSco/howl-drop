@@ -61,9 +61,18 @@ impl Radio {
             hostapd: None,
             tx_amsdu: false,
         };
+        let forced = config.country.is_some() && opts.country.is_none();
         let settings = config.settings(RunDir::new(&opts.run_dir))?;
         let backend = Injection::new(ops, settings);
-        let probe = backend.probe();
+        let mut probe = backend.probe();
+        if forced {
+            // The probe judged the channels by the world's domain, which
+            // the window replaces: the window's log says which it gets.
+            probe.channel = None;
+            probe
+                .issues
+                .retain(|i| !i.starts_with("AirDrop runs on channel"));
+        }
         Ok(Radio { backend, probe })
     }
 

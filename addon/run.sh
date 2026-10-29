@@ -118,7 +118,7 @@ join_host_netns
 say "HowlDrop $(cat /etc/howldrop-version 2>/dev/null || echo add-on)"
 say "It uses a Wi-Fi card the host kernel already drives. Files and text from the phone are kept in save_folder (default /share/howldrop)."
 
-if ! dbus_host; then
+if ! dbus_host && [ "${HOWLDROP_BLE:-on}" != off ]; then
     say "The host D-Bus socket is not in this container: Bluetooth and NetworkManager can't be reached."
 fi
 
