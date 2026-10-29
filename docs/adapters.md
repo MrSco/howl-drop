@@ -53,8 +53,9 @@ and whatever else is connected to it stays connected.
 ### On Home Assistant, Raspberry Pi or Linux
 
 Here the radio runs on the machine itself, so **built-in cards can work
-too**. The add-on uses [omdrop-owl](https://github.com/t4t5/omdrop-owl)'s
-radio helper, and most of this list is from its users' tests. Many built-in
+too**. The add-on uses the radio helper from
+[Owly](https://github.com/t4t5/owly) (formerly omdrop-owl), and most of this
+list is from its users' tests. Many built-in
 cards can only stay on 2.4 GHz channel 6, where the iPhone comes by only
 now and then: they work, but slowly. The MT7612U follows the phone to 5 GHz,
 so it's the one we recommend here too.
@@ -63,21 +64,22 @@ so it's the one we recommend here too.
 |---|---|---|---|
 | MediaTek **MT7612U** (USB) | ✅ | fast (5 GHz): 30 MB in 14 s | Tested here on Home Assistant OS (an Intel NUC). Raspberry Pi kernels have its driver too (untested). |
 | MediaTek MT7925 (built-in) | ✅ | 5 GHz | Keeps your Wi-Fi connected while it works ("shared" mode). |
-| Realtek RTL8852AE, RTL8852BE, RTL8852CE (built-in) | ✅ | varies | Shared mode, opt-in. |
+| Realtek RTL8852AE, RTL8852BE, RTL8852CE (built-in) | ✅ | varies | Shared mode, opt-in (the RTL8852CE also works in exclusive mode). |
 | Realtek RTL8852BU (USB) | ✅ | 5 GHz | As a second card. |
 | Realtek RTL8822BE (built-in) | ✅ | slow (channel 6): 6.4 MB in 110 s | |
-| Intel 9560, AX200, AX201, AX211, BE200, BE (Panther Lake) | ✅ | slow (channel 6): 2.4 MB in 17 s | Your Wi-Fi drops while HowlDrop is on ("exclusive" mode). |
-| Intel 9260, AX210 | 🟡 | | Untested; likely like the other Intel cards. |
+| Intel 9260, 9560, AX200, AX201, AX210, AX211, BE200, BE (Panther Lake) | ✅ | slow (channel 6): 2.4 MB in 17 s | Your Wi-Fi drops while HowlDrop is on ("exclusive" mode). |
+| Realtek RTL8188FTV (USB) | 🟠 | slow (2.4 GHz only) | Works partly, opt-in. 2.4 GHz only, so even working it's slow. |
 | MediaTek MT7921, MT7922 | 🟠 | | Works now and then: the driver sends at 1 Mbit/s and nothing on 5 GHz. A driver fix could change that. |
 | MediaTek MT7927 | 🟠 | | Sends, but receiving times out. |
 | Realtek RTL8821CE | 🟠 | | Syncs, but no transfer. |
 | Qualcomm WCN6855, WCN7850 | 🟠 | | Can't make the listening interface, or hears nothing. Driver limits. |
 | Intel Wireless-AC 7265 | ❌ | | Its firmware crashes on every start, and gets no more updates. |
 | Intel Wireless-AC 8260 | ❌ | | Tested here: its firmware resets on 5 GHz and no transfer finished on channel 6. It gets no more updates. |
+| Intel Wireless-AC 8265 | ❌ | | Its firmware resets about 10 s after starting; the phone was never heard. Same generation as the 8260, no more updates. |
 | ESP8266 boards (Wemos D1 mini, NodeMCU) | ❌ | | Can't capture whole frames or send AirDrop's, and has no Bluetooth. (An ESP32-S3 can be a radio for a PC: that's a different project, [omdrop-windows](https://github.com/ZyphrZero/omdrop-windows), 2.4 GHz only.) |
 
-The full per-driver details are in omdrop-owl's
-[supported hardware](https://github.com/t4t5/omdrop-owl#supported-hardware)
+The full per-driver details are in Owly's
+[supported hardware](https://github.com/t4t5/owly#supported-hardware)
 table and this repo's [hardware notes](hardware-notes.md).
 
 ## Something not listed?
