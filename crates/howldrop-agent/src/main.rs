@@ -123,9 +123,9 @@ const STEADY: Duration = Duration::from_secs(600);
 fn main() -> ExitCode {
     let args = Args::parse();
     let filter = if args.verbose {
-        "info,owly_radio=debug"
+        "info,owly_radio=debug,owly_awdl=debug"
     } else {
-        "warn,owly_radio=info"
+        "warn,owly_radio=info,owly_awdl=info"
     };
     tracing_subscriber::fmt()
         .with_env_filter(

@@ -225,9 +225,14 @@ impl Contacts {
                     b"",
                 )
             };
-            if let Err(why) = openssl(
+            // The chain to Apple's root, its CAs' dates aside: Apple
+            // Application Integration CA expired on 21 Oct 2026 with
+            // iPhones still presenting current certificates it issued. The
+            // sender's own certificate must be current.
+            let verified = openssl(
                 &[
                     "verify",
+                    "-no_check_time",
                     "-CAfile",
                     path(&self.root())?,
                     "-untrusted",
@@ -237,7 +242,12 @@ impl Contacts {
                     leaf_path,
                 ],
                 b"",
-            ) {
+            )
+            .and_then(|_| {
+                openssl(&["x509", "-in", leaf_path, "-noout", "-checkend", "0"], b"")
+                    .map_err(|_| "the certificate has expired".to_string())
+            });
+            if let Err(why) = verified {
                 // The issuer is one of Apple's CAs, or the sender itself.
                 let issuer = name("-issuer").ok();
                 let issuer = issuer.as_deref().and_then(common_name).unwrap_or("?");
