@@ -28,6 +28,8 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Most connections from one address at a time.
 const MAX_PER_PEER: usize = 4;
+/// How often a receiving upload reports its progress, when asked to.
+const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 /// An upload must bring at least this much in every `RATE_WINDOW`, about
 /// 1 KiB/s, or it's ended: a trickle would otherwise hold it open for good.
 const MIN_UPLOAD_BYTES: u64 = 32 << 10;
@@ -39,6 +41,8 @@ pub struct Options {
     /// Where received files go.
     pub destination: PathBuf,
     pub max_connections: usize,
+    /// Report each upload's progress ([`ReceiverEvent::Progress`]).
+    pub progress: bool,
 }
 
 impl Options {
@@ -47,6 +51,7 @@ impl Options {
             config,
             destination,
             max_connections: 16,
+            progress: false,
         }
     }
 }
@@ -57,6 +62,9 @@ pub struct Request {
     pub id: u64,
     pub peer: SocketAddrV6,
     pub ask: AskRequest,
+    /// The TLS client certificate the sender presented, DER, if any. An
+    /// Apple device presents its Apple ID's on `/Ask` (ID-5).
+    pub peer_certificate: Option<Vec<u8>>,
     reply: oneshot::Sender<Answer>,
 }
 
@@ -81,6 +89,12 @@ pub enum ReceiverEvent {
     /// The sender left, or the prompt timed out, before an answer.
     Withdrawn {
         id: u64,
+    },
+    /// An upload so far: the bytes of its files written, at most every
+    /// `PROGRESS_EVERY`, with [`Options::progress`] on.
+    Progress {
+        id: u64,
+        bytes: u64,
     },
     Urls {
         id: u64,
@@ -284,6 +298,12 @@ impl Task {
         let mut tls = timeout(HANDSHAKE_TIMEOUT, self.acceptor.accept(stream))
             .await
             .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+        let peer_certificate = tls
+            .get_ref()
+            .1
+            .peer_certificates()
+            .and_then(|certs| certs.first())
+            .map(|cert| cert.as_ref().to_vec());
         let mut conn = Connection::new(self.config.clone());
         let mut buf = vec![0; 64 << 10];
         let mut timer: Option<Instant> = None;
@@ -294,6 +314,8 @@ impl Task {
         let mut eof = false;
         // Upload bytes in the current rate window, and when it ends.
         let mut window = (0u64, Instant::now() + RATE_WINDOW);
+        // The upload's file bytes written, and when they were last reported.
+        let mut written = (0u64, Instant::now());
         loop {
             while let Some(event) = conn.poll() {
                 match event {
@@ -339,6 +361,7 @@ impl Task {
                             id,
                             peer: self.peer,
                             ask,
+                            peer_certificate: peer_certificate.clone(),
                             reply,
                         };
                         // Nobody listening, or too busy: the prompt goes
@@ -357,6 +380,7 @@ impl Task {
                         Ok(s) => {
                             staging = Some(s);
                             window = (0, Instant::now() + RATE_WINDOW);
+                            written = (0, Instant::now());
                         }
                         Err(e) => return self.fail(&mut tls, id, e).await,
                     },
@@ -374,6 +398,14 @@ impl Task {
                         if let Err(e) = staging.as_mut().unwrap().write(&data).await {
                             return self.fail(&mut tls, id, e).await;
                         }
+                        written.0 += data.len() as u64;
+                        if self.options.progress && written.1.elapsed() >= PROGRESS_EVERY {
+                            written.1 = Instant::now();
+                            let _ = self.events.try_send(ReceiverEvent::Progress {
+                                id,
+                                bytes: written.0,
+                            });
+                        }
                     }
                     Event::EndFile => {
                         if let Err(e) = staging.as_mut().unwrap().end_file().await {
@@ -382,6 +414,12 @@ impl Task {
                     }
                     Event::UploadComplete => {
                         held.update(|s| s.busy = false);
+                        if self.options.progress {
+                            let _ = self.events.try_send(ReceiverEvent::Progress {
+                                id,
+                                bytes: written.0,
+                            });
+                        }
                         let result = staging.take().unwrap().finish().await;
                         conn.finish_upload(result.as_ref().map(|_| ()).map_err(|e| e.to_string()));
                         let event = match result {

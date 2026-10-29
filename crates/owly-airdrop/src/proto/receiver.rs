@@ -67,6 +67,10 @@ pub struct Config {
     pub media_capabilities: Vec<u8>,
     pub ask_timeout: Duration,
     pub limits: Limits,
+    /// Which senders see this receiver at all; every one when `None`
+    /// (ID-4). One it refuses gets a `401` with no body, as if nothing
+    /// were there to list.
+    pub discover_gate: Option<DiscoverGate>,
 }
 
 impl Config {
@@ -77,7 +81,18 @@ impl Config {
             media_capabilities: br#"{"Version":1}"#.to_vec(),
             ask_timeout: ASK_TIMEOUT,
             limits: Limits::default(),
+            discover_gate: None,
         }
+    }
+}
+
+/// Decides from a `/Discover` whether to answer it: true answers.
+#[derive(Clone)]
+pub struct DiscoverGate(pub Arc<dyn Fn(&DiscoverRequest) -> bool + Send + Sync>);
+
+impl fmt::Debug for DiscoverGate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("DiscoverGate")
     }
 }
 
@@ -499,6 +514,13 @@ impl Connection {
             return;
         };
         self.slots.discover = true;
+        if let Some(gate) = &self.config.discover_gate
+            && !(gate.0)(&request)
+        {
+            self.transmit(http::response(401, &[], b""));
+            self.state = State::Head;
+            return;
+        }
         // Everyone mode: every sender may see this receiver (ID-4).
         let response = DiscoverResponse {
             status_code: Some(STATUS_EVERYONE),

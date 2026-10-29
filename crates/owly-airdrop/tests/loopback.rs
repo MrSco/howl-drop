@@ -754,3 +754,64 @@ veth_test! {
         assert!(sender().discover(target).await.unwrap().is_some());
     }
 }
+
+// HowlDrop: a gate can keep a receiver off a sender's list (Contacts Only).
+veth_test! {
+    async fn a_discover_gate_refuses_with_401(veth: Veth) {
+        let mut config = config();
+        config.discover_gate = Some(owly_airdrop::proto::receiver::DiscoverGate(std::sync::Arc::new(
+            |request: &owly_airdrop::proto::messages::DiscoverRequest| request.sender_record.is_some(),
+        )));
+        let _r = receiver(&veth, config).await;
+        let mut c = connect(&veth).await;
+        let response = c.request(&post("/Discover", &[], &empty_dict())).await.unwrap();
+        assert_eq!(response.status, 401);
+        assert_eq!(response.body, b"");
+        assert!(sender().discover(veth.to_b(PORT)).await.unwrap().is_none());
+    }
+}
+
+// HowlDrop: the sender's client certificate comes with its request.
+veth_test! {
+    async fn a_request_carries_the_client_certificate(veth: Veth) {
+        let mut r = receiver(&veth, config()).await;
+        let identity = Identity::generate().unwrap();
+        let mut c = connect_with(&veth, Some(&identity)).await;
+        c.send(&ask_vector("ios18-hello")).await;
+        let request = r.next_request().await;
+        assert_eq!(request.peer_certificate.as_deref(), Some(identity.cert.as_ref()));
+        request.decline();
+        let mut c = connect(&veth).await;
+        c.send(&ask_vector("ios18-hello")).await;
+        let request = r.next_request().await;
+        assert_eq!(request.peer_certificate, None);
+        request.decline();
+    }
+}
+
+// HowlDrop: with progress on, an upload reports what it has written.
+veth_test! {
+    async fn an_upload_reports_its_progress(veth: Veth) {
+        let mut r = receiver_with(&veth, config(), |o| o.progress = true).await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.bin");
+        std::fs::write(&path, vec![7u8; 3 << 20]).unwrap();
+        let send = tokio::spawn(async move {
+            sender().send(veth.to_b(PORT), &Payload::Files(vec![path]), RECEIVER_FLAGS, None).await
+        });
+        r.accept_next().await;
+        let mut last = 0;
+        loop {
+            match r.next(10).await {
+                ReceiverEvent::Progress { bytes, .. } => {
+                    assert!(bytes >= last);
+                    last = bytes;
+                }
+                ReceiverEvent::Received { .. } => break,
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(last, 3 << 20);
+        assert_eq!(send.await.unwrap().unwrap(), Outcome::Delivered);
+    }
+}
