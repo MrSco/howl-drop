@@ -275,7 +275,10 @@ std::wstring preview(const std::string& text) {
 
 bool cards_on(const App& app) { return app.cards && app.cards->available(); }
 
-// Finished transfers go into the window's Recent list, once each.
+void log_line(const App& app, const std::string& line);
+
+// Finished transfers go into the window's Recent list, once each, and into
+// the log with how long they took.
 void record_history(App& app) {
     const std::int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
                                  std::chrono::system_clock::now().time_since_epoch())
@@ -283,6 +286,12 @@ void record_history(App& app) {
     for (const auto& t : app.transfers.all()) {
         if (t.stage != Transfers::Stage::Done || app.logged.count(t.id)) continue;
         app.logged.insert(t.id);
+        const std::string took = Transfers::took_text(t);
+        std::string what;
+        for (const auto& name : t.names) what += (what.empty() ? "" : ", ") + name;
+        log_line(app, std::string(t.direction == Transfers::Direction::Out ? "sent " : "received ") + what +
+                          (t.peer.empty() ? "" : (t.direction == Transfers::Direction::Out ? " to " : " from ") + t.peer) +
+                          (took.empty() ? "" : ": " + took));
         if (t.direction == Transfers::Direction::Out) {
             for (const auto& name : t.names) history::append(app.history_file, {now, true, t.peer, name});
         } else {
@@ -441,6 +450,7 @@ void show_menu(App& app) {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, check(starts_with_windows()), kMenuStartup, L"Start with Windows");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, (L"HowlDrop " + wide(kVersion)).c_str());
     AppendMenuW(menu, MF_STRING, kMenuQuit, L"Quit HowlDrop");
     POINT at;
     GetCursorPos(&at);

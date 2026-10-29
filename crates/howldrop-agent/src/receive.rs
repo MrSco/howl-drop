@@ -30,7 +30,7 @@ use std::io;
 use std::net::SocketAddrV6;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use owly_airdrop::driver::mdns::{Mdns, Registration};
 use owly_airdrop::driver::receiver::{
@@ -45,7 +45,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::contacts::{Contacts, Outcome};
-use crate::events::{emit, say};
+use crate::events::{emit, say, took};
 
 /// Where we receive: the port omdrop's firewall rule opens on `awdl0`.
 pub const PORT: u16 = 8771;
@@ -91,6 +91,10 @@ struct Transfer {
     tag: String,
     sender: String,
     total: u64,
+    /// When the phone asked, and when its upload's first bytes came: how
+    /// long it took is counted from these.
+    asked: Instant,
+    first_byte: Option<Instant>,
     /// Ends the wait for the PC's user when the sender leaves.
     withdrawn: Option<oneshot::Sender<()>>,
 }
@@ -194,6 +198,8 @@ fn on_event(event: ReceiverEvent, opts: &Arc<Options>, transfers: &Transfers) {
                     tag: tag.clone(),
                     sender: sender.clone(),
                     total,
+                    asked: Instant::now(),
+                    first_byte: None,
                     withdrawn: Some(withdrawn),
                 },
             );
@@ -215,12 +221,10 @@ fn on_event(event: ReceiverEvent, opts: &Arc<Options>, transfers: &Transfers) {
             }
         }
         ReceiverEvent::Progress { id, bytes } => {
-            let Some((tag, total)) = transfers
-                .lock()
-                .unwrap()
-                .get(&id)
-                .map(|t| (t.tag.clone(), t.total))
-            else {
+            let Some((tag, total)) = transfers.lock().unwrap().get_mut(&id).map(|t| {
+                t.first_byte.get_or_insert_with(Instant::now);
+                (t.tag.clone(), t.total)
+            }) else {
                 return;
             };
             emit(&["receiving", &tag, &bytes.to_string(), &total.to_string()]);
@@ -241,13 +245,21 @@ fn on_event(event: ReceiverEvent, opts: &Arc<Options>, transfers: &Transfers) {
         }
         ReceiverEvent::Received { id, paths } => {
             let t = transfers.lock().unwrap().remove(&id);
+            let timing = t.as_ref().map(|t| {
+                let from = t.first_byte.unwrap_or(t.asked);
+                format!(": {}", took(t.total, from.elapsed()))
+            });
             let (tag, sender) = t.map(|t| (t.tag, t.sender)).unwrap_or_default();
             let mut names = Vec::new();
             for p in &paths {
                 note_tree(&opts.staging, p, &sender);
                 names.push(file_name(p));
             }
-            say(format!("Receive: stored {}", names.join(", ")));
+            say(format!(
+                "Receive: stored {}{}",
+                names.join(", "),
+                timing.unwrap_or_default()
+            ));
             let mut fields = vec!["stored".to_string(), tag];
             fields.extend(names);
             emit(&fields);

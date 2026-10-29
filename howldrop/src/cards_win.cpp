@@ -208,6 +208,11 @@ float render(Cards::Card& c, ui::Canvas& g, const std::wstring& inbox_label, boo
         y += 14;
         if (paint) g.text(card_status(t), D2D1::RectF(kPad, y, w - kPad, y + 18), ui::Font::Small, ui::theme::dim);
         y += 22;
+    } else if (t.stage == Stage::Done && !Transfers::took_text(t).empty()) {
+        std::wstring took = wide(Transfers::took_text(t));
+        took[0] = static_cast<wchar_t>(towupper(took[0]));
+        if (paint) g.text(took, D2D1::RectF(kPad, y, w - kPad, y + 18), ui::Font::Small, ui::theme::dim);
+        y += 24;
     } else if ((t.stage == Stage::Failed || t.stage == Stage::Declined) && !t.detail.empty()) {
         std::wstring why = wide(t.detail);
         why[0] = static_cast<wchar_t>(towupper(why[0]));

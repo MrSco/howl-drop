@@ -217,6 +217,9 @@ struct HowlWindow::Impl {
                 const std::size_t count = std::max(t.count, t.names.size());
                 if (count > 1) line += L" and " + std::to_wstring(count - 1) + L" more";
             }
+            if (t.stage == Transfers::Stage::Done && !Transfers::took_text(t).empty()) {
+                line += L" · " + wide(Transfers::took_text(t));
+            }
             g.text(line, D2D1::RectF(row.left + 42, row.top + 32, row.right - 14, row.top + 50), ui::Font::Small,
                    ui::theme::dim);
             float in = row.top + 56;
@@ -407,6 +410,8 @@ struct HowlWindow::Impl {
         g.text(ui::icon::kBack, back, ui::Font::Icon, ui::theme::text, DWRITE_TEXT_ALIGNMENT_CENTER);
         area(back, kBack);
         g.text(L"Settings", D2D1::RectF(kSide + 36, 16, right, 50), ui::Font::Title, ui::theme::text);
+        g.text(L"HowlDrop " + wide(kVersion), D2D1::RectF(kSide + 36, 16, right, 50), ui::Font::Small, ui::theme::dim,
+               DWRITE_TEXT_ALIGNMENT_TRAILING);
         float y = 64;
 
         const auto section = [&](const wchar_t* title) {

@@ -34,7 +34,7 @@ use owly_airdrop::proto::sender::{Config, Outcome};
 use owly_awdl::{MacAddr, PeerInfo};
 use tokio::sync::watch;
 
-use crate::events::{emit, say};
+use crate::events::{emit, say, took};
 
 const TARGET_SUFFIX: &str = ".howldrop-to";
 /// Apple's receivers listen here, an AWDL peer without mDNS too (DISC-5).
@@ -162,7 +162,8 @@ async fn send_one(
         emit(&["sending", &name, detail]);
     };
     let _advert = advertise(opts.ble).await;
-    let (ok, detail) = try_send(air, sender, path, to.as_deref(), opts.window, &progress).await;
+    let (ok, detail, upload) =
+        try_send(air, sender, path, to.as_deref(), opts.window, &progress).await;
     let detail = match (&to, ok) {
         (Some(t), true) => format!("on {t}"),
         _ => detail,
@@ -186,7 +187,10 @@ async fn send_one(
     say(format!(
         "Send: {name}: {}{}",
         if ok {
-            "sent".to_string()
+            match upload {
+                Some(d) => format!("sent, {}", took(size, d)),
+                None => "sent".to_string(),
+            }
         } else {
             format!("not sent: {detail}")
         },
@@ -206,13 +210,13 @@ async fn try_send(
     to: Option<&str>,
     window: Duration,
     progress: &impl Fn(&str),
-) -> (bool, String) {
+) -> (bool, String, Option<Duration>) {
     let deadline = Instant::now() + window;
     let mut waited = false;
     while Instant::now() < deadline {
         let target = match find(air, sender, to, deadline).await {
             Found::One(t) => t,
-            Found::Many(why) => return (false, why),
+            Found::Many(why) => return (false, why, None),
             Found::None => {
                 if !waited {
                     waited = true;
@@ -236,12 +240,12 @@ async fn try_send(
         progress("asking: accept it on the iPhone");
         let (events, mut updates) = tokio::sync::mpsc::unbounded_channel();
         let report = async {
-            let mut accepted = false;
+            let mut accepted = None;
             let mut shown = (Instant::now(), u64::MAX);
             while let Some(e) = updates.recv().await {
                 match e {
                     Event::Accepted => {
-                        accepted = true;
+                        accepted = Some(Instant::now());
                         progress("accepted; uploading");
                     }
                     Event::Progress(p) if p.total > 0 => {
@@ -259,21 +263,29 @@ async fn try_send(
         let asked = Instant::now();
         let payload = Payload::Files(vec![path.to_path_buf()]);
         let flags = RECEIVER_FLAGS | SUPPORTS_DVZIP;
-        let (outcome, accepted) = tokio::join!(
+        let (outcome, accepted_at) = tokio::join!(
             sender.send(target.addr, &payload, flags, Some(events)),
             report
         );
+        let accepted = accepted_at.is_some();
         match outcome {
-            Ok(Outcome::Delivered) => return (true, "on the iPhone".into()),
+            Ok(Outcome::Delivered) => {
+                return (
+                    true,
+                    "on the iPhone".into(),
+                    accepted_at.map(|t| t.elapsed()),
+                );
+            }
             Ok(Outcome::Declined) if asked.elapsed() + Duration::from_secs(2) >= ASK_TIMEOUT => {
                 return (
                     false,
                     "not accepted on the iPhone in time: send it again and tap Accept".into(),
+                    None,
                 );
             }
-            Ok(Outcome::Declined) => return (false, "declined on the iPhone".into()),
-            Ok(Outcome::Failed(why)) if accepted => return (false, why),
-            Err(e) if accepted => return (false, format!("the upload broke off: {e}")),
+            Ok(Outcome::Declined) => return (false, "declined on the iPhone".into(), None),
+            Ok(Outcome::Failed(why)) if accepted => return (false, why, None),
+            Err(e) if accepted => return (false, format!("the upload broke off: {e}"), None),
             // Before the phone took it: its port closes between bursts, and
             // its address rotates. Look again.
             Ok(Outcome::Failed(why)) => say(format!("Send: {why}; trying again")),
@@ -287,6 +299,7 @@ async fn try_send(
             "the iPhone did not answer within {} minutes: is AirDrop set to Everyone?",
             window.as_secs() / 60
         ),
+        None,
     )
 }
 
