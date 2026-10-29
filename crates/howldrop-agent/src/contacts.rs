@@ -116,25 +116,45 @@ impl Contacts {
     }
 
     /// Whether to take a transfer from this sender. Blocking.
+    #[cfg(test)]
     pub fn decide(&self, record: Option<&[u8]>, certificate: Option<&[u8]>) -> Outcome {
+        self.explain(record, certificate).0
+    }
+
+    /// [`decide`](Self::decide), and what failed, for the log: openssl's
+    /// reason, never an identifier. Blocking.
+    pub fn explain(&self, record: Option<&[u8]>, certificate: Option<&[u8]>) -> (Outcome, String) {
         let Some(record) = record.filter(|r| !r.is_empty()) else {
-            return Outcome::NoRecord;
+            return (Outcome::NoRecord, String::new());
         };
         let info = match self.verify_record(record) {
-            Some(info) if !info.expired => info,
-            _ => return Outcome::BadRecord,
+            Ok(info) if !info.expired => info,
+            Ok(_) => return (Outcome::BadRecord, "the record has expired".into()),
+            Err(why) => return (Outcome::BadRecord, format!("record: {why}")),
         };
         let Some(certificate) = certificate.filter(|c| !c.is_empty()) else {
-            return Outcome::NoCertificate;
+            return (Outcome::NoCertificate, String::new());
         };
-        let account = self.certificate_account(certificate);
-        if account.is_empty() || account != info.account {
-            return Outcome::Unbound;
+        match self.certificate_account(certificate) {
+            Err(why) => return (Outcome::Unbound, format!("certificate: {why}")),
+            Ok(account) if account != info.account => {
+                return (
+                    Outcome::Unbound,
+                    "the certificate is for another Apple ID".into(),
+                );
+            }
+            Ok(_) => {}
         }
         if info.hashes.is_disjoint(&self.hashes) {
-            return Outcome::Unknown;
+            return (
+                Outcome::Unknown,
+                format!(
+                    "none of its {} verified addresses is in senders",
+                    info.hashes.len()
+                ),
+            );
         }
-        Outcome::Accept
+        (Outcome::Accept, String::new())
     }
 
     /// Whether this sender may see the receiver at all. Weaker than
@@ -148,17 +168,17 @@ impl Contacts {
             return true;
         };
         match self.verify_record(record) {
-            Some(info) if !info.expired => !info.hashes.is_disjoint(&self.hashes),
+            Ok(info) if !info.expired => !info.hashes.is_disjoint(&self.hashes),
             _ => true,
         }
     }
 
-    /// Apple's signature over the record, and what it says; None when it
-    /// doesn't verify. `-purpose any`: the signer is a record-signing
+    /// Apple's signature over the record, and what it says; why not when
+    /// it doesn't verify. `-purpose any`: the signer is a record-signing
     /// certificate, which openssl's S/MIME purpose check refuses.
-    fn verify_record(&self, record: &[u8]) -> Option<Record> {
+    fn verify_record(&self, record: &[u8]) -> Result<Record, String> {
         let out = self.certs.path().join(format!("record-{}.bin", unique()));
-        let ok = openssl(
+        let verified = openssl(
             &[
                 "cms",
                 "-verify",
@@ -172,26 +192,40 @@ impl Contacts {
                 path(&out)?,
             ],
             record,
-        )
-        .is_some();
-        let payload = std::fs::read(&out).ok();
+        );
+        let payload = std::fs::read(&out);
         let _ = std::fs::remove_file(&out);
-        if !ok {
-            return None;
-        }
-        parse_record(&payload?, SystemTime::now())
+        verified?;
+        let payload = payload.map_err(|e| e.to_string())?;
+        parse_record(&payload, SystemTime::now()).ok_or_else(|| "not a record plist".into())
     }
 
-    /// The Apple ID a client certificate belongs to, or "" when it isn't
+    /// The Apple ID a client certificate belongs to; why not when it isn't
     /// an Apple-issued one: it must verify to Apple's root. Everyone-mode
-    /// senders present a self-signed certificate (CN=airdrop), and get "".
-    fn certificate_account(&self, der: &[u8]) -> String {
+    /// senders present a self-signed certificate (CN=airdrop).
+    fn certificate_account(&self, der: &[u8]) -> Result<String, String> {
         let leaf = self.certs.path().join(format!("leaf-{}.pem", unique()));
         let account = (|| {
             let leaf_path = path(&leaf)?;
             openssl(&["x509", "-inform", "DER", "-out", leaf_path], der)?;
             let issuers = self.certs.path().join("issuers.pem");
-            openssl(
+            // One attribute per line: OpenSSL 3.0 prints "CN = value" in
+            // the default form, older ones "CN=value".
+            let name = |which: &str| {
+                openssl(
+                    &[
+                        "x509",
+                        "-in",
+                        leaf_path,
+                        "-noout",
+                        which,
+                        "-nameopt",
+                        "multiline",
+                    ],
+                    b"",
+                )
+            };
+            if let Err(why) = openssl(
                 &[
                     "verify",
                     "-CAfile",
@@ -203,32 +237,31 @@ impl Contacts {
                     leaf_path,
                 ],
                 b"",
-            )?;
-            // One attribute per line: OpenSSL 3.0 prints "CN = value" in
-            // the default form, older ones "CN=value".
-            let subject = openssl(
-                &[
-                    "x509",
-                    "-in",
-                    leaf_path,
-                    "-noout",
-                    "-subject",
-                    "-nameopt",
-                    "multiline",
-                ],
-                b"",
-            )?;
-            common_name(&subject)?
-                .strip_prefix(CN_PREFIX)
+            ) {
+                // The issuer is one of Apple's CAs, or the sender itself.
+                let issuer = name("-issuer").ok();
+                let issuer = issuer.as_deref().and_then(common_name).unwrap_or("?");
+                let issuer = if issuer.starts_with(CN_PREFIX) || issuer == "airdrop" {
+                    "itself"
+                } else {
+                    issuer
+                };
+                return Err(format!("{why} (issued by {issuer})"));
+            }
+            let subject = name("-subject")?;
+            common_name(&subject)
+                .and_then(|cn| cn.strip_prefix(CN_PREFIX))
                 .map(str::to_string)
+                .ok_or_else(|| "not an Apple ID certificate".to_string())
         })();
         let _ = std::fs::remove_file(&leaf);
-        account.unwrap_or_default()
+        account
     }
 }
 
-fn path(p: &Path) -> Option<&str> {
+fn path(p: &Path) -> Result<&str, String> {
     p.to_str()
+        .ok_or_else(|| "a temporary path isn't UTF-8".into())
 }
 
 fn unique() -> String {
@@ -237,24 +270,56 @@ fn unique() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// openssl with `args`, `input` on stdin; its stdout when it succeeds.
-fn openssl(args: &[&str], input: &[u8]) -> Option<String> {
+/// openssl with `args`, `input` on stdin; its stdout when it succeeds,
+/// else its reason.
+fn openssl(args: &[&str], input: &[u8]) -> Result<String, String> {
     use std::io::Write;
     let mut child = Command::new("openssl")
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
-        .ok()?;
-    let mut stdin = child.stdin.take()?;
+        .map_err(|e| format!("openssl: {e}"))?;
+    let mut stdin = child.stdin.take().ok_or("openssl: no stdin")?;
     let input = input.to_vec();
     let writer = std::thread::spawn(move || stdin.write_all(&input));
-    let out = child.wait_with_output().ok()?;
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("openssl: {e}"))?;
     let _ = writer.join();
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    if out.status.success() {
+        return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+    }
+    Err(openssl_reason(&String::from_utf8_lossy(&out.stderr)))
+}
+
+/// What openssl's errors say, without the names it prints with them (a
+/// certificate's subject is an Apple ID).
+fn openssl_reason(stderr: &str) -> String {
+    // verify: "error 10 at 1 depth lookup: certificate has expired"
+    if let Some(line) = stderr.lines().find(|l| l.contains(" depth lookup: ")) {
+        let (head, why) = line.split_once(" lookup: ").unwrap_or((line, ""));
+        let depth = head.split(" at ").nth(1).unwrap_or(head);
+        return format!("{why} (at {depth})");
+    }
+    // cms: "...:Verify error: certificate has expired", or the last
+    // routine's message.
+    if let Some((_, why)) = stderr.rsplit_once("Verify error:") {
+        return why.lines().next().unwrap_or("").trim().to_string();
+    }
+    // "pid:error:code:library routines:function:reason:file:line:"
+    let line = stderr
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("failed");
+    match line.split(':').collect::<Vec<_>>().as_slice() {
+        [_, "error", _, _, _, reason, ..] => reason,
+        _ => line,
+    }
+    .trim()
+    .to_string()
 }
 
 /// `commonName = value` from `-nameopt multiline`.
@@ -649,6 +714,26 @@ mod tests {
         assert_eq!(
             contacts.decide(Some(&record), Some(&cert)),
             Outcome::BadRecord
+        );
+    }
+
+    #[test]
+    fn openssls_reasons_come_without_names() {
+        let verify = "CN = com.apple.idms.appleid.prd.001234\nerror 10 at 1 depth lookup: certificate has expired\nerror leaf.pem: verification failed\n";
+        assert_eq!(
+            openssl_reason(verify),
+            "certificate has expired (at 1 depth)"
+        );
+        let cms = "40A7:error:10800065:CMS routines:CMS_signerinfo_verify_cert:certificate verify error:../crypto/cms/cms_smime.c:286:Verify error:unable to get local issuer certificate\n";
+        assert_eq!(
+            openssl_reason(cms),
+            "unable to get local issuer certificate"
+        );
+        assert_eq!(
+            openssl_reason(
+                "40A7:error:068000A8:asn1 encoding routines:asn1_check_tlen:wrong tag:../crypto/asn1/tasn_dec.c:1188:\n"
+            ),
+            "wrong tag"
         );
     }
 

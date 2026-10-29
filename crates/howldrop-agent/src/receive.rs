@@ -280,9 +280,23 @@ async fn answer(
             if contacts.is_empty() {
                 return Outcome::Unknown;
             }
-            tokio::task::spawn_blocking(move || contacts.decide(record.as_deref(), cert.as_deref()))
-                .await
-                .unwrap_or(Outcome::Unknown)
+            let (outcome, detail) = tokio::task::spawn_blocking(move || {
+                contacts.explain(record.as_deref(), cert.as_deref())
+            })
+            .await
+            .unwrap_or((Outcome::Unknown, String::new()));
+            if outcome != Outcome::Accept {
+                let detail = if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {detail}")
+                };
+                say(format!(
+                    "Receive: not a known contact: {}{detail}",
+                    outcome.why()
+                ));
+            }
+            outcome
         }
     };
     let shown: Vec<String> = names.iter().take(NAMES_SHOWN).cloned().collect();
