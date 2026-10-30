@@ -208,6 +208,21 @@ fn on_event(event: ReceiverEvent, opts: &Arc<Options>, transfers: &Transfers) {
                 names.len(),
                 names.join(", ")
             ));
+            // What a phone's own preview is like, for ours to match; kept
+            // in /tmp with --verbose.
+            if let Some(icon) = &request.ask.file_icon {
+                say(format!(
+                    "Receive: with a preview ({} bytes, {})",
+                    icon.len(),
+                    image_kind(icon)
+                ));
+                if opts.verbose {
+                    let _ = std::fs::write(
+                        std::env::temp_dir().join(format!("howldrop-preview-{tag}.bin")),
+                        icon,
+                    );
+                }
+            }
             let opts = opts.clone();
             tokio::spawn(async move {
                 answer(request, &opts, tag, sender, names, total, gone).await;
@@ -389,6 +404,18 @@ async fn wait_decision(
         if tokio::time::Instant::now() >= deadline {
             return "timeout";
         }
+    }
+}
+
+/// An image's format, from its first bytes.
+fn image_kind(bytes: &[u8]) -> &'static str {
+    match bytes {
+        [0, 0, 0, 0x0c, b'j', b'P', b' ', b' ', ..] => "JPEG 2000 (jp2)",
+        [0xff, 0x4f, 0xff, 0x51, ..] => "JPEG 2000 codestream",
+        [0xff, 0xd8, 0xff, ..] => "JPEG",
+        [0x89, b'P', b'N', b'G', ..] => "PNG",
+        [_, _, _, _, b'f', b't', b'y', b'p', ..] => "HEIF",
+        _ => "unknown",
     }
 }
 
