@@ -2,12 +2,17 @@
 # HowlDrop on a Windows PC: this image as a WSL 2 distro, which howldrop.exe
 # downloads, imports and starts as its child (wsl_win.cpp). The PC's USB
 # Wi-Fi stick reaches it through usbipd-win; WSL's own kernel drives it
-# (mt76x2u ships as a module). Then run.sh, as in the add-on: howldrop-agent
-# and delivery.
+# (its drivers ship as modules). Then run.sh, as in the add-on:
+# howldrop-agent and delivery.
 #
 #   wsl-run.sh --name NAME --save DIR --outbox DIR --scan-request FILE
+#              [--driver mt76x2u|rtw89_8852bu] [--chip NAME] [--untested]
 #              [--receive everyone|ask|contacts] [--senders LIST] [--ask-dir DIR]
 #              [--send-to NAME] [--verbose]
+#
+# --driver is the stick's driver as howldrop.exe's table names it (wsl_text.hpp
+# kSticks; default the MT7612U's), --chip its name for messages, and
+# --untested lets the agent run a card Owly hasn't tested.
 #   wsl-run.sh --stop
 #
 # DIR and FILE are the PC's own folders, as /mnt/c/... paths: files land in
@@ -60,6 +65,9 @@ VERBOSE=false
 RECEIVE=everyone
 SENDERS=
 ASK_DIR=
+DRIVER=mt76x2u
+CHIP=MT7612U
+UNTESTED=false
 while [ $# -gt 0 ]; do
     case "$1" in
         --name) NAME=$2; shift 2 ;;
@@ -70,6 +78,9 @@ while [ $# -gt 0 ]; do
         --receive) RECEIVE=$2; shift 2 ;;
         --senders) SENDERS=$2; shift 2 ;;
         --ask-dir) ASK_DIR=$2; shift 2 ;;
+        --driver) DRIVER=$2; shift 2 ;;
+        --chip) CHIP=$2; shift 2 ;;
+        --untested) UNTESTED=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
         *) say "wsl-run.sh: unknown argument $1"; exit 2 ;;
     esac
@@ -78,6 +89,10 @@ if [ -z "$SAVE" ] || [ -z "$OUTBOX" ] || [ -z "$SCAN" ]; then
     say "wsl-run.sh: --save, --outbox and --scan-request are required"
     exit 2
 fi
+case "$DRIVER" in
+    mt76x2u|rtw89_8852bu) ;;
+    *) say "wsl-run.sh: no stick driver $DRIVER here"; exit 2 ;;
+esac
 case "$RECEIVE" in
     everyone|contacts) ;;
     ask) [ -n "$ASK_DIR" ] || { say "wsl-run.sh: --receive ask needs --ask-dir"; exit 2; } ;;
@@ -103,7 +118,8 @@ copy_first() {
     say "No $dest in this image."
 }
 mkdir -p "$FIRMWARE_DIR"
-cp -f "$FIRMWARE_SRC"/mt7662*.bin "$FIRMWARE_DIR"/ 2>/dev/null || say "No stick firmware in $FIRMWARE_SRC."
+# Laid out as the drivers ask for it: mt7662.bin, rtw89/rtw8852b_fw-1.bin.
+cp -rf "$FIRMWARE_SRC"/. "$FIRMWARE_DIR"/ 2>/dev/null || say "No stick firmware in $FIRMWARE_SRC."
 copy_first regulatory.db /lib/firmware/regulatory.db-upstream /lib/firmware/regulatory.db
 copy_first regulatory.db.p7s /lib/firmware/regulatory.db.p7s-upstream /lib/firmware/regulatory.db.p7s
 current=$(cat "$FIRMWARE_PATH" 2>/dev/null || true)
@@ -115,9 +131,11 @@ else
 fi
 
 # The driver, before the stick arrives, so its probe finds the firmware.
-# Scatter-gather off: the setting the first working run had over usbipd.
-modprobe mt76-usb disable_usb_sg=1 2>/dev/null || say "modprobe mt76-usb failed."
-modprobe mt76x2u 2>/dev/null || say "modprobe mt76x2u failed: this WSL kernel may lack the driver."
+# mt76: scatter-gather off, the setting the first working run had over usbipd.
+if [ "$DRIVER" = mt76x2u ]; then
+    modprobe mt76-usb disable_usb_sg=1 2>/dev/null || say "modprobe mt76-usb failed."
+fi
+modprobe "$DRIVER" 2>/dev/null || say "modprobe $DRIVER failed: this WSL kernel may lack the driver."
 modprobe tun 2>/dev/null || true
 iw reg reload 2>/dev/null || true
 
@@ -126,7 +144,7 @@ stick_iface() {
     for d in /sys/class/net/*; do
         [ -d "$d/phy80211" ] || continue
         drv=$(basename "$(readlink -f "$d/device/driver" 2>/dev/null)" 2>/dev/null)
-        [ "$drv" = mt76x2u ] && { basename "$d"; return 0; }
+        [ "$drv" = "$DRIVER" ] && { basename "$d"; return 0; }
     done
     return 1
 }
@@ -138,8 +156,8 @@ if [ -z "$IFACE" ]; then
     for _ in $(seq 1 "$STICK_WAIT_S"); do
         IFACE=$(stick_iface || true)
         [ -n "$IFACE" ] && break
-        if dmesg 2>/dev/null | tail -n +"$((before + 1))" | grep -q 'probe with driver mt76x2u failed'; then
-            dmesg | tail -n +"$((before + 1))" | grep -E 'mt76|usb 1-' | tail -8
+        if dmesg 2>/dev/null | tail -n +"$((before + 1))" | grep -q "probe with driver $DRIVER failed"; then
+            dmesg | tail -n +"$((before + 1))" | grep -E "mt76|rtw89|usb 1-" | tail -8
             event stick failed "the stick stopped answering while starting; unplug it and plug it back in"
             exit 3
         fi
@@ -147,15 +165,16 @@ if [ -z "$IFACE" ]; then
     done
 fi
 if [ -z "$IFACE" ]; then
-    event stick failed "no MT7612U stick arrived (is it plugged in and attached with usbipd?)"
+    event stick failed "no $CHIP stick arrived (is it plugged in and attached with usbipd?)"
     exit 3
 fi
 event stick ready "$IFACE"
 
 mkdir -p /data "$SAVE" "$OUTBOX"
-python3 - "$NAME" "$SAVE" "$SEND_TO" "$VERBOSE" "$RECEIVE" "$SENDERS" "$IFACE" > /data/options.json <<'PY'
+python3 - "$NAME" "$SAVE" "$SEND_TO" "$VERBOSE" "$RECEIVE" "$SENDERS" "$IFACE" "$DRIVER" "$UNTESTED" \
+    > /data/options.json <<'PY'
 import json, sys
-name, save, send_to, verbose, receive, senders, iface = sys.argv[1:8]
+name, save, send_to, verbose, receive, senders, iface, driver, untested = sys.argv[1:10]
 options = {
     "pc_name": name, "save_folder": save, "notify": [],
     # The agent: Contacts Only from these, or (receive ask) the contacts
@@ -167,11 +186,11 @@ options = {
     "delete_after_days": 0,
     "forward_to_pc": False, "pc_host": "", "pc_key": "",
     "send_to_iphone": True, "send_to": send_to,
-    "interface": iface, "allow_untested": False, "channels": "", "aggregation": "auto",
+    "interface": iface, "allow_untested": untested == "true", "channels": "", "aggregation": "auto",
     # Sending to an iPhone from the MT7612U: 36 Mbit/s took a 14.7 MB video
     # in 15.7 s against 25 s at Owly's 24; 48 and MCS 7 lost enough that
-    # uploads crawled or the phone cancelled them.
-    "tx_rate": "36",
+    # uploads crawled or the phone cancelled them. Other sticks: Owly's.
+    "tx_rate": "36" if driver == "mt76x2u" else "",
     "verbose": verbose == "true", "debug_capture": False,
 }
 # The add-on's other options (tx_amsdu, tx_rate, channels...), set by hand

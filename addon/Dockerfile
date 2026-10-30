@@ -61,15 +61,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # For howldrop.exe's WSL distro only (wsl-run.sh): there WSL's kernel drives
 # the stick and finds no firmware of its own. The add-on never loads these;
-# Home Assistant OS has its own. Pinned by hash; linux-firmware's mt7662 files
-# date from 2015.
-ARG LINUX_FIRMWARE=https://gitlab.com/kernel-firmware/linux-firmware/-/raw/main/mediatek
-RUN mkdir -p /usr/lib/howldrop/firmware && cd /usr/lib/howldrop/firmware \
-    && python3 -c "import sys, urllib.request; [urllib.request.urlretrieve(sys.argv[1] + '/' + n, n) for n in sys.argv[2:]]" \
-        "$LINUX_FIRMWARE" mt7662.bin mt7662_rom_patch.bin \
+# Home Assistant OS has its own. One file per stick in howldrop.exe's table
+# (wsl_text.hpp kSticks), laid out as its driver asks for it: the MT7612U's
+# (mt76x2u) and the RTL8852BU's (rtw89_8852bu). From one linux-firmware
+# commit, and checked by hash.
+ARG LINUX_FIRMWARE=https://gitlab.com/kernel-firmware/linux-firmware/-/raw/fed51005f935bab093a4377d0f23f5c7ede81870
+RUN mkdir -p /usr/lib/howldrop/firmware/rtw89 && cd /usr/lib/howldrop/firmware \
+    && python3 -c "import sys, urllib.request; [urllib.request.urlretrieve(sys.argv[1] + '/' + src, dst) for src, dst in zip(sys.argv[2::2], sys.argv[3::2])]" \
+        "$LINUX_FIRMWARE" \
+        mediatek/mt7662.bin mt7662.bin \
+        mediatek/mt7662_rom_patch.bin mt7662_rom_patch.bin \
+        rtw89/rtw8852b_fw-1.bin rtw89/rtw8852b_fw-1.bin \
     && printf '%s\n' \
         'f7e52492f58088cae50e51a54cca68e4abc5b74f7d0b6b731dbb4c04465a94b6  mt7662.bin' \
         '6f0e871268f6e4d99196d90d89bcc09fe493d010366260a2cfcaa5dd66095f8c  mt7662_rom_patch.bin' \
+        '5b68415e3bfe72715d63a70703d4471b04b5475b8ff69cfdc8cdf48233cd5d3a  rtw89/rtw8852b_fw-1.bin' \
         | sha256sum -c - \
     && test -f /lib/firmware/regulatory.db-upstream && test -f /lib/firmware/regulatory.db.p7s-upstream
 

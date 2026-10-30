@@ -8,6 +8,7 @@
 - Sending to an iPhone: a picture goes with a preview, which the iPhone shows once it's accepted; when the phone is there but its AirDrop refuses (Everyone for 10 Minutes ran out, or it has just finished a transfer), the log and the PC say so, and the send keeps trying. New option `tx_rate`, the rate files go to the phone at.
 - The log gives each transfer's size, time and speed, and the radio's counters every 10 s.
 - `debug_capture` no longer saves senders' certificates.
+- For howldrop.exe's Linux part only: the RTL8852BU's firmware, beside the MT7612U's (one linux-firmware commit, checked by hash).
 
 ## 0.18.0
 

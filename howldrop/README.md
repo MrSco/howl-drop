@@ -78,10 +78,11 @@ own that `howldrop.exe` downloads, starts and stops. You need:
 
 - Windows 11 (or 10) with WSL 2 (`wsl --install` in an administrator terminal,
   then restart). Its kernel has the stick's driver.
-- A USB Wi-Fi stick with a MediaTek **MT7612U** (`0e8d:7612`, e.g. Alfa
-  AWUS036ACM). A USB 2.0 port worked best. The PC's built-in Wi-Fi can't do
-  it; [Which Wi-Fi adapter?](../docs/adapters.md) has what works and what
-  doesn't.
+- A USB Wi-Fi stick with a MediaTek **MT7612U** (e.g. Alfa AWUS036ACM,
+  `0e8d:7612`, or Netgear A6210: any ID WSL's `mt76x2u` driver takes), or a
+  Realtek RTL8852BU, which runs untested. A USB 2.0 port worked best. The
+  PC's built-in Wi-Fi can't do it; [Which Wi-Fi adapter?](../docs/adapters.md)
+  has what works and what doesn't.
 - [usbipd-win](https://github.com/dorssel/usbipd-win), which hands the stick
   to WSL. HowlDrop offers to install it (`winget install usbipd`).
 

@@ -74,11 +74,22 @@ std::vector<UsbDevice> parse_usbipd_list(const std::string& text) {
     return out;
 }
 
-std::optional<UsbDevice> find_stick(const std::vector<UsbDevice>& devices) {
-    for (const auto& device : devices) {
-        if (device.id == kStickId) return device;
+const StickKind* stick_kind(const std::string& id) {
+    for (const auto& kind : kSticks) {
+        if (id == kind.id) return &kind;
     }
-    return std::nullopt;
+    return nullptr;
+}
+
+std::optional<UsbDevice> find_stick(const std::vector<UsbDevice>& devices) {
+    std::optional<UsbDevice> found;
+    for (const auto& device : devices) {
+        const StickKind* kind = stick_kind(device.id);
+        if (!kind || (found && (found->kind->tested || !kind->tested))) continue;
+        found = device;
+        found->kind = kind;
+    }
+    return found;
 }
 
 std::vector<std::string> parse_distros(const std::string& text) {

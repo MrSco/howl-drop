@@ -9,8 +9,8 @@ and **Send to iPhone** (the tray menu, or Explorer's Send to) AirDrops files
 back to the phone.
 
 All it takes is `howldrop.exe` and a USB Wi-Fi stick with a MediaTek
-**MT7612U** (e.g. Alfa AWUS036ACM). No Mac, no Home Assistant, nothing on the
-phone. **[Which Wi-Fi adapter?](../docs/adapters.md)** lists what works, what
+**MT7612U** (e.g. Alfa AWUS036ACM, Netgear A6210; a Realtek RTL8852BU runs
+too, untested). No Mac, no Home Assistant, nothing on the phone. **[Which Wi-Fi adapter?](../docs/adapters.md)** lists what works, what
 might, and what can't (your PC's built-in Wi-Fi can't, on Windows).
 
 <p align="center">

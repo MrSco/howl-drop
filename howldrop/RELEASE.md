@@ -6,6 +6,7 @@
 **New in 0.19.0**
 - **Faster both ways.** The Linux part is rebuilt on [Owly](https://github.com/t4t5/owly), and the stick now listens 40 MHz wide: a 14.7 MB video from the iPhone arrives in about 3 s. Sending to the iPhone runs at 36 Mbit/s instead of 24: the same video goes in about 16 s instead of 25.
 - **Contacts work again**: Apple's certificate authority behind many iPhones' AirDrop identities expired on 21 Oct 2026, and HowlDrop had been asking about (or turning away) your own contacts since.
+- **More sticks**: every MT7612U the WSL driver takes (Netgear A6210, ASUS USB-AC55 and others, not only Alfa's `0e8d:7612`), and the Realtek **RTL8852BU**, untested. See [Which Wi-Fi adapter?](https://github.com/MrSco/howl-drop/blob/main/docs/adapters.md).
 - A picture you send shows its **preview** on the iPhone once accepted.
 - When the iPhone is nearby but its AirDrop isn't taking files (Everyone for 10 Minutes ran out, or it has just finished a transfer), the card **says so** instead of just waiting; the send keeps trying.
 - Each finished transfer shows **how long it took** (and the log keeps it). The version is in the tray menu and the window's settings, and HowlDrop is in the **Start menu**, so it's easy to start again after Quit. WSL no longer adds a Start menu entry of its own for HowlDrop's Linux part.

@@ -57,6 +57,28 @@ int main() {
     expect(attached.size() == 1 && attached[0].attached() && attached[0].shared(), "attached counts as shared");
     expect(!wsl::find_stick(wsl::parse_usbipd_list("Connected:\nBUSID  VID:PID    DEVICE  STATE\n")),
            "no stick, nothing found");
+    if (stick) {
+        expect(stick->kind && std::string(stick->kind->driver) == "mt76x2u" && stick->kind->tested,
+               "the MT7612U runs on mt76x2u, tested");
+    }
+
+    // Other sticks: another maker's MT7612U, and the RTL8852BU, untested; a
+    // tested one wins when both are plugged in, whatever the order.
+    const auto netgear = wsl::find_stick(wsl::parse_usbipd_list(
+        "Connected:\nBUSID  VID:PID    DEVICE  STATE\n3-2    0846:9053  NETGEAR A6210  Not shared\n"));
+    expect(netgear && std::string(netgear->kind->chip) == "MT7612U", "a Netgear A6210 is an MT7612U");
+    const std::string both =
+        "Connected:\nBUSID  VID:PID    DEVICE  STATE\n"
+        "1-1    0bda:b832  802.11ax WLAN Adapter  Shared\n"
+        "1-2    0e8d:7612  802.11ac Wireless LAN Card  Not shared\n";
+    const auto chosen = wsl::find_stick(wsl::parse_usbipd_list(both));
+    expect(chosen && chosen->busid == "1-2", "the tested stick is chosen over an untested one");
+    const auto realtek = wsl::find_stick(wsl::parse_usbipd_list(
+        "Connected:\nBUSID  VID:PID    DEVICE  STATE\n1-1    0BDA:B832  802.11ax WLAN Adapter  Shared\n"));
+    expect(realtek && std::string(realtek->kind->driver) == "rtw89_8852bu" && !realtek->kind->tested,
+           "an RTL8852BU alone runs, untested");
+    expect(!wsl::stick_kind("0e8d:7610") && !wsl::stick_kind("7392:b711"),
+           "an MT7610U, and an ID two drivers claim, aren't sticks");
 
     const auto distros = wsl::parse_distros("Ubuntu\r\nHowlDrop\r\n\r\n");
     expect(distros.size() == 2 && distros[1] == wsl::kDistro, "distros, one per line");

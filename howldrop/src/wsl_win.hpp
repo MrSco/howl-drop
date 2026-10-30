@@ -14,6 +14,7 @@
 // outbox folder. Turning it off gives the stick back to Windows.
 
 #include "node.hpp"
+#include "wsl_text.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -80,8 +81,8 @@ private:
     bool prepare(std::string& error);
     bool ensure_distro(std::string& error);
     bool download_linux(const std::filesystem::path& tar, std::string& error);
-    bool find_stick(std::string& busid, std::string& error);
-    void run_stack(const std::string& busid);
+    bool find_stick(wsl::UsbDevice& stick, std::string& error);
+    void run_stack(const wsl::UsbDevice& stick);
     void handle_line(const std::string& line, const std::string& busid);
     void attach(const std::string& busid);
     void give_back(const std::string& busid);
@@ -110,6 +111,7 @@ private:
     std::vector<std::string> devices_;
     std::mutex log_mu_;
     std::string last_line_;
+    std::string stick_note_;  // ", RTL8852BU, untested" for an untested stick
     std::thread wake_thread_;
     std::mutex wake_mu_;
     std::condition_variable wake_cv_;
