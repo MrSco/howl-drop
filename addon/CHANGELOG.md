@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.1
+
+- Transfer times in the log count from the upload's start, and one under a second reads "in under a second" instead of an impossible speed.
+
 ## 0.19.0
 
 - **Not yet tried on Home Assistant OS.** This release was tested as howldrop.exe's Linux part (WSL, an MT7612U, an iPhone), which runs the same image; the add-on starts it differently (the host's Bluetooth, its own options). If it doesn't come up for you, 0.18.0 is the version to go back to, and an issue with the log helps.
