@@ -800,18 +800,20 @@ veth_test! {
             sender().send(veth.to_b(PORT), &Payload::Files(vec![path]), RECEIVER_FLAGS, None).await
         });
         r.accept_next().await;
-        let mut last = 0;
+        let mut seen = Vec::new();
         loop {
             match r.next(10).await {
                 ReceiverEvent::Progress { bytes, .. } => {
-                    assert!(bytes >= last);
-                    last = bytes;
+                    assert!(bytes >= seen.last().copied().unwrap_or(0));
+                    seen.push(bytes);
                 }
                 ReceiverEvent::Received { .. } => break,
                 other => panic!("{other:?}"),
             }
         }
-        assert_eq!(last, 3 << 20);
+        // The upload's start, then its end.
+        assert_eq!(seen.first(), Some(&0));
+        assert_eq!(seen.last(), Some(&(3 << 20)));
         assert_eq!(send.await.unwrap().unwrap(), Outcome::Delivered);
     }
 }

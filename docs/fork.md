@@ -24,7 +24,7 @@ accepted), which change it for everyone.
 | Crate | What | Why |
 |---|---|---|
 | owly-airdrop | A declined or unanswered `/Ask` gets `401` (`receiver.rs`, `http.rs`, SPEC ASK-2) | An iPhone shows a 401 as "Declined"; with 403 it stayed on "Waiting". |
-| owly-airdrop | `Options.progress`: `ReceiverEvent::Progress` while an upload comes in | The cards' progress bar. |
+| owly-airdrop | `Options.progress`: `ReceiverEvent::Progress` while an upload comes in, from 0 as it starts | The cards' progress bar, and how long a transfer took. |
 | owly-airdrop | `Request.peer_certificate`: the sender's TLS client certificate | Contacts Only: the agent ties the Apple-signed record to the sender's account. |
 | owly-airdrop | `Config.discover_gate`: refuse a `/Discover` with 401 | Contacts Only: strangers don't see the PC. |
 | owly-airdrop | sender `Config.file_icon` and `Sender::send_with_icon` | The preview an iPhone shows for a picture sent to it. |

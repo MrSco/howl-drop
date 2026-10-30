@@ -80,6 +80,8 @@ std::string Transfers::kind_of(const std::filesystem::path& path) {
 std::string Transfers::took_text(const Transfer& t) {
     const double secs = std::chrono::duration<double>(t.took).count();
     if (secs <= 0) return {};
+    // Under a second there's no speed: it would mostly be the clock's error.
+    if (secs < 1) return t.total ? size_text(static_cast<double>(t.total)) + " in under a second" : "in under a second";
     char time[32];
     std::snprintf(time, sizeof time, "in %.1f s", secs);
     if (!t.total) return time;
