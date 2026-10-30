@@ -108,6 +108,9 @@ struct Args {
     /// The data frame rate: 6–54 (Mbit/s), or mcs0–mcs15.
     #[arg(long)]
     tx_rate: Option<String>,
+    /// Send to a phone as A-MSDUs, several packets a frame.
+    #[arg(long)]
+    tx_amsdu: bool,
     /// The radio's recovery journal.
     #[arg(long, default_value = owly_radio::rundir::RUN_DIR)]
     run_dir: String,
@@ -166,6 +169,7 @@ async fn run(args: Args) -> Result<(), String> {
         aggregation: radio::aggregation(&args.aggregation)?,
         country: args.country.clone().filter(|c| !c.is_empty()),
         tx_rate: args.tx_rate.clone().filter(|r| !r.is_empty()),
+        tx_amsdu: args.tx_amsdu,
         run_dir: args.run_dir.clone(),
     };
     let (contacts, notes) = contacts::Contacts::new(&contacts::entries(&args.senders))

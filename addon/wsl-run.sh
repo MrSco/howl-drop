@@ -156,7 +156,7 @@ mkdir -p /data "$SAVE" "$OUTBOX"
 python3 - "$NAME" "$SAVE" "$SEND_TO" "$VERBOSE" "$RECEIVE" "$SENDERS" "$IFACE" > /data/options.json <<'PY'
 import json, sys
 name, save, send_to, verbose, receive, senders, iface = sys.argv[1:8]
-json.dump({
+options = {
     "pc_name": name, "save_folder": save, "notify": [],
     # The agent: Contacts Only from these, or (receive ask) the contacts
     # accepted without asking.
@@ -169,7 +169,15 @@ json.dump({
     "send_to_iphone": True, "send_to": send_to,
     "interface": iface, "allow_untested": False, "channels": "", "aggregation": "auto",
     "verbose": verbose == "true", "debug_capture": False,
-}, sys.stdout, indent=2)
+}
+# The add-on's other options (tx_amsdu, tx_rate, channels...), set by hand
+# for this PC: /data/options.local.json in the HowlDrop distro.
+try:
+    with open("/data/options.local.json") as f:
+        options.update(json.load(f))
+except (OSError, ValueError):
+    pass
+json.dump(options, sys.stdout, indent=2)
 PY
 
 # No Bluetooth in WSL: howldrop.exe sends the AirDrop wake from Windows'.

@@ -27,6 +27,7 @@ pub struct Options {
     /// The regulatory domain; else US where the kernel's is the world's.
     pub country: Option<String>,
     pub tx_rate: Option<String>,
+    pub tx_amsdu: bool,
     pub run_dir: String,
 }
 
@@ -59,7 +60,7 @@ impl Radio {
             aggregation: opts.aggregation,
             tx_rate: opts.tx_rate.clone(),
             hostapd: None,
-            tx_amsdu: false,
+            tx_amsdu: opts.tx_amsdu,
         };
         let forced = config.country.is_some() && opts.country.is_none();
         let settings = config.settings(RunDir::new(&opts.run_dir))?;
