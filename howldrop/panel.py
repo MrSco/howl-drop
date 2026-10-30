@@ -274,7 +274,7 @@ def free_name(directory, name):
     return path
 
 
-TARGET_SUFFIX = '.howldrop-to'  # outbox.py: beside a file, the device it is for
+TARGET_SUFFIX = '.howldrop-to'  # howldrop-agent: beside a file, the device it is for
 
 
 def clean_target(name):
@@ -283,7 +283,7 @@ def clean_target(name):
 
 
 def nearby_status(outbox, nearby_file):
-    """For the page: the devices the latest scan heard (outbox.py)."""
+    """For the page: the devices the latest scan heard (howldrop-agent)."""
     empty = {'time': 0, 'scanning': False, 'devices': []}
     if not outbox or not nearby_file:
         return empty
@@ -299,7 +299,7 @@ def nearby_status(outbox, nearby_file):
 
 
 def send_status(outbox, status_file):
-    """For the page: whether sending is on, and the latest sends (outbox.py)."""
+    """For the page: whether sending is on, and the latest sends (howldrop-agent)."""
     if not outbox:
         return {'enabled': False, 'jobs': []}
     try:
@@ -421,7 +421,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.send_json({'deleted': deleted})
 
     def receive_upload(self, ctype):
-        """Send to iPhone: the body is a file for the outbox (outbox.py).
+        """Send to iPhone: the body is a file for the outbox (howldrop-agent).
         application/octet-stream only, for the same reason delete takes JSON
         only: no page elsewhere can send that through a signed-in user."""
         if not self.server.outbox:
@@ -451,7 +451,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     fh.write(chunk)
                     left -= len(chunk)
             final = free_name(self.server.outbox, name)
-            if to:  # before the file, so outbox.py never sends it to the default
+            if to:  # before the file, so the agent never sends it to the default
                 with open(final + TARGET_SUFFIX, 'w', encoding='utf-8') as fh:
                     fh.write(to)
             os.replace(temp, final)
@@ -464,7 +464,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.send_json({'name': os.path.basename(final)})
 
     def request_scan(self, ctype):
-        """Look for nearby devices: outbox.py scans when the request file
+        """Look for nearby devices: howldrop-agent scans when the request file
         appears. JSON only, as delete is."""
         if not self.server.outbox or not self.server.scan_request:
             return self.send_plain(404, 'send_to_iphone is off')
@@ -571,7 +571,7 @@ def serve(dest, port, history, thumbs, static, allow, hosts=(HASSIO_GATEWAY, '0.
           send_status_file=None, nearby=None, scan_request=None):
     """Listen on the first of hosts that can be bound; return the server.
     allow: the addresses and networks it answers (parse_allow). outbox: the
-    send folder when send_to_iphone is on, with outbox.py's status file."""
+    send folder when send_to_iphone is on, with howldrop-agent's status file."""
     last = None
     for host in hosts:
         try:
@@ -601,9 +601,9 @@ def main():
     ap.add_argument('--history', default='/data/drops.jsonl')
     ap.add_argument('--thumbs', default='/data/thumbs')
     ap.add_argument('--outbox', help='the send folder, when send_to_iphone is on')
-    ap.add_argument('--send-status', help="outbox.py's status file")
-    ap.add_argument('--nearby', help="outbox.py's latest scan")
-    ap.add_argument('--scan-request', help='the file that asks outbox.py for a scan')
+    ap.add_argument('--send-status', help="howldrop-agent's status file")
+    ap.add_argument('--nearby', help="howldrop-agent's latest scan")
+    ap.add_argument('--scan-request', help='the file that asks howldrop-agent for a scan')
     ap.add_argument('--static', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'panel'))
     a = ap.parse_args()
     allow = [s.strip() for s in os.environ.get('HOWLDROP_PANEL_ALLOW', SUPERVISOR).split(',') if s.strip()]

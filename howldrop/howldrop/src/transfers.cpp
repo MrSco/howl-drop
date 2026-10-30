@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 
 namespace howldrop {
 namespace {
@@ -37,6 +38,21 @@ bool same_file(const std::string& asked, const std::string& landed) {
 
 bool is_link(const std::string& name) { return name.rfind("http://", 0) == 0 || name.rfind("https://", 0) == 0; }
 
+// As ui::size_text, for the log as well as the cards.
+std::string size_text(double bytes) {
+    char buf[32];
+    if (bytes < 1000) {
+        std::snprintf(buf, sizeof buf, "%.0f bytes", bytes);
+    } else if (bytes < 1e6) {
+        std::snprintf(buf, sizeof buf, "%.0f KB", bytes / 1e3);
+    } else if (bytes < 1e9) {
+        std::snprintf(buf, sizeof buf, "%.1f MB", bytes / 1e6);
+    } else {
+        std::snprintf(buf, sizeof buf, "%.2f GB", bytes / 1e9);
+    }
+    return buf;
+}
+
 }  // namespace
 
 double Transfers::Transfer::fraction() const {
@@ -59,6 +75,16 @@ std::string Transfers::kind_of(const std::filesystem::path& path) {
         if (ext == e) return "video";
     }
     return "file";
+}
+
+std::string Transfers::took_text(const Transfer& t) {
+    const double secs = std::chrono::duration<double>(t.took).count();
+    if (secs <= 0) return {};
+    char time[32];
+    std::snprintf(time, sizeof time, "in %.1f s", secs);
+    if (!t.total) return time;
+    return size_text(static_cast<double>(t.total)) + " " + time + " (" +
+           size_text(static_cast<double>(t.total) / secs) + "/s)";
 }
 
 Transfers::Transfer* Transfers::get(const std::string& id) {
@@ -140,6 +166,7 @@ std::string Transfers::apply(const std::vector<std::string>& e, Clock::time_poin
         if (total) t->total = total;
         t->stage = Stage::Moving;
     } else if (what == "stored") {
+        if (t->stage == Stage::Moving) t->took = now - t->started;  // started: the first byte
         t->stage = Stage::Saving;
         if (t->names.empty()) t->names.assign(e.begin() + 2, e.end());
         t->count = std::max(t->count, e.size() - 2);
@@ -216,6 +243,7 @@ std::string Transfers::apply_stage(const std::string& name, const std::string& d
         if (!detail.empty()) t.detail = detail;
         // "accepted; uploading" says both: the upload is the news.
         if (detail.find("upload") != std::string::npos) {
+            if (t.stage != Stage::Moving) t.started = now;  // the phone accepted: took counts from here
             t.stage = Stage::Moving;
         } else if (detail.find("accept") != std::string::npos) {
             t.stage = Stage::Accepting;
@@ -242,6 +270,7 @@ std::string Transfers::sent(const std::string& name, bool ok, const std::string&
     match->updated = now;
     match->detail = detail;
     if (ok) {
+        if (match->stage == Stage::Moving) match->took = now - match->started;
         match->stage = Stage::Done;
     } else {
         match->stage = detail.find("declined") != std::string::npos ? Stage::Declined : Stage::Failed;

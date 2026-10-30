@@ -37,19 +37,22 @@ configuration:
     description: "The iPhone's name as AirDrop shows it, e.g. Rocco's iPhone (part of it will do). Only that phone gets what you send. Empty: the only device nearby, or the one called iPhone."
   interface:
     name: Wi-Fi interface
-    description: auto picks a supported card, never the one Home Assistant uses for its network unless its profile keeps the connection. Or name one, e.g. wlan1.
+    description: auto picks the best card Owly's driver table supports, never the one Home Assistant uses for its network unless its mode keeps the connection. Or name one, e.g. wlan1.
   allow_untested:
     name: Allow untested cards
-    description: Use a Wi-Fi card whose omdrop-owl profile is untested.
+    description: Use a Wi-Fi card that Owly's driver table lists as untested, or doesn't list.
   channels:
     name: Channels
-    description: Channels to try, in order, from 6, 36, 44 and 149. Empty picks for the card (5 GHz first where it can transmit there).
+    description: Channels to try, in order, from 6, 44 and 149. Empty picks for the card (5 GHz first where it can transmit there).
   aggregation:
     name: Aggregation
     description: Let the phone send in aggregated bursts, several times faster. auto turns it on for the MT7612U, where it's tested, and off for other cards; on and off force it. If transfers fail with it on, turn it off.
+  tx_rate:
+    name: Send rate
+    description: "The rate files go to the iPhone at: 6 to 54 (Mbit/s), or mcs0 to mcs15. Empty: 24. On the MT7612U, 36 sent a video in 16 s instead of 25; 48 and mcs7 lost frames."
   verbose:
     name: Verbose log
     description: Log the radio in detail, for troubleshooting.
   debug_capture:
     name: Debug capture
-    description: Write packet captures and senders' certificates to the save folder's debug/. Turn off and delete it when done; the certificates name their owners' Apple accounts.
+    description: Write packet captures of the radio and the AirDrop connections to the save folder's debug/. Turn off and delete it when done.

@@ -1,0 +1,190 @@
+# What Owly knows about each Wi-Fi driver that it can't probe for. One table
+# per kernel driver, named as in /sys/class/net/<iface>/device/driver, and one
+# per device where a device behaves unlike the rest of its driver's, named by
+# its PCI or USB ID. A card listed under neither gets the "*" table, and runs
+# only when allowed to run untested. /etc/owly/drivers.toml, in the same
+# format, is read over this file: try settings for a new card there.
+#
+# What the probe finds from nl80211 isn't recorded here: whether the card has
+# ad-hoc mode (else exclusive mode runs a hidden AP), an active monitor, the
+# interfaces it allows beside its station, and the channels the regulatory
+# domain lets it transmit on.
+#
+#   status       "tested": works out of the box. "untested": runs only when
+#                allowed to (allow_untested in /etc/owly/radio.toml).
+#                "broken": known not to work (see issues); runs only when
+#                allowed to, for retesting
+#   mode         "shared": AWDL shares the AP's channel and Wi-Fi stays
+#                connected. "exclusive": Wi-Fi is down for the session, with
+#                an ad-hoc cell on AWDL's BSSID in its place, or a hidden AP
+#                on a card with no ad-hoc mode. "active-monitor": Wi-Fi is
+#                down, with an active monitor in its place, for cards with
+#                neither
+#   reconnect_after_monitor
+#                force a reconnect after deleting the monitor interface, for
+#                drivers whose station stops receiving after that (default
+#                false)
+#   mt76_pm_off  turn mt76 runtime power management off for the session
+#                (default false)
+#   channels     exclusive and active-monitor modes: the social channels to
+#                try, in order, of those the card may transmit on (default
+#                [44, 149, 6]: an iPhone gives channel 6 a slot or two in
+#                sixteen, and 44 or 149 several). Shared mode uses the AP's
+#   rx_ampdu     accept the phone's Block Ack session (AWDL-15), where the
+#                hardware answers its A-MPDUs itself (default false)
+#   tx_noack     send unicast once, without waiting for the hardware's ACK
+#                (default: true in exclusive and active-monitor modes, as
+#                legacy did on every fixed radio, false in shared mode). A
+#                peer visits a fixed radio's channel for a slot or two, and a
+#                frame retried past the visit holds up every frame behind it;
+#                Intel and MT76x2U TX status also stalls after channel changes
+#   supports_tx_ldpc
+#                the driver can LDPC-encode injected frames, for owly-awdl's
+#                rate selection (not used yet)
+#                (default false)
+#   issues       known problems, one sentence each, which the probe reports
+#   notes        the hardware, and what was observed
+
+[drivers.mt7925e]
+status = "tested"
+mode = "shared"
+reconnect_after_monitor = true
+mt76_pm_off = true
+issues = [
+    "This card sends more slowly than it receives (about 490 kB/s against 1.3 MB/s), since its injected frames leave at most one every 2.5 ms or so.",
+    "This card's Wi-Fi stops receiving after a monitor interface is removed (an mt76 firmware bug), so Owly reconnects it at the end of every session.",
+]
+notes = "MediaTek MT7925 (Framework 13, 14c3:0717). Injects while associated, sending from the station's MAC; the station ACKs the phone's unicast. Without a reconnect, the station stops receiving 3-165 s after a monitor interface is deleted."
+
+[devices."14c3:7927"]
+status = "broken"
+mode = "shared"
+reconnect_after_monitor = true
+mt76_pm_off = true
+issues = [
+    "The MT7927 starts in shared mode but its monitor interface never hears the phone. As an active monitor it's heard and can send, but the phone's uploads arrive at about 5 kB/s and time out (https://github.com/t4t5/owly/issues/44). Exclusive mode through a hidden AP is untested.",
+]
+notes = "MediaTek MT7927 (TP-Link Archer TBE550E, 14c3:7927, kernel 7.2.9), on the MT7925's driver."
+
+[drivers.mt7921e]
+status = "untested"
+mode = "active-monitor"
+channels = [6]
+issues = [
+    "This card sends injected unicast at 1 Mbit/s whatever rate is asked for, and not at all on 5 GHz, so discovery and the handshake often stall. Close and reopen the share sheet to retry.",
+]
+notes = "MediaTek MT7921 (14c3:7961, kernel 7.2.9) and MT7922 (14c3:0616, kernels 6.18 and 7.2.5). No ad-hoc mode. Both ways with an iPhone on channel 6, but not reliably: a full frame at 1 Mbit/s CCK fills most of the one slot in sixteen the phone spends on channel 6. Shared mode fails (https://github.com/t4t5/owly/issues/14). On 44, none of 132 injected unicast frames reached the air; on 6, 115 of 121 did."
+
+[drivers.mt76x2u]
+status = "tested"
+mode = "active-monitor"
+channels = [149, 44, 6]
+rx_ampdu = true
+supports_tx_ldpc = true
+notes = "MediaTek MT7612U USB (0e8d:7612), kernels 7.2.9 and 6.12. Both ways with an iPhone; sending uses BLE wake-up. Unicast reaches the air on 5 GHz: on 149 a 3 MB photo from an iPhone in about 5 s, against 27 s for a 1.1 MB one on 6. Its active monitor answers A-MPDUs with a Block Ack itself: with legacy accepting the Block Ack session a 30 MB upload took 14 s instead of 47 s on 149. Channel changes can cancel the driver's TX-status cleanup, stalling injection that waits for ACKs."
+
+[drivers.iwlwifi]
+status = "tested"
+mode = "exclusive"
+channels = [6]
+issues = [
+    "Intel cards run on channel 6: no phone has used their ad-hoc cell on 5 GHz.",
+]
+notes = "Intel AX200 (kernel 6.19.8), AX201 (kernels 6.8 and 7.2.9), AX211 (kernels 7.0 and 7.2.3), BE on Panther Lake (kernel 7.2), BE200 (kernel 7.2.5), 9560 (kernel 7.2.8) and 9260 (kernel 7.2.12). Associated, the firmware passes up no AWDL frames. With the station down the firmware forgets its country and is back on the world's regulatory domain, where all of 5 GHz is No IR: the AX201 gets EINVAL on every 5 GHz cell, the AX200 on 149. A scan from the cell teaches the AX201 its country again (GB), and it then starts a cell on 149 (44 stays No IR), but an iPhone never engaged there, whether its Wi-Fi was on 44 or off (AWDL master channel 149, 149 in one slot of 16), and found it on 6 within 3 s both times. An Arrow Lake AX211 (8086:7740, kernel 7.0) starts one on 149 that drops. A 2.4 MB photo from an iPhone in 17 s, to it in 10.5 s. Some AX211s refuse an ad-hoc interface beside the station, so the station becomes the cell."
+
+[devices."8086:095a"]
+status = "broken"
+mode = "exclusive"
+channels = [6]
+issues = [
+    "This Intel Wireless-AC 7265's firmware (7265D-29) asserts on every ad-hoc start (https://github.com/t4t5/owly/issues/16).",
+]
+notes = "Intel Dual Band Wireless-AC 7265 (Zenbook UX305CA, 8086:095a, kernel 7.2.5)."
+
+[devices."8086:24f3"]
+status = "broken"
+mode = "exclusive"
+channels = [6]
+issues = [
+    "This Intel Wireless-AC 8260's firmware (8000C-36) resets on channel 44, and no transfer completed on channel 6.",
+]
+notes = "Intel Wireless-AC 8260 (NUC6i7KYK, 8086:24f3, kernel 6.12)."
+
+[devices."8086:24fd"]
+status = "broken"
+mode = "exclusive"
+channels = [6]
+issues = [
+    "This Intel Wireless-AC 8265's firmware (8265-36) stalls a transmit queue and resets about 10 s after the ad-hoc cell starts on channel 6.",
+]
+notes = "Intel Dual Band Wireless-AC 8265 (EliteBook x360 1030 G3, 8086:24fd, kernel 6.12). The reset repeats until the driver is reloaded. With a hidden AP forced in the cell's place, it runs without resetting but hears no AWDL action frames from the phone."
+
+[drivers.rtw88_8822be]
+status = "tested"
+mode = "exclusive"
+issues = [
+    "This card starts no ad-hoc cell on 5 GHz, so it runs on channel 6: a 6.4 MB photo from an iPhone took 110 s.",
+]
+notes = "Realtek RTL8822BE (Crosshair VII Hero, 10ec:b822, kernel 7.2.9). Shared mode is untried. The ad-hoc interface sits beside the station. EINVAL on 44 and 149, neither \"No IR\". The kernel logs \"failed to get tx report from firmware\" through the session. The station is back about 6 s after teardown and stayed up for the five minutes watched, without a forced reconnect."
+
+[drivers.rtw88_8821ce]
+status = "broken"
+mode = "shared"
+reconnect_after_monitor = true
+issues = [
+    "On the RTL8821CE, AWDL syncs with the phone in shared mode but no transfer completes, and Wi-Fi is often lost afterwards; in exclusive mode nothing is received (https://github.com/t4t5/owly/issues/60).",
+]
+notes = "Realtek RTL8821CE (HP laptop, 10ec:c821, kernel 7.2.5)."
+
+[drivers.rtw89_8852ae]
+status = "untested"
+mode = "shared"
+reconnect_after_monitor = true
+notes = "Realtek RTL8852AE (ThinkPad P14s Gen 2a, 10ec:8852, kernel 7.0). Both directions on channel 6, in separate runs. After teardown, 280/300 pings with an 8 s gap despite the reconnect, on an AP that was already dropping pings beforehand. Whether reconnect is needed is untested."
+
+[drivers.rtw89_8852be]
+status = "untested"
+mode = "shared"
+notes = "Realtek RTL8852BE (ASUS PRIME B550M-A WIFI II, 10ec:b852, kernel 7.2.9). Injects while associated; both directions on channel 44. Wi-Fi stayed up during the session and for the five minutes watched after teardown, without a forced reconnect."
+
+[drivers.rtw89_8852ce]
+status = "untested"
+mode = "shared"
+reconnect_after_monitor = true
+notes = "Realtek RTL8852CE (Legion Slim 5 16AHP9, 10ec:c852, kernel 7.2.5; ThinkBook 16 G7 IML, kernel 7.0). Works in shared mode. Exclusive mode works too, both directions, on the ThinkBook. Whether reconnect is needed is untested."
+
+[drivers.rtw89_8852bu]
+status = "untested"
+mode = "exclusive"
+notes = "Realtek RTL8852BU (USB, 35bc:0108, kernel 7.2.9), as a second card beside a connected built-in one. No ad-hoc mode: runs beside a hidden AP. Both directions on channel 149; nothing heard on 44, which that iPhone never used. Ships in USB storage mode (0bda:1a2b) until usb_modeswitch."
+
+[drivers.rtl8xxxu]
+status = "untested"
+mode = "exclusive"
+channels = [6]
+issues = [
+    "This card has only 2.4 GHz, so it runs on channel 6, where an iPhone spends one slot in sixteen: a 2.6 MB photo takes about 75 s.",
+]
+notes = "Realtek RTL8188FTV (USB, 0bda:f179, kernel 6.14). No ad-hoc mode: runs a hidden AP. A 2.6 MB photo from an iPhone on channel 6 at 32 to 35 kB/s. Sending to the phone is untested: that machine had no Bluetooth for the BLE wake-up."
+
+[drivers.ath11k_pci]
+status = "broken"
+mode = "shared"
+issues = [
+    "This Qualcomm card can't create the monitor interface every mode needs (https://github.com/t4t5/owly/issues/45).",
+]
+notes = "Qualcomm WCN6855 (QCNFA765, ThinkPad, 17cb:1103, kernel 7.2.9)."
+
+[drivers.ath12k_wifi7_pci]
+status = "broken"
+mode = "shared"
+issues = [
+    "This Qualcomm card hears nothing from the phone in shared mode (https://github.com/t4t5/owly/issues/40). Exclusive mode is untested.",
+]
+notes = "Qualcomm WCN7850 (FastConnect 7800, 17cb:1107, Fedora 44, kernel 7.2.9)."
+
+[drivers."*"]
+status = "untested"
+mode = "shared"
+reconnect_after_monitor = true
+notes = "Any other card. Needs monitor-mode injection while associated, and an AP on channel 6, 44 or 149."

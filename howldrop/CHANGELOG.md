@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.19.0
+
+- **Not yet tried on Home Assistant OS.** This release was tested as howldrop.exe's Linux part (WSL, an MT7612U, an iPhone), which runs the same image; the add-on starts it differently (the host's Bluetooth, its own options). If it doesn't come up for you, 0.18.0 is the version to go back to, and an issue with the log helps.
+- **A new radio stack.** OWL and the Python receiver and sender are gone: HowlDrop runs on [Owly](https://github.com/t4t5/owly) 0.4 (Rust), the rewrite of omdrop-owl, in one process, `howldrop-agent`. The card is chosen from Owly's driver table (`crates/owly-radio/drivers.toml`) instead of `owl-profiles`. Options keep their names; `channels` takes 6, 44 and 149 (not 36).
+- On 5 GHz the card listens 40 MHz wide, as the iPhone sends: with an MT7612U a 14.7 MB video arrives in about 3 s.
+- Contacts work again: Apple's Application Integration CA expired on 21 Oct 2026, and the check refused iPhones whose certificates it issued. The log says why a sender isn't taken for a contact.
+- Sending to an iPhone: a picture goes with a preview, which the iPhone shows once it's accepted; when the phone is there but its AirDrop refuses (Everyone for 10 Minutes ran out, or it has just finished a transfer), the log and the PC say so, and the send keeps trying. New option `tx_rate`, the rate files go to the phone at.
+- The log gives each transfer's size, time and speed, and the radio's counters every 10 s.
+- `debug_capture` no longer saves senders' certificates.
+- For howldrop.exe's Linux part only: the RTL8852BU's firmware, beside the MT7612U's (one linux-firmware commit, checked by hash).
+
 ## 0.18.0
 
 - Look for devices asks again, up to three times, when nothing answers: a phone that has just finished a transfer can be out of reach for a few seconds.

@@ -1,0 +1,73 @@
+[package]
+name = "owly-airdrop"
+description = "AirDrop: a sans-IO protocol core, and a driver for it on tokio and rustls."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["airdrop", "awdl", "apple", "file-transfer", "sans-io"]
+categories = ["network-programming"]
+
+[features]
+default = ["tokio"]
+# The driver: TLS, sockets and sandboxed extraction. Without it, only the
+# sans-IO core is built.
+tokio = [
+    "dep:tokio",
+    "dep:rustls",
+    "dep:tokio-rustls",
+    "dep:rcgen",
+    "dep:p256",
+    "dep:getrandom",
+    "dep:tempfile",
+    "dep:tracing",
+    "dep:nix",
+]
+# An mDNS/DNS-SD responder and browser on one interface, for hosts without a
+# system responder.
+mdns = ["tokio", "dep:socket2"]
+
+[dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+
+getrandom = { version = "0.3", optional = true }
+# Pure Rust, so the driver builds for any target. The application chooses
+# rustls's crypto provider.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pem", "pkcs8", "std"], optional = true }
+rcgen = { version = "0.14", default-features = false, optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"], optional = true }
+socket2 = { version = "0.6", optional = true }
+tempfile = { version = "3", optional = true }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time", "fs"], optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"], optional = true }
+tracing = { version = "0.1", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["fs"], optional = true }
+
+[dev-dependencies]
+base64 = "0.22"
+owly-awdl = { path = "../owly-awdl" }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+
+# docs/conformance.md's tests on the veth harness.
+[[test]]
+name = "loopback"
+required-features = ["mdns"]
+
+[[test]]
+name = "vectors"
+required-features = ["tokio"]
+
+[lints]
+workspace = true
+
+# mdns too.
+[package.metadata.docs.rs]
+all-features = true

@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cwchar>
 #include <fstream>
+#include <thread>
 
 // A release build names the Linux part it goes with (CMake: HOWLDROP_LINUX_*,
 // set by .github/workflows/release-windows.yml). A local build has none and
@@ -104,6 +105,14 @@ fs::path find_usbipd() {
 std::vector<std::wstring> in_distro(const std::vector<std::wstring>& command) {
     std::vector<std::wstring> args = {L"-d", wide(wsl::kDistro), L"-u", L"root", L"-e"};
     args.insert(args.end(), command.begin(), command.end());
+    return args;
+}
+
+// wsl-run.sh's arguments, with the stick's driver and chip, and --untested
+// for one not tested with an iPhone.
+std::vector<std::wstring> stack_args(const wsl::UsbDevice& stick, std::vector<std::wstring> args) {
+    args.insert(args.end(), {L"--driver", wide(stick.kind->driver), L"--chip", wide(stick.kind->chip)});
+    if (!stick.kind->tested) args.push_back(L"--untested");
     return args;
 }
 
@@ -390,17 +399,21 @@ void WslRadio::state(const std::string& text, RadioLevel level) {
 void WslRadio::run() {
     {
         std::lock_guard<std::mutex> hold(log_mu_);
+        // The last run's log stays beside it, so a start that failed can
+        // still be read after the one that worked.
+        std::error_code ec;
+        fs::rename(config_.home / L"radio.log", config_.home / L"radio.log.1", ec);
         std::ofstream(config_.home / L"radio.log", std::ios::trunc | std::ios::binary)
             << "HowlDrop " << kVersion << ": AirDrop on this PC\n";
     }
     std::string error;
-    std::string busid;
-    if (!prepare(error) || !find_stick(busid, error)) {
+    wsl::UsbDevice stick;
+    if (!prepare(error) || !find_stick(stick, error)) {
         state(stopping() ? "Off" : error, stopping() ? RadioLevel::Off : RadioLevel::Problem);
         return;
     }
-    run_stack(busid);
-    give_back(busid);
+    run_stack(stick);
+    give_back(stick.busid);
     up_.store(false);
     if (config_.on_up) config_.on_up(false);
     std::string out;
@@ -586,19 +599,23 @@ bool WslRadio::download_linux(const fs::path& tar, std::string& error) {
     return true;
 }
 
-bool WslRadio::find_stick(std::string& busid, std::string& error) {
+bool WslRadio::find_stick(wsl::UsbDevice& stick, std::string& error) {
     bool asked = false;
     while (!stopping()) {
         std::string out;
         run_command(usbipd_, {L"list"}, out, 30000);
-        const auto stick = wsl::find_stick(wsl::parse_usbipd_list(out));
-        if (!stick) {
-            state("Plug in the MT7612U Wi-Fi stick", RadioLevel::Problem);
+        const auto found = wsl::find_stick(wsl::parse_usbipd_list(out));
+        if (!found) {
+            state("Plug in a USB Wi-Fi stick HowlDrop supports (an MT7612U is best)", RadioLevel::Problem);
             pause(3000);
             continue;
         }
-        busid = stick->busid;
-        if (stick->shared()) return true;
+        stick = *found;
+        const std::string& busid = stick.busid;
+        log(std::string("Wi-Fi stick: ") + stick.kind->chip + " (" + stick.id + ", " + stick.kind->driver + "), " +
+            (stick.kind->tested ? "tested" : "untested") + ", on USB " + busid);
+        stick_note_ = stick.kind->tested ? "" : std::string(", ") + stick.kind->chip + ", untested";
+        if (stick.shared()) return true;
         if (asked) {
             error = "The stick isn't shared with WSL (usbipd bind was cancelled). Turn this on again to retry.";
             return false;
@@ -612,7 +629,8 @@ bool WslRadio::find_stick(std::string& busid, std::string& error) {
     return false;
 }
 
-void WslRadio::run_stack(const std::string& busid) {
+void WslRadio::run_stack(const wsl::UsbDevice& stick) {
+    const std::string& busid = stick.busid;
     const auto save = wsl::wsl_path(path_to_utf8(config_.inbox));
     const auto outbox = wsl::wsl_path(path_to_utf8(outbox_));
     const auto scan = wsl::wsl_path(path_to_utf8(scan_request_));
@@ -625,9 +643,10 @@ void WslRadio::run_stack(const std::string& busid) {
     auto stack = std::make_shared<ChildProcess>();
     std::string error;
     if (!stack->start(wsl_exe(),
-                      in_distro({L"/wsl-run.sh", L"--name", wide(config_.name), L"--save", wide(*save), L"--outbox",
-                                 wide(*outbox), L"--scan-request", wide(*scan), L"--receive", wide(config_.receive),
-                                 L"--senders", wide(config_.senders), L"--ask-dir", wide(asks.value_or(""))}),
+                      in_distro(stack_args(stick, {L"/wsl-run.sh", L"--name", wide(config_.name), L"--save",
+                                               wide(*save), L"--outbox", wide(*outbox), L"--scan-request",
+                                               wide(*scan), L"--receive", wide(config_.receive), L"--senders",
+                                               wide(config_.senders), L"--ask-dir", wide(asks.value_or(""))})),
                       error)) {
         state("Couldn't start the Linux part: " + error, RadioLevel::Problem);
         return;
@@ -685,7 +704,8 @@ void WslRadio::handle_line(const std::string& line, const std::string& busid) {
         }
     } else if (what == "up") {
         up_.store(true);
-        state("On the share sheet as " + config_.name, RadioLevel::Up);
+        state("On the share sheet as " + config_.name + (stick_note_.empty() ? "" : " (" + stick_note_.substr(2) + ")"),
+              RadioLevel::Up);
         if (config_.on_up) config_.on_up(true);
     } else if (what == "received") {
         const std::string rel = field(1);
@@ -718,11 +738,20 @@ void WslRadio::handle_line(const std::string& line, const std::string& busid) {
 // Once, through the HowlDrop distro (it has modprobe for vhci-hcd). Not
 // --auto-attach: its re-attach loop runs inside WSL and outlives usbipd.exe,
 // so it would take the stick back after give_back detached it.
+// Tried again for a minute: right after a stop detached the stick (a restart
+// for new settings), Windows may not have it back yet, and the one try left
+// wsl-run.sh waiting until it gave up.
 void WslRadio::attach(const std::string& busid) {
-    std::string out;
-    const int code =
-        run_command(usbipd_, {L"attach", L"--wsl", wide(wsl::kDistro), L"--busid", wide(busid)}, out, 60000);
-    log("usbipd attach: exit " + std::to_string(code) + ": " + trim(out));
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    for (int attempt = 1;; ++attempt) {
+        std::string out;
+        const int code =
+            run_command(usbipd_, {L"attach", L"--wsl", wide(wsl::kDistro), L"--busid", wide(busid)}, out, 60000);
+        log("usbipd attach: exit " + std::to_string(code) + ": " + trim(out));
+        if (code == 0 || stop_.load() || std::chrono::steady_clock::now() >= until) return;
+        log("usbipd attach: trying again (" + std::to_string(attempt) + ")");
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    }
 }
 
 void WslRadio::give_back(const std::string& busid) {

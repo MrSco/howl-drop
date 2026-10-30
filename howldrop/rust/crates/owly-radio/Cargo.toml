@@ -1,0 +1,30 @@
+[package]
+name = "owly-radio"
+description = "The radio on Linux: the Backend trait and its injection backend, capability probing and quirks, owly-awdl over nl80211."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["awdl", "airdrop", "wifi", "nl80211", "linux"]
+categories = ["network-programming", "os::linux-apis", "hardware-support"]
+
+[dependencies]
+nix = { version = "0.31", default-features = false, features = ["fs", "net", "process", "signal", "socket", "time"] }
+owly-awdl = { version = "0.4.1", path = "../owly-awdl", features = ["driver"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
+toml = "0.9"
+tracing = "0.1"
+
+[dev-dependencies]
+nix = { version = "0.31", default-features = false, features = ["user"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

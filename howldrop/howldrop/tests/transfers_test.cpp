@@ -55,6 +55,9 @@ int main() {
         x = t.find("a1");
         expect(x->stage == Stage::Done && x->saved.size() == 2 && x->kind == "image", "both in: done");
         expect(t.all().size() == 1, "no stray transfers");
+        // From the first byte (2.1 s) to stored (7 s).
+        expect(Transfers::took_text(*x) == "31.5 MB in 4.9 s (6.4 MB/s)",
+               "how long it took: " + Transfers::took_text(*x));
     }
     {
         // Declined, and an ask nobody answers.

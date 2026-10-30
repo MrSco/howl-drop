@@ -47,6 +47,9 @@ public:
         Clock::time_point started{};
         Clock::time_point updated{};
         Clock::time_point deadline{};      // asking: when no answer means Decline
+        // How long the bytes took: in, the first to stored; out, the phone's
+        // Accept to sent. Zero when unknown.
+        Clock::duration took{};
 
         bool finished() const { return stage == Stage::Done || stage == Stage::Declined || stage == Stage::Failed; }
         // 0..1, or -1 when the size isn't known (an indeterminate bar)
@@ -76,6 +79,9 @@ public:
     void forget(const std::string& id);
 
     static std::string kind_of(const std::filesystem::path& path);
+    // "14.7 MB in 6.3 s (2.3 MB/s)", or "in 6.3 s" without a size; empty
+    // when the time isn't known.
+    static std::string took_text(const Transfer& t);
 
 private:
     Transfer* get(const std::string& id);

@@ -1,0 +1,33 @@
+[package]
+name = "howldrop-agent"
+description = "HowlDrop's Linux side: the radio, the AirDrop receiver and sender, as the Home Assistant add-on and the Windows app's WSL part run them."
+# HowlDrop's version, not Owly's: --version says which release this is.
+version = "0.19.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository = "https://github.com/MrSco/howl-drop"
+publish = false
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+getrandom = "0.3"
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+owly-airdrop = { path = "../owly-airdrop", features = ["mdns"] }
+owly-awdl = { path = "../owly-awdl" }
+owly-radio = { path = "../owly-radio" }
+# The Apple ID validation record's payload, which may be an XML plist;
+# owly-airdrop's reader takes only bplist00.
+plist = { version = "1", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[lints]
+workspace = true
