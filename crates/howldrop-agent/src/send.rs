@@ -202,16 +202,17 @@ async fn send_one(
     ));
 }
 
-/// The preview the iPhone shows while it asks and receives: a picture's
-/// 240-pixel JPEG, made with Pillow as 0.18.0's sender made it. None for
-/// what Pillow can't open (videos, documents, HEIC) or past a few seconds.
+/// The preview the iPhone shows while it asks and receives (FileIcon): a
+/// picture as JPEG 2000, at most 540 pixels on the long side, made with
+/// Pillow. None for what Pillow can't open (videos, documents, HEIC) or
+/// past a few seconds.
 async fn file_icon(path: &Path) -> Option<Vec<u8>> {
     const SCRIPT: &str = "import io, sys\n\
         from PIL import Image\n\
         im = Image.open(sys.argv[1])\n\
-        im.thumbnail((240, 240))\n\
+        im.thumbnail((540, 540))\n\
         out = io.BytesIO()\n\
-        im.convert('RGB').save(out, 'JPEG', quality=80)\n\
+        im.convert('RGB').save(out, 'JPEG2000', quality_mode='rates', quality_layers=[20])\n\
         sys.stdout.buffer.write(out.getvalue())\n";
     let run = tokio::process::Command::new("python3")
         .args(["-I", "-c", SCRIPT])
@@ -236,6 +237,9 @@ async fn try_send(
     progress: &impl Fn(&str),
 ) -> (bool, String, Option<Duration>) {
     let icon = file_icon(path).await;
+    if let Some(icon) = &icon {
+        say(format!("Send: with a preview ({} bytes)", icon.len()));
+    }
     let deadline = Instant::now() + window;
     let mut waited = false;
     while Instant::now() < deadline {

@@ -193,6 +193,7 @@ AGENT_ARGS=(--name "$PC_NAME" --staging "$STAGING" --identity /data/owly
 [ -z "${HOWLDROP_ASK_DIR:-}" ] || AGENT_ARGS+=(--ask-dir "$HOWLDROP_ASK_DIR")
 is_true "$(option allow_untested)" && AGENT_ARGS+=(--allow-untested)
 is_true "$(option tx_amsdu)" && AGENT_ARGS+=(--tx-amsdu)
+[ -z "$(option tx_rate)" ] || AGENT_ARGS+=(--tx-rate "$(option tx_rate)")
 is_true "$(option verbose)" && AGENT_ARGS+=(--verbose)
 [ "${HOWLDROP_EVENTS:-}" != stdout ] || AGENT_ARGS+=(--events)
 if [ "$SEND" = true ]; then
