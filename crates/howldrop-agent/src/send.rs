@@ -244,20 +244,33 @@ async fn try_send(
         say(format!("Send: with a preview ({} bytes)", icon.len()));
     }
     let deadline = Instant::now() + window;
-    let mut waited = false;
+    // What the PC was last told about the wait: whether the phone refused.
+    let mut waited: Option<bool> = None;
     while Instant::now() < deadline {
         let target = match find(air, sender, to, deadline).await {
             Found::One(t) => t,
             Found::Many(why) => return (false, why, None),
-            Found::None => {
-                if !waited {
-                    waited = true;
-                    let say_ = match to {
-                        Some(t) => {
-                            format!("waiting for {t}: set its AirDrop to Everyone for 10 Minutes")
+            found @ (Found::None | Found::Shut) => {
+                let shut = matches!(found, Found::Shut);
+                if waited != Some(shut) {
+                    waited = Some(shut);
+                    let who = to.unwrap_or("the iPhone");
+                    // Its port refused us: it's right here with AirDrop's
+                    // server shut. Contacts Only (Everyone for 10 Minutes ran
+                    // out) keeps it shut; for a while after a transfer an
+                    // iPhone opens it only now and then, and the knocks go on.
+                    let say_ = if shut {
+                        format!(
+                            "{who} is here but not taking files yet: is its AirDrop still on Everyone for 10 Minutes?"
+                        )
+                    } else {
+                        match to {
+                            Some(t) => format!(
+                                "waiting for {t}: set its AirDrop to Everyone for 10 Minutes"
+                            ),
+                            None => "no iPhone heard yet: set AirDrop to Everyone for 10 Minutes"
+                                .to_string(),
                         }
-                        None => "no iPhone heard yet: set AirDrop to Everyone for 10 Minutes"
-                            .to_string(),
                     };
                     say(format!("Send: {say_}; waiting"));
                     progress(&say_);
@@ -340,20 +353,25 @@ enum Found {
     /// Which one is unclear, and why.
     Many(String),
     None,
+    /// None answered, and some refused: their AirDrop server is shut, for
+    /// now (after a transfer) or in Contacts Only.
+    Shut,
 }
 
 /// Sweeps the AWDL peers until the receiver is picked out, or for up to
 /// 30 s (or the deadline).
 async fn find(air: &Air, sender: &Sender, to: Option<&str>, deadline: Instant) -> Found {
     let until = deadline.min(Instant::now() + Duration::from_secs(30));
+    let mut shut = false;
     while Instant::now() < until {
-        let listed = sweep(air, sender).await;
+        let (listed, refused) = sweep(air, sender).await;
+        shut = refused;
         match pick(&listed, to) {
             Found::None => tokio::time::sleep(Duration::from_millis(500)).await,
             found => return found,
         }
     }
-    Found::None
+    if shut { Found::Shut } else { Found::None }
 }
 
 /// Which of the receivers found is the one to send to.
@@ -397,25 +415,31 @@ fn matches(name: &str, to: &str) -> bool {
     fold(name).contains(fold(to).trim())
 }
 
-/// `/Discover` at every AWDL peer the radio hears now, at once.
-async fn sweep(air: &Air, sender: &Sender) -> Vec<Listed> {
+/// `/Discover` at every AWDL peer the radio hears now, at once; and
+/// whether any refused the connection (its AirDrop server is off).
+async fn sweep(air: &Air, sender: &Sender) -> (Vec<Listed>, bool) {
     let peers: Vec<MacAddr> = air.peers.borrow().iter().map(|p| p.mac).collect();
     let knocks = peers.into_iter().map(|mac| async move {
         let addr = SocketAddrV6::new(mac.link_local(), AIRDROP_PORT, 0, air.index);
         match tokio::time::timeout(KNOCK, sender.discover(addr)).await {
-            Ok(Ok(Some(r))) => Some(Listed {
+            Ok(Ok(Some(r))) => Ok(Listed {
                 mac,
                 name: r.computer_name,
                 addr,
             }),
-            _ => None,
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => Err(true),
+            _ => Err(false),
         }
     });
-    futures_util::future::join_all(knocks)
-        .await
-        .into_iter()
-        .flatten()
-        .collect()
+    let mut refused = false;
+    let mut listed = Vec::new();
+    for knock in futures_util::future::join_all(knocks).await {
+        match knock {
+            Ok(l) => listed.push(l),
+            Err(r) => refused |= r,
+        }
+    }
+    (listed, refused)
 }
 
 /// Every device that says its name, over a few sweeps: only those
@@ -437,7 +461,7 @@ async fn scan(
         }
         let until = Instant::now() + SCAN_SWEEP;
         while Instant::now() < until {
-            for l in sweep(air, sender).await {
+            for l in sweep(air, sender).await.0 {
                 if !devices.iter().any(|(m, _)| *m == l.mac) {
                     devices.push((l.mac, l.name));
                 }
