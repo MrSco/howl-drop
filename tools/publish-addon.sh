@@ -5,7 +5,7 @@
 #   https://github.com/MrSco/howl-drop#ha-addon
 #
 # Supervisor builds an add-on from its own folder only, and on main the add-on
-# needs pins, patches/, userspace/ and howldrop/ from beside it; the branch
+# needs the Rust workspace (crates/) and howldrop/ from beside it; the branch
 # holds the assembled folder instead. CI runs this after the tests pass on
 # main. Each run adds one commit when the add-on changed, none otherwise.
 #

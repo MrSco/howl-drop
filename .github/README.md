@@ -25,8 +25,9 @@ might, and what can't (your PC's built-in Wi-Fi can't, on Windows).
 </p>
 
 ```
-iPhone ──AWDL (Wi-Fi) + BLE──▶ USB MT7612U ──usbipd──▶ WSL 2: OWL, AirDrop receiver and sender
-                                                          │  (a distro howldrop.exe downloads and runs)
+iPhone ──AWDL (Wi-Fi) + BLE──▶ USB MT7612U ──usbipd──▶ WSL 2: howldrop-agent (Owly: the radio,
+                                                          │  AWDL, AirDrop receiver and sender), in a
+                                                          │  distro howldrop.exe downloads and runs
                                                           ▼
                                 howldrop.exe: tray, notifications, Downloads\HowlDrop, clipboard,
                                 Send to iPhone, the Bluetooth wake from Windows' own Bluetooth
@@ -79,12 +80,12 @@ works the same way. Without Home Assistant OS, on Raspberry Pi OS (64-bit) or
 another Linux, the same image runs under Docker Compose:
 [docker/README.md](../docker/README.md).
 
-There the radio can be any Wi-Fi card
-[omdrop-owl](https://github.com/t4t5/omdrop-owl) has a profile for
-(`userspace/owl-profiles`), driven by the host's own kernel driver. A card
-that is not the machine's network uplink runs exclusive mode for as long as
-the add-on runs; one that is the uplink can run shared mode. The MT7612U is
-the tested choice: it follows the iPhone onto 5 GHz, where transfers run. See
+There the radio can be any Wi-Fi card [Owly](https://github.com/t4t5/owly)'s
+driver table supports (`crates/owly-radio/drivers.toml`), driven by the
+host's own kernel driver. A card that is not the machine's network uplink
+runs exclusive or active-monitor mode for as long as the add-on runs; one
+that is the uplink can run shared mode. The MT7612U is the tested choice: it
+follows the iPhone onto 5 GHz, where transfers run. See
 [Which Wi-Fi adapter?](../docs/adapters.md) and
 [docs/hardware-notes.md](../docs/hardware-notes.md).
 
@@ -96,22 +97,23 @@ version in `addon/config.yaml` before it updates the branch: bump the version
 to release a change. The amd64 image is also the Windows version's Linux part
 (`tools/wsl-distro`).
 
-This is a fork of [t4t5/omdrop-owl](https://github.com/t4t5/omdrop-owl), the
-Linux radio backend for [omdrop](https://github.com/netmojo-systems/omdrop-plugin),
-with the Windows app, the add-on and delivery added, and its distribution
-packaging removed (upstream has it).
+This is a fork of [t4t5/owly](https://github.com/t4t5/owly) (formerly
+omdrop-owl), AirDrop for Linux in Rust. Owly's crates are here as upstream
+has them, plus a few patches of ours; HowlDrop adds `howldrop-agent`, the
+Windows app, the add-on and delivery. [docs/fork.md](../docs/fork.md) lists
+the patches and how to take in a new Owly.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `howldrop/` | `howldrop.exe` (the Windows app: tray, AirDrop on this PC in WSL, the Bluetooth wake) and `howldrop-bridge` (the add-on's forwarder and relay), C++17, one CMake tree. |
-| `addon/` | The radio stack's image, as a Home Assistant add-on and as the Windows version's Linux part: `config.yaml`, `Dockerfile`, `run.sh`, `wsl-run.sh` (its start under howldrop.exe), and the Python it ships (`deliver.py`, `announce.py`, `outbox.py`, `senders.py`, `patch_receiver.py`), and the sidebar panel (`panel.py`, `panel/`). |
+| `crates/howldrop-agent/` | HowlDrop's Linux side in one Rust process: the radio, the AirDrop receiver (who can send, asks, progress) and sender (the outbox, previews), the events howldrop.exe reads. |
+| `crates/owly-*`, `owlyd`, `xtask`, `packaging/`, `docs/SPEC.md` … | [Owly](https://github.com/t4t5/owly), as upstream has it, with our patches ([docs/fork.md](../docs/fork.md)). |
+| `addon/` | The image, as a Home Assistant add-on and as the Windows version's Linux part: `config.yaml`, `Dockerfile` (builds the agent), `run.sh` (options to the agent), `wsl-run.sh` (its start under howldrop.exe), delivery (`deliver.py`, `announce.py`) and the sidebar panel (`panel.py`, `panel/`). |
 | `docker/` | The same image under Docker Compose, without Home Assistant OS: `compose.yaml`, default `options.json`, `install.sh`. |
-| `userspace/` | `omdrop-discoverable`, the radio helper, and `owl-profiles`, its per-driver table. |
-| `patches/`, `pins` | OWL's pinned upstream commit and the patches applied to it; `tools/build-owl.sh` applies them. |
-| `tools/` | `build-owl.sh` and `stage.sh` build the radio stack (inside the image); `stage-addon.sh` assembles the add-on folder; `wsl-distro/` makes the Windows version's WSL distro from the image; `build-howldrop.ps1` builds `howldrop.exe`; `make-icons.py` makes the icons from `art/howldrop.png`. |
-| `tests/` | The helper, the add-on's radio choice, delivery, sending and the allow list, against command doubles and local sockets: no radio needed. `howldrop/tests/` has the Windows app's. |
+| `tools/` | `stage-addon.sh` assembles the add-on folder; `wsl-distro/` makes the Windows version's WSL distro from the image; `build-howldrop.ps1` builds `howldrop.exe`; `sync-upstream.sh` takes in a new Owly; `make-icons.py` makes the icons from `art/howldrop.png`. |
+| `tests/test_*.py` | Delivery, the panel and the Docker install, against local files and sockets: no radio needed. (The rest of `tests/` is Owly's.) The Rust crates' tests are in each crate; `howldrop/tests/` has the Windows app's. |
 
 ## Develop
 
@@ -127,13 +129,16 @@ already imported (a release's). Releasing is in
 [howldrop/README.md](../howldrop/README.md): push the version to `main`, then a
 `windows-vVERSION` tag.
 
-The radio stack's tests:
+The Linux side's tests, on Linux (or WSL, from a copy on the Linux file
+system: cargo over `/mnt/c` is slow):
 
 ```bash
-tools/run-tests.sh
+cargo test --workspace
+python3 -m unittest discover -s tests
 ```
 
-(or `python -m unittest discover -s tests` without bats). To try an add-on
+The add-on image builds the agent itself (`addon/Dockerfile`), so Docker is
+all a build of the image needs. To try an add-on
 change on Home Assistant before pushing it, stage it into Home Assistant's
 `/addons` share and bump `version` in `addon/config.yaml` for every deploy, or
 Supervisor keeps the old image:
@@ -146,6 +151,6 @@ In Home Assistant: Add-on store, menu, Check for updates, update HowlDrop,
 start it, and read its log. That's the local add-on (`local_howldrop`);
 pushing to `main` publishes it to the `ha-addon` branch once CI passes.
 
-What runs in the image is Linux shell and Python, so `.gitattributes` keeps
-the checkout LF even with `core.autocrlf`; `stage-addon.sh` refuses a CRLF
-file.
+What runs in the image is Rust, Linux shell and Python, so `.gitattributes`
+keeps the checkout LF even with `core.autocrlf`; `stage-addon.sh` refuses a
+CRLF file.

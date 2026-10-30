@@ -18,7 +18,7 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck --severity=warning \
-            tools/stage-addon.sh tools/publish-addon.sh \
+            tools/stage-addon.sh tools/publish-addon.sh tools/sync-upstream.sh \
             addon/run.sh addon/wsl-run.sh docker/install.sh
       - name: Unit tests
         run: python3 -m unittest discover -s tests

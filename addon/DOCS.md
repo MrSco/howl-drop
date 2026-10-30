@@ -15,18 +15,19 @@ kernel already drives, and loads no driver or firmware of its own.
 
 ## What it needs
 
-- **A Wi-Fi card with an omdrop-owl profile** (`userspace/owl-profiles`),
+- **A Wi-Fi card that [Owly](https://github.com/t4t5/owly)'s driver table
+  supports** (`crates/owly-radio/drivers.toml`; [Which Wi-Fi
+  adapter?](https://github.com/MrSco/howl-drop/blob/main/docs/adapters.md)),
   within AirDrop range of the phone. The add-on picks one by itself:
   - a card that is **not** Home Assistant's network uplink runs **exclusive**
     or **active-monitor** mode for as long as the add-on runs (it leaves any
     Wi-Fi network). Best is a USB **MediaTek MT7612U** (Alfa AWUS036ACM): its
-    active monitor runs on 5 GHz, where the iPhone runs its transfers. The
-    other cards (Intel AX2xx, Realtek RTL8822BE in exclusive mode; MediaTek
-    MT7921/MT7922 in active-monitor mode, untested) hold channel 6 only and
-    are slow.
+    active monitor runs on 5 GHz, 40 MHz wide, where the iPhone runs its
+    transfers. Cards that run on channel 6 only (Intel's, in exclusive mode)
+    work but are slow.
   - a card that **is** the uplink, connected on channel 6, 44 or 149, can run
-    **shared mode** if its profile says so. That keeps the connection, and is
-    untried on Home Assistant OS.
+    **shared mode** where the table says so. That keeps the connection, and
+    is untried on Home Assistant OS.
 
   A USB card needs no passthrough: the host's driver makes the interface and
   the add-on shares the host network. The [hardware notes](https://github.com/MrSco/howl-drop/blob/main/docs/hardware-notes.md)
@@ -217,20 +218,17 @@ be your PC gets nothing. On the PC, right-click the HowlDrop icon, choose
 is signed with it, and a changed or replayed one is dropped.
 
 `interface` (default `auto`) names the Wi-Fi interface to use, e.g.
-`wlan1`. `auto` picks one: an exclusive-mode card that is not the uplink
-(active monitor first), else a shared-mode card that is. When none fits, the
-log lists every Wi-Fi interface and why it was passed over.
+`wlan1`. `auto` takes the card Owly's probe picks from the driver table.
+When none fits, the log says why (`Missing ...`).
 
-`allow_untested` (default off) lets the add-on use a card whose profile is
-untested, including the catch-all line for drivers the table does not name.
-If you try one, the omdrop-owl README says how to report it.
+`allow_untested` (default off) lets the add-on use a card that Owly's driver
+table lists as untested, or doesn't list. If you try one,
+[Which Wi-Fi adapter?](https://github.com/MrSco/howl-drop/blob/main/docs/adapters.md)
+says how to report it.
 
-`channels` (exclusive mode) is the channels to try, in order, separated by
-spaces: `6`, `36`, `44` or `149`. Empty or `auto`: a card that can run
-on 5 GHz starts on 149, where an iPhone runs its transfers, then 44, 36 and
-6; an IBSS card uses 6. If HowlDrop doesn't appear on your phone, `OWL: …
-peer … changed channel sequence to …` in the log (with `verbose` on) shows
-the channels your phone visits; set `channels` to one of them. Shared mode
+`channels` is the channels to try, in order, separated by spaces: `6`, `44`
+or `149`. Empty or `auto`: the card's own order from the driver table (149,
+44, 6 for the MT7612U: an iPhone runs its transfers on 149). Shared mode
 ignores this: it runs on its network's channel.
 
 `aggregation` (default `auto`) lets the phone send in aggregated bursts
@@ -238,19 +236,24 @@ ignores this: it runs on its network's channel.
 its speed. The iPhone asks for this (a Block Ack session); with this on, the
 add-on says yes and puts the frames back in order for TCP, as a normal Wi-Fi
 stack does. Each burst also has to be answered with a Block Ack by the card
-itself. On an MT7612U it is, and a 30 MB video took 14 s instead of 47 s, so
-`auto` turns it on there and off on cards it hasn't been tried on. `on` and
-`off` force it; if transfers fail or crawl with it on, turn it off.
+itself. The MT7612U's active monitor does, so `auto` follows the driver
+table, which turns it on there. `on` and `off` force it; if transfers fail
+or crawl with it on, turn it off.
 
-`verbose` (default off) logs the radio in detail: every request's headers,
-OWL's peer schedule changes, each TCP connection, frame counts on the
-monitor, mDNS and announcer lines, and a radio check every 30 s. Without it
-the log keeps the start-up, each transfer, deliveries and failures.
+`tx_rate` (default empty: 24 Mbit/s) is the rate files go to the iPhone at:
+`6` to `54` (Mbit/s), or `mcs0` to `mcs15`. Measured on an MT7612U in
+Windows' WSL, `36` sent a 14.7 MB video in 16 s instead of 25 s; `48` was
+erratic and `mcs7` made the phone cancel. Raise it only while transfers keep
+arriving whole.
+
+`verbose` (default off) logs the radio in detail: each `/Discover` that
+reaches the add-on, the radio's set-up, and a copy in `/tmp` of the preview
+a phone sends with its files. Without it the log keeps the start-up, each
+peer the radio syncs with, each transfer with how long it took, deliveries,
+failures, and the radio's counters every 10 s.
 
 `debug_capture` (default off) writes pcap files of the monitor interface and
-the AirDrop TCP to `save_folder/debug` (a ring: up to 160 MB and 80 MB), and
-each sender's TLS client certificate to `save_folder/debug/peercerts`. A
-certificate names its owner's Apple account: don't post it.
+the AirDrop TCP to `save_folder/debug` (a ring: up to 160 MB and 80 MB).
 Turn it off and delete the folder when done.
 
 ## Reading the log
@@ -259,17 +262,21 @@ The add-on's log is Home Assistant's: it goes to the system journal, which
 Home Assistant OS rotates. The radio's own logs inside the add-on are cut
 back to their last 2 MB once one passes 20 MB.
 
-- `Interface <name>: driver ...` and `Profile: ...` say which card runs and
-  how.
+- `Wi-Fi card: <name> (driver ..., <usb id>), tested, active-monitor mode`
+  says which card runs and how; `active-monitor mode on channel 149` where.
 - `Window is up on <name>` means the phone can see the name now.
-- `ask from <phone>` and `upload ...: stored <file>`, then
-  `Deliver: delivered <file>`, are a transfer.
-- `OWL: ... add peer <mac>` means OWL synced with a phone. None at all, with
+- `Receive: ask from <phone>` and `Receive: stored <file>: 14.7 MB in 3.2 s
+  (4.6 MB/s)`, then `Deliver: delivered <file>`, are a transfer.
+  `Receive: not a known contact: ...` says why a sender wasn't taken for one
+  of `senders`.
+- `add peer <mac>` means the radio synced with a phone. None at all, with
   the share sheet open, means the radio never heard it: check the card's
   channel and distance.
-- `upload ...: no closing chunk after 3 s, but the archive is complete;
-  storing it` is normal: the iPhone sometimes never ends its upload, and the
-  receiver answers once the archive is whole
-  ([hardware notes](../docs/hardware-notes.md)).
+- `Send: ... is here but not taking files yet` means the phone's AirDrop
+  refused: its Everyone for 10 Minutes ran out, or it has just finished a
+  transfer (an iPhone keeps AirDrop shut for up to a minute after one). The
+  send keeps trying.
+- `STATS ...` every 10 s are the radio's counters: frames sent and received,
+  and `timer late` (how far behind the radio's schedule runs).
 - `Forward:` lines are the forwarder: `no HowlDrop PC answering` (files stay
   put), `forwarding to <PC>`, `sent file <name>`.

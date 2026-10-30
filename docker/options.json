@@ -15,6 +15,7 @@
   "allow_untested": false,
   "channels": "",
   "aggregation": "auto",
+  "tx_rate": "",
   "verbose": false,
   "debug_capture": false
 }

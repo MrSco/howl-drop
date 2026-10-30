@@ -3,11 +3,12 @@
 - **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed. Needs WSL 2 (`wsl --install`) and usbipd-win, which HowlDrop offers to install. The first time, it downloads `howldrop-linux.tar.gz` below (the radio, in a WSL distro of its own; checked against the SHA-256 built into the exe).
 - **Through Home Assistant**: the HowlDrop add-on forwards what arrives there.
 
-**New in 0.18.0**
-- **The HowlDrop window**: click the tray icon. Drop files on it (or click to choose), pick any nearby iPhone or a device from Look for devices, and see Recent transfers with thumbnails. Its settings hold everything the menu has, plus your contacts.
-- **Transfer cards** above the tray, after [omdrop-windows](https://github.com/ZyphrZero/omdrop-windows)' look: an incoming AirDrop asks first, then shows its progress (size and speed), then a thumbnail with Open and Show in folder; sending shows each stage. While the window is open it shows all this itself, and nothing pops up.
-- **Who can send to this PC**: everyone without asking, everyone but ask me (your contacts go straight through), or contacts only.
-- Look for devices tries again when nothing answers at first.
+**New in 0.19.0**
+- **Faster both ways.** The Linux part is rebuilt on [Owly](https://github.com/t4t5/owly), and the stick now listens 40 MHz wide: a 14.7 MB video from the iPhone arrives in about 3 s. Sending to the iPhone runs at 36 Mbit/s instead of 24: the same video goes in about 16 s instead of 25.
+- **Contacts work again**: Apple's certificate authority behind many iPhones' AirDrop identities expired on 21 Oct 2026, and HowlDrop had been asking about (or turning away) your own contacts since.
+- A picture you send shows its **preview** on the iPhone once accepted.
+- When the iPhone is nearby but its AirDrop isn't taking files (Everyone for 10 Minutes ran out, or it has just finished a transfer), the card **says so** instead of just waiting; the send keeps trying.
+- Each finished transfer shows **how long it took** (and the log keeps it). The version is in the tray menu and the window's settings, and HowlDrop is in the **Start menu**, so it's easy to start again after Quit. WSL no longer adds a Start menu entry of its own for HowlDrop's Linux part.
 
 Either way: files in `Downloads\HowlDrop` (deleted after 30 days unless you turn that off), text on the clipboard, links (or photos and documents, if you choose) opened as they arrive, and **Send to iPhone** from the window, the tray or Explorer's Send to. The dot on the tray icon shows the PC's radio: amber starting, green on the share sheet, red when it needs you.
 
