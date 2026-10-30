@@ -95,29 +95,31 @@ void test_lan() {
 
     howldrop::MemoryClipboard clip_a;
     howldrop::MemoryClipboard clip_b;
+    // Ports below 32768: none of these can be taken by an outgoing
+    // connection (Linux hands those out from 32768, Windows from 49152).
     howldrop::Node::Config a_cfg;
     a_cfg.name = "pc-a";
     a_cfg.id = std::string(32, 'a');
-    a_cfg.discovery_port = 41231;
-    a_cfg.transfer_port = 41232;
-    a_cfg.control_port = 41233;
+    a_cfg.discovery_port = 21231;
+    a_cfg.transfer_port = 21232;
+    a_cfg.control_port = 21233;
     a_cfg.inbox = root / "a";
     a_cfg.lan_broadcast = false;
     a_cfg.beacon_interval = std::chrono::milliseconds(50);
     a_cfg.peer_ttl = std::chrono::seconds(2);
     a_cfg.log = false;
-    a_cfg.beacon_targets.push_back({"127.0.0.1", 41241});
+    a_cfg.beacon_targets.push_back({"127.0.0.1", 21241});
     a_cfg.pair_key = howldrop::new_pair_key();  // both PCs share it (howldrop pair)
     a_cfg.share_clipboard = true;
 
     howldrop::Node::Config b_cfg = a_cfg;
     b_cfg.name = "pc-b";
     b_cfg.id = std::string(32, 'b');
-    b_cfg.discovery_port = 41241;
-    b_cfg.transfer_port = 41242;
-    b_cfg.control_port = 41243;
+    b_cfg.discovery_port = 21241;
+    b_cfg.transfer_port = 21242;
+    b_cfg.control_port = 21243;
     b_cfg.inbox = root / "b";
-    b_cfg.beacon_targets = {{"127.0.0.1", 41231}};
+    b_cfg.beacon_targets = {{"127.0.0.1", 21231}};
 
     howldrop::Node node_a(a_cfg, clip_a);
     howldrop::Node node_b(b_cfg, clip_b);
@@ -159,7 +161,7 @@ void test_lan() {
         std::uint32_t addr = 0;
         std::string error;
         CHECK(howldrop::ipv4_from_string("127.0.0.1", addr));
-        CHECK(socket.connect_v4(addr, 41242, 2000, error));
+        CHECK(socket.connect_v4(addr, 21242, 2000, error));
         howldrop::Message message;
         message.type = howldrop::MsgType::File;
         const std::string body = "hello";
@@ -213,14 +215,14 @@ void test_lan() {
         howldrop::Node::Config r_cfg;
         r_cfg.name = "iPhone (HowlDrop)";
         r_cfg.id = std::string(32, 'c');
-        r_cfg.discovery_port = 41251;
-        r_cfg.transfer_port = 41252;
+        r_cfg.discovery_port = 21251;
+        r_cfg.transfer_port = 21252;
         r_cfg.enable_control = false;
         r_cfg.inbox = root / "relay";
         r_cfg.lan_broadcast = false;
         r_cfg.beacon_interval = std::chrono::milliseconds(50);
         r_cfg.log = false;
-        r_cfg.beacon_targets.push_back({"127.0.0.1", 41231});
+        r_cfg.beacon_targets.push_back({"127.0.0.1", 21231});
         r_cfg.pair_key = a_cfg.pair_key;
         r_cfg.role = "iphone";
         r_cfg.hello_extra = []() {
@@ -265,7 +267,7 @@ void test_lan() {
         hello.type = howldrop::MsgType::Hello;
         hello.fields.set("name", "iPhone (HowlDrop)");
         hello.fields.set("id", std::string(32, 'c'));
-        hello.fields.set("port", "41252");
+        hello.fields.set("port", "21252");
         hello.fields.set("role", "iphone");
         std::string error;
         const auto bytes = howldrop::encode_head(hello, error);
