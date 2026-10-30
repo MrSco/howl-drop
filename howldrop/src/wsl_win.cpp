@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cwchar>
 #include <fstream>
+#include <thread>
 
 // A release build names the Linux part it goes with (CMake: HOWLDROP_LINUX_*,
 // set by .github/workflows/release-windows.yml). A local build has none and
@@ -390,6 +391,10 @@ void WslRadio::state(const std::string& text, RadioLevel level) {
 void WslRadio::run() {
     {
         std::lock_guard<std::mutex> hold(log_mu_);
+        // The last run's log stays beside it, so a start that failed can
+        // still be read after the one that worked.
+        std::error_code ec;
+        fs::rename(config_.home / L"radio.log", config_.home / L"radio.log.1", ec);
         std::ofstream(config_.home / L"radio.log", std::ios::trunc | std::ios::binary)
             << "HowlDrop " << kVersion << ": AirDrop on this PC\n";
     }
@@ -718,11 +723,20 @@ void WslRadio::handle_line(const std::string& line, const std::string& busid) {
 // Once, through the HowlDrop distro (it has modprobe for vhci-hcd). Not
 // --auto-attach: its re-attach loop runs inside WSL and outlives usbipd.exe,
 // so it would take the stick back after give_back detached it.
+// Tried again for a minute: right after a stop detached the stick (a restart
+// for new settings), Windows may not have it back yet, and the one try left
+// wsl-run.sh waiting until it gave up.
 void WslRadio::attach(const std::string& busid) {
-    std::string out;
-    const int code =
-        run_command(usbipd_, {L"attach", L"--wsl", wide(wsl::kDistro), L"--busid", wide(busid)}, out, 60000);
-    log("usbipd attach: exit " + std::to_string(code) + ": " + trim(out));
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    for (int attempt = 1;; ++attempt) {
+        std::string out;
+        const int code =
+            run_command(usbipd_, {L"attach", L"--wsl", wide(wsl::kDistro), L"--busid", wide(busid)}, out, 60000);
+        log("usbipd attach: exit " + std::to_string(code) + ": " + trim(out));
+        if (code == 0 || stop_.load() || std::chrono::steady_clock::now() >= until) return;
+        log("usbipd attach: trying again (" + std::to_string(attempt) + ")");
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    }
 }
 
 void WslRadio::give_back(const std::string& busid) {
