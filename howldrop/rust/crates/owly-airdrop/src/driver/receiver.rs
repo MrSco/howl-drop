@@ -91,7 +91,8 @@ pub enum ReceiverEvent {
         id: u64,
     },
     /// An upload so far: the bytes of its files written, at most every
-    /// `PROGRESS_EVERY`, with [`Options::progress`] on.
+    /// `PROGRESS_EVERY`, with [`Options::progress`] on. The first, 0, comes
+    /// as the upload starts, and the last at its end.
     Progress {
         id: u64,
         bytes: u64,
@@ -381,6 +382,14 @@ impl Task {
                             staging = Some(s);
                             window = (0, Instant::now() + RATE_WINDOW);
                             written = (0, Instant::now());
+                            if self.options.progress {
+                                // Its start, for how long the upload takes: the
+                                // next report is PROGRESS_EVERY away, past the
+                                // end of a small file.
+                                let _ = self
+                                    .events
+                                    .try_send(ReceiverEvent::Progress { id, bytes: 0 });
+                            }
                         }
                         Err(e) => return self.fail(&mut tls, id, e).await,
                     },

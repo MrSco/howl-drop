@@ -60,6 +60,17 @@ int main() {
                "how long it took: " + Transfers::took_text(*x));
     }
     {
+        // A photo that comes in under a second: no speed, only the size.
+        Transfers t;
+        t.apply({"incoming", "p", "Rocco’s iPhone", "1", "621178", "IMG_3.JPG"}, at(0));
+        t.apply({"receiving", "p", "0", "621178"}, at(100));
+        t.apply({"receiving", "p", "621178", "621178"}, at(400));
+        t.apply({"stored", "p", "IMG_3.JPG"}, at(410));
+        t.received("C:/in/IMG_3.JPG", "Rocco’s iPhone", "image", false, at(450));
+        expect(Transfers::took_text(*t.find("p")) == "621 KB in under a second",
+               "a quick one: " + Transfers::took_text(*t.find("p")));
+    }
+    {
         // Declined, and an ask nobody answers.
         Transfers t;
         t.apply({"ask", "d", "Pat", "1", "10", "x.jpg"}, at(0));

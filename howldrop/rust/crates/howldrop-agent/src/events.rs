@@ -36,8 +36,12 @@ pub fn line<S: AsRef<str>>(fields: &[S]) -> String {
 }
 
 /// How long `bytes` took, for the log: "14.7 MB in 6.3 s (2.3 MB/s)".
+/// Under a second there's no speed: it would mostly be the clock's error.
 pub fn took(bytes: u64, elapsed: Duration) -> String {
-    let secs = elapsed.as_secs_f64().max(0.001);
+    if elapsed < Duration::from_secs(1) {
+        return format!("{} in under a second", size(bytes));
+    }
+    let secs = elapsed.as_secs_f64();
     format!(
         "{} in {secs:.1} s ({}/s)",
         size(bytes),
@@ -90,7 +94,15 @@ mod tests {
             took(14_712_229, Duration::from_millis(6300)),
             "14.7 MB in 6.3 s (2.3 MB/s)"
         );
-        assert_eq!(took(900, Duration::ZERO), "900 bytes in 0.0 s (900 KB/s)");
+        assert_eq!(
+            took(621_178, Duration::from_millis(700)),
+            "621 KB in under a second"
+        );
+        assert_eq!(took(900, Duration::ZERO), "900 bytes in under a second");
+        assert_eq!(
+            took(2_000_000, Duration::from_secs(1)),
+            "2.0 MB in 1.0 s (2.0 MB/s)"
+        );
         assert_eq!(size(2_600), "3 KB");
         assert_eq!(size(3_200_000_000), "3.2 GB");
     }
