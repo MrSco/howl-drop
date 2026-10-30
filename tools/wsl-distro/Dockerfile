@@ -6,4 +6,5 @@ ARG IMAGE
 FROM ${IMAGE}
 ARG VERSION
 COPY wsl.conf /etc/wsl.conf
+COPY wsl-distribution.conf /etc/wsl-distribution.conf
 RUN test -x /wsl-run.sh && printf '%s\n' "$VERSION" > /etc/howldrop-version

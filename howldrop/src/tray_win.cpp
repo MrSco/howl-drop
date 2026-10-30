@@ -462,12 +462,42 @@ void show_menu(App& app) {
 
 // --- sending to the iPhone, through the add-on's relay -----------------------------
 
-std::filesystem::path send_to_shortcut() {
+std::filesystem::path known_folder(REFKNOWNFOLDERID id, const wchar_t* name) {
     PWSTR folder = nullptr;
-    if (FAILED(SHGetKnownFolderPath(FOLDERID_SendTo, 0, nullptr, &folder))) return {};
-    std::filesystem::path path = std::filesystem::path(folder) / kSendToName;
+    if (FAILED(SHGetKnownFolderPath(id, 0, nullptr, &folder))) return {};
+    std::filesystem::path path = std::filesystem::path(folder) / name;
     CoTaskMemFree(folder);
     return path;
+}
+
+std::filesystem::path send_to_shortcut() { return known_folder(FOLDERID_SendTo, kSendToName); }
+
+// A shortcut to this exe, with these arguments.
+void write_shortcut(const std::filesystem::path& shortcut, const wchar_t* args, const wchar_t* description) {
+    wchar_t exe[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return;
+    IShellLinkW* link = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW,
+                                reinterpret_cast<void**>(&link))))
+        return;
+    link->SetPath(exe);
+    link->SetArguments(args);
+    link->SetIconLocation(exe, 0);
+    link->SetDescription(description);
+    IPersistFile* file = nullptr;
+    if (SUCCEEDED(link->QueryInterface(IID_IPersistFile, reinterpret_cast<void**>(&file)))) {
+        file->Save(shortcut.c_str(), TRUE);
+        file->Release();
+    }
+    link->Release();
+}
+
+// HowlDrop in the Start menu, so it can be started again after Quit. Made
+// again each start, so it follows the exe if it moves.
+void update_start_menu() {
+    const auto shortcut = known_folder(FOLDERID_Programs, L"HowlDrop.lnk");
+    if (!shortcut.empty()) write_shortcut(shortcut, L"", L"HowlDrop: AirDrop on this PC");
 }
 
 // Explorer's Send to, "iPhone (HowlDrop)": runs this exe with `iphone` and
@@ -480,23 +510,7 @@ void update_send_to(const App& app) {
         std::filesystem::remove(shortcut, ec);
         return;
     }
-    wchar_t exe[MAX_PATH];
-    const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return;
-    IShellLinkW* link = nullptr;
-    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW,
-                                reinterpret_cast<void**>(&link))))
-        return;
-    link->SetPath(exe);
-    link->SetArguments(L"iphone");
-    link->SetIconLocation(exe, 0);
-    link->SetDescription(L"AirDrop to your iPhone with HowlDrop");
-    IPersistFile* file = nullptr;
-    if (SUCCEEDED(link->QueryInterface(IID_IPersistFile, reinterpret_cast<void**>(&file)))) {
-        file->Save(shortcut.c_str(), TRUE);
-        file->Release();
-    }
-    link->Release();
+    write_shortcut(shortcut, L"iphone", L"AirDrop to your iPhone with HowlDrop");
 }
 
 void send_files(App& app, const std::vector<std::filesystem::path>& files, const std::string& to);
@@ -1186,6 +1200,7 @@ int run_tray(Node::Config config) {
         app.howl_window = std::make_unique<HowlWindow>(instance, wide(app.name), app.history_file, std::move(hooks));
     }
     update_send_to(app);
+    update_start_menu();
     purge_inbox(app);
     if (app.settings.radio) start_radio(app);
     if (first_run) {
