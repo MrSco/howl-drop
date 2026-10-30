@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HowlDrop: AirDrop for Windows</title>
+<meta name="description" content="HowlDrop puts your Windows PC on your iPhone's AirDrop share sheet. Photos, videos, links and files, both ways. Free and open source.">
+<meta property="og:title" content="HowlDrop: AirDrop for Windows">
+<meta property="og:description" content="Put your Windows PC on your iPhone's AirDrop share sheet. Free and open source.">
+<meta property="og:image" content="https://mrsco.github.io/howl-drop/img/howldrop.png">
+<meta property="og:url" content="https://mrsco.github.io/howl-drop/">
+<meta name="twitter:card" content="summary">
+<link rel="icon" type="image/png" href="img/howldrop.png">
+<style>
+  :root {
+    --bg: #050b1a;
+    --bg-2: #0a1530;
+    --panel: rgba(255, 255, 255, 0.04);
+    --line: rgba(120, 170, 255, 0.16);
+    --text: #e8eefc;
+    --dim: #93a3c4;
+    --blue: #2f8bff;
+    --glow: #4fb4ff;
+    --radius: 18px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  img { max-width: 100%; height: auto; }
+  body {
+    margin: 0;
+    overflow-x: hidden;
+    background:
+      radial-gradient(900px 600px at 75% -10%, rgba(47, 139, 255, 0.28), transparent 60%),
+      radial-gradient(700px 500px at 0% 30%, rgba(79, 180, 255, 0.10), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font: 17px/1.6 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  a { color: var(--glow); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font: 0.9em ui-monospace, "Cascadia Code", Consolas, monospace;
+    background: rgba(255, 255, 255, 0.07);
+    padding: 0.1em 0.4em;
+    border-radius: 6px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  nav { display: flex; align-items: center; gap: 12px; padding: 22px 0; }
+  nav img { width: 34px; height: 34px; }
+  nav .name { font-weight: 700; font-size: 19px; letter-spacing: -0.01em; }
+  nav .right { margin-left: auto; color: var(--dim); font-size: 15px; }
+
+  .hero {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 48px;
+    align-items: center;
+    padding: 40px 0 80px;
+  }
+  .eyebrow {
+    display: inline-block;
+    color: var(--glow);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 18px;
+  }
+  h1 {
+    font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    font-size: clamp(42px, 6.5vw, 72px);
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+    margin: 0 0 22px;
+  }
+  h1 .hl {
+    background: linear-gradient(90deg, #7cc8ff, var(--blue));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .lede { font-size: 20px; color: var(--dim); max-width: 34em; margin: 0 0 32px; }
+  .lede strong { color: var(--text); font-weight: 600; }
+  .ctas { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 24px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 17px;
+  }
+  .btn:hover { text-decoration: none; }
+  .btn.primary {
+    background: var(--blue);
+    color: #fff;
+    box-shadow: 0 8px 30px rgba(47, 139, 255, 0.45);
+  }
+  .btn.primary:hover { background: #4b9bff; }
+  .btn.ghost { color: var(--text); border: 1px solid var(--line); }
+  .btn.ghost:hover { background: var(--panel); }
+  .btn svg { width: 20px; height: 20px; }
+  .fine { color: var(--dim); font-size: 14px; margin-top: 16px; }
+
+  .shot { position: relative; justify-self: center; width: 100%; max-width: 380px; }
+  .shot .window {
+    width: 100%;
+    border-radius: 22px;
+    box-shadow: 0 40px 100px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--line), 0 0 80px rgba(47, 139, 255, 0.25);
+  }
+  .shot .card {
+    position: absolute;
+    width: 78%;
+    left: -22%;
+    bottom: 8%;
+    border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--line);
+  }
+
+  section { padding: 64px 0; }
+  h2 {
+    font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    font-size: clamp(30px, 4vw, 40px);
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    margin: 0 0 12px;
+  }
+  .sub { color: var(--dim); margin: 0 0 40px; max-width: 40em; }
+
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .feature {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 24px;
+  }
+  .feature .icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 11px;
+    display: grid;
+    place-items: center;
+    background: rgba(47, 139, 255, 0.15);
+    color: var(--glow);
+    margin-bottom: 16px;
+  }
+  .feature .icon svg { width: 22px; height: 22px; }
+  .feature h3 { margin: 0 0 6px; font-size: 18px; }
+  .feature p { margin: 0; color: var(--dim); font-size: 15.5px; }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .cards figure { margin: 0; }
+  .cards img { width: 100%; border-radius: 14px; box-shadow: 0 0 0 1px var(--line), 0 20px 50px rgba(0, 0, 0, 0.45); }
+  .cards figcaption { color: var(--dim); font-size: 15px; margin-top: 12px; text-align: center; }
+
+  .how {
+    background: linear-gradient(180deg, var(--bg-2), transparent);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    padding: 48px;
+  }
+  .need { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 40px; }
+  .need div { border-left: 2px solid var(--blue); padding: 2px 0 2px 16px; }
+  .need b { display: block; }
+  .need span { color: var(--dim); font-size: 15px; }
+  ol.steps { list-style: none; counter-reset: step; padding: 0; margin: 0; display: grid; gap: 22px; }
+  ol.steps li { counter-increment: step; display: grid; grid-template-columns: 44px 1fr; gap: 16px; align-items: start; }
+  ol.steps li::before {
+    content: counter(step);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    background: var(--blue);
+    color: #fff;
+    box-shadow: 0 0 24px rgba(47, 139, 255, 0.5);
+  }
+  ol.steps b { display: block; font-size: 18px; }
+  ol.steps span { color: var(--dim); }
+
+  .under { color: var(--dim); max-width: 46em; }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 32px 0 48px;
+    color: var(--dim);
+    font-size: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 32px;
+    justify-content: space-between;
+  }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; padding-top: 16px; }
+    .shot { max-width: 320px; margin-top: 8px; }
+    .shot .card { left: -12%; }
+    .features, .cards, .need { grid-template-columns: 1fr; }
+    .cards { max-width: 420px; margin: 0 auto; }
+    .how { padding: 28px 20px; }
+  }
+  @media (max-width: 480px) {
+    .wrap { padding: 0 16px; }
+    nav .right { display: none; }
+    .shot .card { left: -6%; width: 80%; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <img src="img/howldrop.png" alt="">
+  <span class="name">HowlDrop</span>
+  <a class="right" href="https://github.com/MrSco/howl-drop">GitHub</a>
+</nav>
+
+<header class="hero">
+  <div>
+    <span class="eyebrow">Free · Open source · Windows 10 &amp; 11</span>
+    <h1>AirDrop, <span class="hl">meet Windows.</span></h1>
+    <p class="lede">HowlDrop puts your PC on your iPhone's <strong>AirDrop share sheet</strong>. Photos, videos, links and files land in seconds, and go back to the phone just as easily. No Mac, no app on the iPhone, no cloud.</p>
+    <div class="ctas">
+      <a class="btn primary" href="https://github.com/MrSco/howl-drop/releases/latest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+        Download for Windows
+      </a>
+      <a class="btn ghost" href="#setup">How to set it up</a>
+    </div>
+    <p class="fine">Needs a USB Wi-Fi stick. <a href="#setup">Which one?</a></p>
+  </div>
+  <div class="shot">
+    <img class="window" src="img/window.png" alt="The HowlDrop window: a video arriving, a drop zone, nearby iPhones and recent transfers" width="840" height="1400">
+    <img class="card" src="img/card-ask.png" alt="A card asking to accept a video from Alex's iPhone" width="720" height="374">
+  </div>
+</header>
+
+<section>
+  <h2>Everything you'd expect from AirDrop</h2>
+  <p class="sub">Your PC shows up on the share sheet under its own name. Tap it like any other device.</p>
+  <div class="features">
+    <div class="feature">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg></div>
+      <h3>Fast</h3>
+      <p>A 15 MB iPhone video lands in about 3 seconds, straight over Wi-Fi.</p>
+    </div>
+    <div class="feature">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h11l-3-3M17 17H6l3 3"/></svg></div>
+      <h3>Both ways</h3>
+      <p>Drag files onto the window, or right-click any file and choose Send to, iPhone.</p>
+    </div>
+    <div class="feature">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 11l2 2 4-4"/></svg></div>
+      <h3>Contacts, like an iPhone</h3>
+      <p>Your contacts go straight through, anyone else waits for Accept. Or Contacts Only.</p>
+    </div>
+    <div class="feature">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 10h18"/></svg></div>
+      <h3>Right by the clock</h3>
+      <p>A card for every transfer: progress, a thumbnail, Open and Show in folder.</p>
+    </div>
+    <div class="feature">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></div>
+      <h3>Links and text too</h3>
+      <p>Shared links open in your browser. Shared text is on your clipboard, ready to paste.</p>
+    </div>
+    <div class="feature">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
+      <h3>Phone to PC, nothing between</h3>
+      <p>Peer to peer, as AirDrop is. No account, no upload, nothing to install on the iPhone.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>It asks, it shows, it's done</h2>
+  <p class="sub">Each AirDrop gets a card above the tray, the way Windows does notifications.</p>
+  <div class="cards">
+    <figure>
+      <img src="img/card-ask.png" alt="A card asking to accept a video" width="720" height="374" loading="lazy">
+      <figcaption>Accept or Decline</figcaption>
+    </figure>
+    <figure>
+      <img src="img/card-receiving.png" alt="A card showing the video's progress" width="720" height="298" loading="lazy">
+      <figcaption>Watch it arrive</figcaption>
+    </figure>
+    <figure>
+      <img src="img/card-received.png" alt="A card with Open and Show in folder" width="720" height="294" loading="lazy">
+      <figcaption>Open it in one click</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="setup">
+  <div class="how">
+    <h2>Set it up in a few minutes</h2>
+    <p class="sub">Your PC's built-in Wi-Fi can't speak AirDrop's Wi-Fi on Windows, so HowlDrop brings its own: a USB stick, run by a small Linux that HowlDrop sets up and looks after for you. You just see a tray icon.</p>
+    <div class="need">
+      <div><b>Windows 11 or 10</b><span>with WSL 2</span></div>
+      <div><b>A USB Wi-Fi stick</b><span>MediaTek MT7612U: Alfa AWUS036ACM, Netgear A6210 and others. <a href="https://github.com/MrSco/howl-drop/blob/main/docs/adapters.md">The list</a></span></div>
+      <div><b>Bluetooth on the PC</b><span>to wake the iPhone when sending to it</span></div>
+    </div>
+    <ol class="steps">
+      <li><div><b>Turn on WSL</b><span>In a terminal opened as administrator: <code>wsl --install</code>, then restart.</span></div></li>
+      <li><div><b>Get HowlDrop</b><span><a href="https://github.com/MrSco/howl-drop/releases/latest">Download howldrop.exe</a>, put it somewhere it can stay (like <code>%LOCALAPPDATA%\Programs\HowlDrop</code>) and run it. Nothing to install. If SmartScreen stops it: More info, Run anyway.</span></div></li>
+      <li><div><b>Plug in the stick and switch it on</b><span>Click the owl by the clock, then the gear, and turn on <b style="display:inline">AirDrop on this PC</b>. The first time, HowlDrop fetches what it needs and Windows asks once to share the stick. When the dot turns green, you're on the share sheet.</span></div></li>
+      <li><div><b>AirDrop something</b><span>On the iPhone: Share, AirDrop, your PC. To send to the phone, set its AirDrop to Everyone for 10 Minutes and drop files on the HowlDrop window.</span></div></li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <p class="under">Got Home Assistant? HowlDrop also runs as a <a href="https://github.com/MrSco/howl-drop/blob/main/addon/DOCS.md">Home Assistant add-on</a> that catches AirDrops and forwards them to your PC over the network. HowlDrop is built on <a href="https://github.com/t4t5/owly">Owly</a>, an open implementation of AirDrop.</p>
+</section>
+
+<footer>
+  <span>HowlDrop is free and open source. <a href="https://github.com/MrSco/howl-drop">Source, issues and docs on GitHub</a>.</span>
+  <span>Not affiliated with Apple. AirDrop and iPhone are trademarks of Apple Inc.</span>
+</footer>
+
+</div>
+</body>
+</html>

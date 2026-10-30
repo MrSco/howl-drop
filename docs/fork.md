@@ -7,8 +7,9 @@ new Owly merges in, and HowlDrop's own code lives beside it:
 - `crates/howldrop-agent`: the Linux side (radio, receiver, sender, the
   events howldrop.exe reads), on Owly's crates as libraries. It runs the
   radio itself, without `owlyd`.
-- `howldrop/`, `addon/`, `docker/`, `tools/`, `art/`, `.github/`
-  (`README.md`, `workflows/howldrop.yml`), and `docs/adapters.md`,
+- `howldrop/`, `addon/`, `docker/`, `tools/`, `art/`, `site/` (the
+  GitHub Pages site), `.github/` (`README.md`, `workflows/howldrop.yml`,
+  `workflows/pages.yml`), and `docs/adapters.md`,
   `hardware-notes.md` and this file.
 
 Changes go to MrSco/howl-drop only, not upstream.
