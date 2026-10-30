@@ -202,6 +202,30 @@ async fn send_one(
     ));
 }
 
+/// The preview the iPhone shows while it asks and receives: a picture's
+/// 240-pixel JPEG, made with Pillow as 0.18.0's sender made it. None for
+/// what Pillow can't open (videos, documents, HEIC) or past a few seconds.
+async fn file_icon(path: &Path) -> Option<Vec<u8>> {
+    const SCRIPT: &str = "import io, sys\n\
+        from PIL import Image\n\
+        im = Image.open(sys.argv[1])\n\
+        im.thumbnail((240, 240))\n\
+        out = io.BytesIO()\n\
+        im.convert('RGB').save(out, 'JPEG', quality=80)\n\
+        sys.stdout.buffer.write(out.getvalue())\n";
+    let run = tokio::process::Command::new("python3")
+        .args(["-I", "-c", SCRIPT])
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    match tokio::time::timeout(Duration::from_secs(5), run).await {
+        Ok(Ok(out)) if out.status.success() && !out.stdout.is_empty() => Some(out.stdout),
+        _ => None,
+    }
+}
+
 /// Tries one file until it's delivered, refused, or the window closes.
 async fn try_send(
     air: &Air,
@@ -211,6 +235,7 @@ async fn try_send(
     window: Duration,
     progress: &impl Fn(&str),
 ) -> (bool, String, Option<Duration>) {
+    let icon = file_icon(path).await;
     let deadline = Instant::now() + window;
     let mut waited = false;
     while Instant::now() < deadline {
@@ -264,7 +289,7 @@ async fn try_send(
         let payload = Payload::Files(vec![path.to_path_buf()]);
         let flags = RECEIVER_FLAGS | SUPPORTS_DVZIP;
         let (outcome, accepted_at) = tokio::join!(
-            sender.send(target.addr, &payload, flags, Some(events)),
+            sender.send_with_icon(target.addr, &payload, flags, Some(events), icon.clone()),
             report
         );
         let accepted = accepted_at.is_some();

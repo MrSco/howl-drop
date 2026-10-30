@@ -114,6 +114,20 @@ impl Sender {
         receiver_flags: u32,
         events: Option<mpsc::UnboundedSender<Event>>,
     ) -> io::Result<Outcome> {
+        self.send_with_icon(addr, payload, receiver_flags, events, None)
+            .await
+    }
+
+    /// Fork: [`send`](Self::send), with a preview of the payload for the
+    /// receiver to show (the `/Ask`'s `FileIcon`).
+    pub async fn send_with_icon(
+        &self,
+        addr: SocketAddrV6,
+        payload: &Payload,
+        receiver_flags: u32,
+        events: Option<mpsc::UnboundedSender<Event>>,
+        file_icon: Option<Vec<u8>>,
+    ) -> io::Result<Outcome> {
         let compressor = if receiver_flags & SUPPORTS_DVZIP != 0 {
             Compressor::DvZip
         } else {
@@ -132,7 +146,11 @@ impl Sender {
         };
         let transfer_id = uuid_v4()?;
         let body = archive.as_ref().map(|(_, len)| (compressor, *len));
-        let mut transfer = Transfer::new(&self.config, &transfer_id, &offer, body);
+        let config = Config {
+            file_icon: file_icon.or_else(|| self.config.file_icon.clone()),
+            ..self.config.clone()
+        };
+        let mut transfer = Transfer::new(&config, &transfer_id, &offer, body);
         let mut archive = archive.map(|(file, _)| tokio::fs::File::from_std(file));
 
         let mut tls = self.connect(addr).await?;

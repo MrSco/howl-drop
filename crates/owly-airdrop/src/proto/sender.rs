@@ -73,6 +73,9 @@ pub struct Config {
     pub sender_id: String,
     pub bundle_id: String,
     pub ask_timeout: Duration,
+    /// Fork: the `/Ask`'s `FileIcon`, a preview the receiver shows while it
+    /// asks and receives. None leaves it out.
+    pub file_icon: Option<Vec<u8>>,
 }
 
 impl Config {
@@ -83,6 +86,7 @@ impl Config {
             sender_id: sender_id.into(),
             bundle_id: "com.apple.finder".into(),
             ask_timeout: ASK_TIMEOUT,
+            file_icon: None,
         }
     }
 }
@@ -125,7 +129,7 @@ pub fn ask_request(config: &Config, transfer_id: &str, offer: &Offer) -> Vec<u8>
         sender_id: config.sender_id.clone(),
         bundle_id: config.bundle_id.clone(),
         sender_record: None,
-        file_icon: None,
+        file_icon: config.file_icon.clone(),
         offer: offer.clone(),
         described: String::new(),
     };
@@ -488,6 +492,22 @@ mod tests {
                 .unwrap();
             assert!(["/Discover", "/Ask", "/Upload"].contains(&head.target.as_str()));
         }
+    }
+
+    #[test]
+    fn the_ask_carries_a_file_icon_when_given() {
+        let mut config = Config::new("Test", "0123456789ab");
+        let icon = |config: &Config| {
+            let request = ask_request(config, "ID", &file_offer());
+            let (_, body) = http::parse_request(&request, &http::Limits::default())
+                .unwrap()
+                .unwrap();
+            let value = plist::from_bytes(&request[body..], &plist::Limits::default()).unwrap();
+            AskRequest::from_plist(&value).unwrap().file_icon
+        };
+        assert_eq!(icon(&config), None);
+        config.file_icon = Some(vec![0xff, 0xd8, 0xff]);
+        assert_eq!(icon(&config), Some(vec![0xff, 0xd8, 0xff]));
     }
 
     #[test]
