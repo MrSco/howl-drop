@@ -182,6 +182,10 @@ impl Contacts {
             &[
                 "cms",
                 "-verify",
+                // The record's own ValidAsOf and SuggestValidDuration say
+                // whether it's current (parse_record), so an Apple CA past
+                // its date doesn't refuse it, as one did the certificates.
+                "-no_check_time",
                 "-inform",
                 "DER",
                 "-CAfile",
