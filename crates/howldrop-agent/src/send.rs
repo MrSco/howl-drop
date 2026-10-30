@@ -204,15 +204,18 @@ async fn send_one(
 
 /// The preview the iPhone shows while it asks and receives (FileIcon): a
 /// picture as JPEG 2000, at most 540 pixels on the long side, made with
-/// Pillow. None for what Pillow can't open (videos, documents, HEIC) or
-/// past a few seconds.
+/// Pillow. Coded as an iPhone's own is (9/7 wavelet, colour transform,
+/// about 44 KB): Pillow's default 5/3 coding left the prompt blank. None
+/// for what Pillow can't open (videos, documents, HEIC) or past a few
+/// seconds.
 async fn file_icon(path: &Path) -> Option<Vec<u8>> {
     const SCRIPT: &str = "import io, sys\n\
         from PIL import Image\n\
         im = Image.open(sys.argv[1])\n\
         im.thumbnail((540, 540))\n\
         out = io.BytesIO()\n\
-        im.convert('RGB').save(out, 'JPEG2000', quality_mode='rates', quality_layers=[20])\n\
+        im.convert('RGB').save(out, 'JPEG2000', quality_mode='rates', quality_layers=[20], \
+        irreversible=True, mct=1)\n\
         sys.stdout.buffer.write(out.getvalue())\n";
     let run = tokio::process::Command::new("python3")
         .args(["-I", "-c", SCRIPT])

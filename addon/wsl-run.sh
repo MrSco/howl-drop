@@ -168,6 +168,10 @@ options = {
     "forward_to_pc": False, "pc_host": "", "pc_key": "",
     "send_to_iphone": True, "send_to": send_to,
     "interface": iface, "allow_untested": False, "channels": "", "aggregation": "auto",
+    # Sending to an iPhone from the MT7612U: 36 Mbit/s took a 14.7 MB video
+    # in 15.7 s against 25 s at Owly's 24; 48 and MCS 7 lost enough that
+    # uploads crawled or the phone cancelled them.
+    "tx_rate": "36",
     "verbose": verbose == "true", "debug_capture": False,
 }
 # The add-on's other options (tx_amsdu, tx_rate, channels...), set by hand
