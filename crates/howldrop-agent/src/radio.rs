@@ -2,8 +2,10 @@
 //! options rather than /etc/owly/radio.toml, held by this process alone (no
 //! owlyd). It picks the card and its mode from the quirks table, writes
 //! each change to its recovery journal, and takes it all back on the way
-//! down.
+//! down. Or, with `--usb-radio`, an MT7612U driven from user space
+//! ([`crate::usb`]).
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use owly_radio::config::Config;
@@ -29,16 +31,80 @@ pub struct Options {
     pub tx_rate: Option<String>,
     pub tx_amsdu: bool,
     pub run_dir: String,
+    /// Drive an MT7612U from user space, with its firmware from here,
+    /// instead of the kernel's driver.
+    pub usb_firmware: Option<PathBuf>,
 }
 
-/// The backend, with its journal of what a crashed run left undone.
-pub struct Radio {
-    backend: Injection,
-    probe: Capabilities,
+/// The kernel's driver through owly-radio, or the user-space one.
+pub enum Radio {
+    Kernel(Box<Kernel>),
+    Usb(crate::usb::UsbRadio),
 }
 
 impl Radio {
     pub fn new(opts: &Options) -> Result<Radio, String> {
+        Ok(match &opts.usb_firmware {
+            Some(dir) => Radio::Usb(crate::usb::UsbRadio::new(
+                dir.clone(),
+                opts.tx_rate.as_deref(),
+            )?),
+            None => Radio::Kernel(Box::new(Kernel::new(opts)?)),
+        })
+    }
+
+    pub fn report(&self) {
+        match self {
+            Radio::Kernel(k) => k.report(),
+            Radio::Usb(u) => u.report(),
+        }
+    }
+
+    pub fn unusable(&self) -> Option<String> {
+        match self {
+            Radio::Kernel(k) => k.unusable(),
+            Radio::Usb(u) => u.unusable(),
+        }
+    }
+
+    pub fn station(&self) -> String {
+        match self {
+            Radio::Kernel(k) => k.station(),
+            Radio::Usb(u) => u.station(),
+        }
+    }
+
+    pub async fn recover(&mut self) {
+        if let Radio::Kernel(k) = self {
+            k.recover().await;
+        }
+    }
+
+    pub async fn up(&mut self) -> Result<Link, String> {
+        let link = match self {
+            Radio::Kernel(k) => k.backend.up().await.map_err(|e| e.message)?,
+            Radio::Usb(u) => u.up().await?,
+        };
+        tune_tcp().await;
+        Ok(link)
+    }
+
+    pub async fn down(&mut self) {
+        match self {
+            Radio::Kernel(k) => k.down().await,
+            Radio::Usb(u) => u.down().await,
+        }
+    }
+}
+
+/// The backend, with its journal of what a crashed run left undone.
+pub struct Kernel {
+    backend: Injection,
+    probe: Capabilities,
+}
+
+impl Kernel {
+    pub fn new(opts: &Options) -> Result<Kernel, String> {
         let ops = Arc::new(System);
         let country = opts.country.clone().or_else(|| {
             // An unset domain (00, or 99 for a driver's own) leaves 5 GHz
@@ -74,7 +140,7 @@ impl Radio {
                 .issues
                 .retain(|i| !i.starts_with("AirDrop runs on channel"));
         }
-        Ok(Radio { backend, probe })
+        Ok(Kernel { backend, probe })
     }
 
     /// What the probe found, for the log and the PC.
@@ -135,12 +201,6 @@ impl Radio {
         if let Err(e) = self.backend.recover().await {
             say(format!("Undoing the last run's radio changes: {e}"));
         }
-    }
-
-    pub async fn up(&mut self) -> Result<Link, String> {
-        let link = self.backend.up().await.map_err(|e| e.message)?;
-        tune_tcp().await;
-        Ok(link)
     }
 
     pub async fn down(&mut self) {

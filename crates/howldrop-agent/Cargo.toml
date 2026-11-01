@@ -14,6 +14,7 @@ clap = { version = "4", features = ["derive"] }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 getrandom = "0.3"
 nix = { version = "0.31", default-features = false, features = ["signal"] }
+mt7612u = { path = "../mt7612u" }
 owly-airdrop = { path = "../owly-airdrop", features = ["mdns"] }
 owly-awdl = { path = "../owly-awdl" }
 owly-radio = { path = "../owly-radio" }

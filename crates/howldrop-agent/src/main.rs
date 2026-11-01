@@ -21,6 +21,7 @@ mod events;
 mod radio;
 mod receive;
 mod send;
+mod usb;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -113,6 +114,11 @@ struct Args {
     /// Send to a phone as A-MSDUs, several packets a frame.
     #[arg(long)]
     tx_amsdu: bool,
+    /// Experimental: drive an MT7612U from user space instead of with the
+    /// kernel's driver, its firmware (mt7662_rom_patch.bin, mt7662.bin) from
+    /// this folder (docs/native-windows.md).
+    #[arg(long)]
+    usb_radio: Option<PathBuf>,
     /// The radio's recovery journal.
     #[arg(long, default_value = owly_radio::rundir::RUN_DIR)]
     run_dir: String,
@@ -174,6 +180,7 @@ async fn run(args: Args) -> Result<(), String> {
         tx_rate: args.tx_rate.clone().filter(|r| !r.is_empty()),
         tx_amsdu: args.tx_amsdu,
         run_dir: args.run_dir.clone(),
+        usb_firmware: args.usb_radio.clone(),
     };
     let (contacts, notes) = contacts::Contacts::new(&contacts::entries(&args.senders))
         .map_err(|e| format!("contacts: {e}"))?;

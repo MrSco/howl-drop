@@ -588,6 +588,7 @@ dependencies = [
  "clap",
  "futures-util",
  "getrandom 0.3.4",
+ "mt7612u",
  "nix",
  "owly-airdrop",
  "owly-awdl",
