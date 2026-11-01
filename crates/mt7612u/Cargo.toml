@@ -10,6 +10,12 @@ publish = false
 
 [dependencies]
 nusb = "0.2"
+owly-awdl = { path = "../owly-awdl", features = ["driver"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["sync"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [lints]
 workspace = true

@@ -8,10 +8,12 @@
 //! up to mt76x2u_mcu_init), talking to the MCU, setting the MAC up, tuning a
 //! channel and receiving every frame on it.
 
+pub mod awdl;
 pub mod channel;
 pub mod mcu;
 pub mod regs;
 pub mod rx;
+pub mod tx;
 
 use std::fmt;
 use std::thread;
@@ -159,6 +161,15 @@ impl From<FirmwareError> for Error {
     }
 }
 
+/// Why [`Mt7612u::send`] didn't take a frame.
+#[derive(Debug)]
+pub enum SendError {
+    /// The chip's queue is full: the frame, to try again.
+    Full(Vec<u8>),
+    /// A rate the chip doesn't have.
+    Rate(tx::Rate),
+}
+
 /// Whether `info` is an MT7612U stick.
 pub fn is_mt7612u(info: &DeviceInfo) -> bool {
     USB_IDS.contains(&(info.vendor_id(), info.product_id()))
@@ -188,6 +199,11 @@ pub struct Mt7612u {
     resp_in: Endpoint<Bulk, In>,
     /// The first bulk IN endpoint: received frames (MT_EP_IN_PKT_RX).
     rx_in: Endpoint<Bulk, In>,
+    /// The second bulk OUT endpoint: frames to send, best effort
+    /// (MT_EP_OUT_AC_BE).
+    tx_out: Endpoint<Bulk, Out>,
+    /// Sent frames whose USB transfer failed.
+    tx_errors: u64,
     /// The last MCU command's sequence number, 1 to 15.
     seq: u8,
 }
@@ -196,6 +212,9 @@ pub struct Mt7612u {
 /// one frame each (init_dma turns aggregation off), the largest an A-MSDU.
 const RX_QUEUE: usize = 8;
 const RX_BUF: usize = 16 * 1024;
+/// Frames handed to the chip and not yet sent; past this, [`Mt7612u::send`]
+/// says the queue is full.
+const TX_QUEUE: usize = 32;
 
 impl Mt7612u {
     /// The first stick connected.
@@ -222,10 +241,11 @@ impl Mt7612u {
                 Direction::Out => outs.push(ep.address()),
             }
         }
-        if ins.len() < 2 || outs.is_empty() {
+        if ins.len() < 2 || outs.len() < 2 {
             return Err(Error::Endpoints);
         }
         let cmd_out = interface.endpoint::<Bulk, Out>(outs[0])?;
+        let tx_out = interface.endpoint::<Bulk, Out>(outs[1])?;
         let resp_in = interface.endpoint::<Bulk, In>(ins[1])?;
         let rx_in = interface.endpoint::<Bulk, In>(ins[0])?;
         Ok(Mt7612u {
@@ -234,6 +254,8 @@ impl Mt7612u {
             cmd_out,
             resp_in,
             rx_in,
+            tx_out,
+            tx_errors: 0,
             seq: 0,
         })
     }
@@ -339,16 +361,23 @@ impl Mt7612u {
         let firmware = Firmware::parse(firmware)?;
         let rev = self.asic_version()? & 0xffff;
 
+        let t = Instant::now();
+        let stage = |what: &str| tracing::debug!("{what}: {} ms", t.elapsed().as_millis());
         self.reset_wlan()?;
         self.power_on()?;
+        stage("powered on");
         self.wait_for_mac()?;
+        stage("MAC up");
         self.load_rom_patch(&rom_patch, rev)?;
+        stage("ROM patch applied");
         self.load_firmware(&firmware, rev)?;
+        stage("firmware running");
         let busy = regs::WPDMA_GLO_CFG_TX_DMA_BUSY | regs::WPDMA_GLO_CFG_RX_DMA_BUSY;
         if !self.poll(Space::Mac, regs::WPDMA_GLO_CFG, busy, 0, ms(100))? {
             return Err(Error::Timeout("the DMA to go idle after the firmware"));
         }
         self.wait_for_mac()?;
+        stage("MAC up again");
         self.init_dma()?;
         // mt76x2u_mcu_init: responses on the command queue, the radio on.
         let mut q_select = mcu::Q_SELECT.to_le_bytes().to_vec();
@@ -452,13 +481,15 @@ impl Mt7612u {
     }
 
     /// mt76x2u_phy_set_channel, with the MAC stopped. Not yet: the EEPROM's
-    /// receive gain corrections (the MCU's gain is left at 0) and transmit
-    /// power.
+    /// receive gain corrections (the MCU's gain is left at 0), and transmit
+    /// power per rate (every rate gets each chain's target power).
     pub fn set_channel(&mut self, eeprom: &[u8], ch: channel::Channel) -> Result<(), Error> {
         use Space::Mac;
         let t = ch.tuning();
         let five = u32::from(ch.is_5ghz());
         let rev = self.asic_version()? & 0xffff;
+
+        self.set_txpower(eeprom, ch)?;
 
         // mt76x02_phy_set_band
         let (on, off) = if ch.is_5ghz() {
@@ -602,6 +633,121 @@ impl Mt7612u {
                 return Ok(Some(frame));
             }
         }
+    }
+
+    /// Hands `frame` (from its MAC header, without FCS) to the chip at `rate`,
+    /// without waiting. Gives it back when the chip's queue is full, and
+    /// fails for a rate the chip doesn't have.
+    pub fn send(&mut self, frame: Vec<u8>, rate: tx::Rate, no_ack: bool) -> Result<(), SendError> {
+        while self.tx_out.pending() > 0 {
+            match self.tx_out.wait_next_complete(Duration::ZERO) {
+                Some(done) => self.tx_errors += u64::from(done.status.is_err()),
+                None => break,
+            }
+        }
+        if self.tx_out.pending() >= TX_QUEUE {
+            return Err(SendError::Full(frame));
+        }
+        let rate = rate.value().ok_or(SendError::Rate(rate))?;
+        self.tx_out
+            .submit(Buffer::from(tx::packet(&frame, rate, no_ack)));
+        Ok(())
+    }
+
+    /// How many sent frames the USB transfer failed for.
+    pub fn tx_errors(&self) -> u64 {
+        self.tx_errors
+    }
+
+    /// Frames handed to the chip whose USB transfer hasn't completed.
+    pub fn tx_pending(&self) -> usize {
+        self.tx_out.pending()
+    }
+
+    /// Waits up to `timeout` for the frames handed to the chip to be taken;
+    /// how many are left.
+    pub fn flush_tx(&mut self, timeout: Duration) -> usize {
+        let until = Instant::now() + timeout;
+        while self.tx_out.pending() > 0 {
+            let left = until.saturating_duration_since(Instant::now());
+            match self.tx_out.wait_next_complete(left) {
+                Some(done) => self.tx_errors += u64::from(done.status.is_err()),
+                None => break,
+            }
+        }
+        self.tx_out.pending()
+    }
+
+    /// Transmit power, simplified from mt76x2_phy_set_txpower: the PA and
+    /// delay registers for the band (mt76x2_phy_set_txpower_regs,
+    /// mt76x2_configure_tx_delay), and each chain at its target power for the
+    /// channel's calibration group in the EEPROM, every rate at that power.
+    fn set_txpower(&self, eeprom: &[u8], ch: channel::Channel) -> Result<(), Error> {
+        use Space::Mac;
+        if !ch.is_5ghz() {
+            return Err(Error::Mcu(
+                "transmit power is only set up for 5 GHz yet".into(),
+            ));
+        }
+        let ext_pa = ee16(eeprom, regs::ee::NIC_CONF_0) & regs::ee::NIC_CONF_0_PA_INT_5G == 0;
+        let bw40 = !matches!(ch.width, channel::Width::Ht20);
+
+        // mt76x2_configure_tx_delay
+        let (cfg0, cfg1) = match (ext_pa, bw40) {
+            (true, true) => (0x000b_0c01, 0x0001_1414),
+            (true, false) => (0x0010_1101, 0x0001_1414),
+            (false, true) => (0x000b_0b01, 0x0002_1414),
+            (false, false) => (0x0010_1001, 0x0002_1414),
+        };
+        self.write(Mac, regs::TX_SW_CFG0, cfg0)?;
+        self.write(Mac, regs::TX_SW_CFG1, cfg1)?;
+        self.rmw_field(Mac, regs::XIFS_TIME_CFG, regs::XIFS_TIME_CFG_OFDM_SIFS, 15)?;
+
+        // mt76x2_phy_set_txpower_regs, 5 GHz
+        let (alc2, alc3, pa_adj) = if ext_pa {
+            (0x2f0f_0400, 0x2f0f_0476, 0x0400_0000)
+        } else {
+            (0x1b0f_0400, 0x1b0f_0476, 0)
+        };
+        self.write(Mac, regs::TX_ALC_CFG_2, alc2)?;
+        self.write(Mac, regs::TX_ALC_CFG_3, alc3)?;
+        self.write(Mac, regs::RF_PA_MODE_ADJ0, pa_adj)?;
+        self.write(Mac, regs::RF_PA_MODE_ADJ1, pa_adj)?;
+        self.write(Mac, regs::BB_PA_MODE_CFG0, 0x0000_ffff)?;
+        self.write(Mac, regs::BB_PA_MODE_CFG1, 0x00ff_00ff)?;
+        self.write(Mac, regs::RF_PA_MODE_CFG0, 0x0000_ffff)?;
+        self.write(Mac, regs::RF_PA_MODE_CFG1, 0x00ff_00ff)?;
+        if ext_pa {
+            self.write(Mac, regs::TX0_RF_GAIN_CORR, 0x363c_023c)?;
+            self.write(Mac, regs::TX1_RF_GAIN_CORR, 0x363c_023c)?;
+            self.write(Mac, regs::TX_ALC_CFG_4, 0x0000_1818)?;
+        } else {
+            self.write(Mac, regs::TX0_RF_GAIN_CORR, 0x383c_023c)?;
+            self.write(Mac, regs::TX1_RF_GAIN_CORR, 0x2428_2e28)?;
+            self.write(Mac, regs::TX_ALC_CFG_4, 0)?;
+        }
+
+        // Each chain's target power and its channel delta (mt76x2_get_power_info_5g)
+        let [txp_0, txp_1] = channel::chain_power_5g(eeprom, ch.primary);
+        tracing::info!(
+            "transmit power {txp_0:#04x} and {txp_1:#04x}, {} PA",
+            if ext_pa { "external" } else { "internal" }
+        );
+        self.rmw_field(Mac, regs::TX_ALC_CFG_0, regs::TX_ALC_CFG_0_CH_INIT_0, txp_0)?;
+        self.rmw_field(Mac, regs::TX_ALC_CFG_0, regs::TX_ALC_CFG_0_CH_INIT_1, txp_1)?;
+        for reg in [
+            regs::TX_PWR_CFG_0,
+            regs::TX_PWR_CFG_1,
+            regs::TX_PWR_CFG_2,
+            regs::TX_PWR_CFG_3,
+            regs::TX_PWR_CFG_4,
+            regs::TX_PWR_CFG_7,
+            regs::TX_PWR_CFG_8,
+            regs::TX_PWR_CFG_9,
+        ] {
+            self.write(Mac, reg, 0)?;
+        }
+        Ok(())
     }
 
     /// mt76x02_mcu_calibrate.

@@ -183,6 +183,11 @@ pub const EXT_CCA_CFG_CCA_FIELDS: u32 = 0xfff;
 /// EEPROM offsets (mt76x02_eeprom.h), each a 16-bit value.
 pub mod ee {
     pub const NIC_CONF_0: usize = 0x034;
+    /// The 5 GHz power amplifier is the chip's own (no external PA).
+    pub const NIC_CONF_0_PA_INT_5G: u16 = 1 << 9;
+    /// Each chain's 5 GHz power: 5 bytes per calibration group.
+    pub const TX_POWER_0_START_5G: usize = 0x062;
+    pub const TX_POWER_1_START_5G: usize = 0x080;
     pub const NIC_CONF_1: usize = 0x036;
     pub const XTAL_TRIM_1: usize = 0x03a;
     pub const NIC_CONF_2: usize = 0x042;
@@ -190,3 +195,18 @@ pub mod ee {
     pub const XTAL_TRIM_2: usize = 0x09e;
     pub const BT_RCAL_RESULT: usize = 0x138;
 }
+
+// Transmit power (mt76x2_phy_set_txpower_regs, mt76x02_phy_set_txpower).
+pub const BB_PA_MODE_CFG0: u32 = 0x1214;
+pub const BB_PA_MODE_CFG1: u32 = 0x1218;
+pub const RF_PA_MODE_CFG0: u32 = 0x121c;
+pub const RF_PA_MODE_CFG1: u32 = 0x1220;
+pub const RF_PA_MODE_ADJ0: u32 = 0x1228;
+pub const RF_PA_MODE_ADJ1: u32 = 0x122c;
+pub const TX0_RF_GAIN_CORR: u32 = 0x13a0;
+pub const TX1_RF_GAIN_CORR: u32 = 0x13a4;
+pub const TX_ALC_CFG_2: u32 = 0x13a8;
+pub const TX_ALC_CFG_3: u32 = 0x13ac;
+pub const TX_ALC_CFG_0: u32 = 0x13b0;
+pub const TX_ALC_CFG_0_CH_INIT_0: u32 = 0x3f;
+pub const TX_ALC_CFG_0_CH_INIT_1: u32 = 0x3f << 8;

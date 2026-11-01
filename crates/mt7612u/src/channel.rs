@@ -72,9 +72,98 @@ impl Channel {
     }
 }
 
+/// mt76x2_get_cal_channel_group: the 5 GHz calibration group a channel's
+/// EEPROM values are kept under (Japan, UNII-1, -2, -2e low, -2e high, -3).
+pub fn cal_group_5g(channel: u8) -> usize {
+    if (184..=196).contains(&channel) {
+        0
+    } else if channel <= 48 {
+        1
+    } else if channel <= 64 {
+        2
+    } else if channel <= 114 {
+        3
+    } else if channel <= 144 {
+        4
+    } else {
+        5
+    }
+}
+
+/// Each chain's transmit power on a 5 GHz channel, as mt76x2's 0x3f
+/// CH_INIT field takes it: the EEPROM's target power for the channel's group
+/// plus its delta for where the channel is in the group
+/// (mt76x2_get_power_info_5g), within 0 to 0x2f.
+pub fn chain_power_5g(eeprom: &[u8], channel: u8) -> [u32; 2] {
+    use crate::regs::ee;
+    // The first of these the channel is below gives the delta's byte; from
+    // 184 the Japanese channels, as mt76x2_get_power_info_5g orders them.
+    const BELOW: [(u8, usize); 9] = [
+        (44, 3),
+        (52, 4),
+        (58, 3),
+        (98, 4),
+        (106, 3),
+        (116, 4),
+        (130, 3),
+        (149, 4),
+        (157, 3),
+    ];
+    let delta_idx = if channel >= 192 {
+        4
+    } else if channel >= 184 {
+        3
+    } else {
+        BELOW
+            .iter()
+            .find(|(limit, _)| channel < *limit)
+            .map_or(4, |&(_, idx)| idx)
+    };
+    let group = cal_group_5g(channel);
+    [ee::TX_POWER_0_START_5G, ee::TX_POWER_1_START_5G].map(|start| {
+        let at = start + group * 5;
+        let byte = |i: usize| eeprom.get(at + i).copied().unwrap_or(0);
+        let power = i32::from(byte(2)) + sign_extend_optional(byte(delta_idx), 7);
+        power.clamp(0, 0x2f) as u32
+    })
+}
+
+/// mt76x02_sign_extend_optional: bit `size` says whether the value is there;
+/// then bit `size - 1` set means positive, and the bits below are the size.
+fn sign_extend_optional(val: u8, size: u32) -> i32 {
+    let val = u32::from(val);
+    if val & (1 << size) == 0 {
+        return 0;
+    }
+    let magnitude = (val & ((1 << (size - 1)) - 1)) as i32;
+    if val & (1 << (size - 1)) != 0 {
+        magnitude
+    } else {
+        -magnitude
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn channel_149_takes_unii_3s_power() {
+        assert_eq!(cal_group_5g(149), 5);
+        assert_eq!(cal_group_5g(44), 1);
+        let mut eeprom = vec![0u8; 512];
+        // chain 0, group 5: target 0x10, delta (index 3) +2
+        eeprom[0x062 + 25 + 2] = 0x10;
+        eeprom[0x062 + 25 + 3] = 0x80 | 0x40 | 2;
+        // chain 1, group 5: target 0x12, delta -3
+        eeprom[0x080 + 25 + 2] = 0x12;
+        eeprom[0x080 + 25 + 3] = 0x80 | 3;
+        assert_eq!(chain_power_5g(&eeprom, 149), [0x12, 0x0f]);
+        // no delta when bit 7 is clear, and never above 0x2f
+        eeprom[0x062 + 25 + 3] = 0x7f;
+        eeprom[0x080 + 25 + 2] = 0x40;
+        assert_eq!(chain_power_5g(&eeprom, 149), [0x10, 0x2f]);
+    }
 
     #[test]
     fn channel_149_at_40_mhz_tunes_to_151() {

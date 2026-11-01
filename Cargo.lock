@@ -729,6 +729,10 @@ name = "mt7612u"
 version = "0.1.0"
 dependencies = [
  "nusb",
+ "owly-awdl",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
