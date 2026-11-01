@@ -10,7 +10,7 @@ new Owly merges in, and HowlDrop's own code lives beside it:
 - `howldrop/`, `addon/`, `docker/`, `tools/`, `art/`, `site/` (the
   GitHub Pages site), `.github/` (`README.md`, `workflows/howldrop.yml`,
   `workflows/pages.yml`), and `docs/adapters.md`,
-  `hardware-notes.md` and this file.
+  `hardware-notes.md`, `native-windows.md` and this file.
 
 Changes go to MrSco/howl-drop only, not upstream.
 
