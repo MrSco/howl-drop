@@ -1,0 +1,24 @@
+[package]
+name = "howldrop-native"
+description = "HowlDrop's radio and AirDrop receiver as a Windows program: the user-space MT7612U driver, owly-awdl and owly-airdrop, with a Wintun adapter as the link (docs/native-windows.md)."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository = "https://github.com/MrSco/howl-drop"
+publish = false
+
+# Windows only; elsewhere it builds as a stub, so the workspace still builds.
+[target.'cfg(windows)'.dependencies]
+mt7612u = { path = "../mt7612u" }
+owly-airdrop = { path = "../owly-airdrop", features = ["mdns"] }
+owly-awdl = { path = "../owly-awdl", features = ["driver"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
+wintun = "0.5"
+
+[lints]
+workspace = true
