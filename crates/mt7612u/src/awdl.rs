@@ -19,8 +19,6 @@ const STATS_EVERY: Duration = Duration::from_secs(10);
 pub struct Radio {
     stick: Mt7612u,
     stats: Stats,
-    /// The last frames sent (diagnostics).
-    recent: Vec<String>,
     logged: Instant,
 }
 
@@ -31,9 +29,8 @@ struct Stats {
     rx_crc: u64,
     rx_unparsed: u64,
     tx: u64,
+    /// Frames the chip's queue was too full for, given back to the node.
     tx_full: u64,
-    /// Frames still with the chip 50 ms after a full queue, the last time.
-    tx_stuck: usize,
 }
 
 impl Radio {
@@ -41,7 +38,6 @@ impl Radio {
         Radio {
             stick,
             stats: Stats::default(),
-            recent: Vec::new(),
             logged: Instant::now(),
         }
     }
@@ -106,37 +102,13 @@ impl Air for Radio {
             Some(BlockAck::Delba { tid }) => self.block_ack(to.0, tid, false),
             None => {}
         }
-        // What was sent, for the first full queue (diagnostics only).
-        let what = format!(
-            "{} bytes fc {:02x}{:02x} to {} {rate:?}{}",
-            bytes.len(),
-            bytes.first().copied().unwrap_or(0),
-            bytes.get(1).copied().unwrap_or(0),
-            crate::format_mac(&to.0),
-            if no_ack { " no-ack" } else { "" }
-        );
         match self.stick.send(bytes, chip_rate, no_ack) {
             Ok(()) => {
                 self.stats.tx += 1;
-                if self.recent.len() == 40 {
-                    self.recent.remove(0);
-                }
-                self.recent
-                    .push(format!("{:.3} {what}", self.logged.elapsed().as_secs_f64()));
                 Ok(())
             }
             Err(SendError::Full(bytes)) => {
                 self.stats.tx_full += 1;
-                if self.stats.tx_full == 1 {
-                    tracing::info!(
-                        "first full queue; the last frames sent:\n{}",
-                        self.recent.join("\n")
-                    );
-                }
-                if self.stats.tx_full % 50 == 1 {
-                    // Slow or stuck? A short wait says (diagnostics only).
-                    self.stats.tx_stuck = self.stick.flush_tx(Duration::from_millis(50));
-                }
                 Err(Frame {
                     bytes,
                     to,

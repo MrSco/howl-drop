@@ -218,8 +218,10 @@ pub struct Mt7612u {
 const RX_QUEUE: usize = 8;
 const RX_BUF: usize = 16 * 1024;
 /// Frames handed to the chip and not yet sent; past this, [`Mt7612u::send`]
-/// says the queue is full.
-const TX_QUEUE: usize = 32;
+/// says the queue is full. Room for a burst of TCP ACKs: during an upload
+/// the node sends 40 within a few ms, and 32 left some of them waiting for
+/// the peer's next slot.
+const TX_QUEUE: usize = 128;
 /// Peers with Block Ack sessions at once, in WCID entries 1 on.
 const MAX_WCIDS: usize = 32;
 
