@@ -59,6 +59,29 @@ impl Native {
         cfg.max_frame = monitor_mtu.saturating_sub(RADIOTAP_MAX).max(1500);
 
         let air = packet_socket(monitor_index, false)?;
+        Native::start_air(tap, cfg, peers, move || {
+            Ok(Monitor {
+                fd: register(air)?,
+                buf: vec![0; 16 * 1024],
+            })
+        })
+    }
+
+    /// Makes `tap` and starts a node with `cfg` on the [`Air`] `open` makes,
+    /// on the node's thread: a radio other than a monitor interface, such as
+    /// a USB one driven from user space. `cfg.max_frame` is the caller's to
+    /// set for its radio.
+    pub fn start_air<A, F>(
+        tap: &str,
+        cfg: Config,
+        peers: watch::Sender<Vec<PeerInfo>>,
+        open: F,
+    ) -> io::Result<Native>
+    where
+        A: Air + 'static,
+        F: FnOnce() -> io::Result<A> + Send + 'static,
+    {
+        let mut rtnl = Rtnl::open()?;
         let tap_fd = open_tap(tap)?;
         let index = if_index(tap)?;
         // No address of the kernel's own beside ours.
@@ -74,10 +97,7 @@ impl Native {
         let running = driver::spawn(
             cfg,
             move || {
-                let monitor = Monitor {
-                    fd: register(air)?,
-                    buf: vec![0; 16 * 1024],
-                };
+                let air = open()?;
                 let tap = Tap {
                     fd: register(tap_fd)?,
                     name,
@@ -85,7 +105,7 @@ impl Native {
                     rtnl,
                     buf: vec![0; 16 * 1024],
                 };
-                Ok((monitor, tap))
+                Ok((air, tap))
             },
             peers,
         )?;
