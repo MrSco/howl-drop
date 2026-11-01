@@ -99,7 +99,7 @@ Windows.
 
 ## Where it is
 
-`crates/mt7612u` does milestones 1 to 4, tested so far in WSL (usbfs) with
+`crates/mt7612u` does milestones 1 to 5, tested so far in WSL (usbfs) with
 the kernel's `mt76x2u` set aside, on an Alfa AWUS036ACM (`0e8d:7612`):
 
 1. **Talk to the stick**: chip `0x76120044`, the EEPROM's MAC address.
@@ -111,6 +111,10 @@ the kernel's `mt76x2u` set aside, on an Alfa AWUS036ACM (`0e8d:7612`):
    with the iPhone within a second and kept it as a peer; data frames went
    both ways. Broadcast frames must not ask for an ACK (the chip retries
    them to its limit otherwise).
+5. **Network, on Linux first**: `howldrop-agent --usb-radio FW` runs the
+   receiver on the stick, `awdl0` the TAP owly-radio makes (`Native::start_air`).
+   The iPhone found "HowlDrop Native", asked and sent a 1.1 MB photo in
+   1.1 s. Wintun on Windows is next.
 
 Not ported yet: the EEPROM's receive gain corrections and per-rate transmit
 power, 2.4 GHz transmit power, the periodic recalibration, and hardware
