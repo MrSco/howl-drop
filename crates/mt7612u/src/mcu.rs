@@ -24,8 +24,35 @@ const MSG_TYPE_CMD: u32 = 1 << 30;
 /// Commands (mt76x02_mcu.h, enum mcu_cmd).
 pub mod cmd {
     pub const FUN_SET_OP: u8 = 1;
+    pub const LOAD_CR: u8 = 2;
+    pub const INIT_GAIN_OP: u8 = 3;
     pub const RANDOM_READ: u8 = 10;
     pub const POWER_SAVING_OP: u8 = 20;
+    pub const SWITCH_CHANNEL_OP: u8 = 30;
+    pub const CALIBRATION_OP: u8 = 31;
+}
+
+/// CALIBRATION_OP's calibrations (mt76x2/mcu.h, enum mcu_calibration).
+pub mod cal {
+    pub const R: u32 = 1;
+    pub const TEMP_SENSOR: u32 = 2;
+    pub const RXDCOC: u32 = 3;
+    pub const RC: u32 = 4;
+    pub const LC: u32 = 6;
+    pub const TX_LOFT: u32 = 7;
+    pub const TXIQ: u32 = 8;
+    pub const RXIQC_FI: u32 = 12;
+    pub const TX_SHAPING: u32 = 15;
+}
+
+/// LOAD_CR's mode: the RF's and the baseband's registers (MT_RF_BBP_CR).
+pub const RF_BBP_CR: u8 = 2;
+
+/// Two little-endian words: most commands' payload.
+pub fn words(a: u32, b: u32) -> Vec<u8> {
+    let mut out = a.to_le_bytes().to_vec();
+    out.extend_from_slice(&b.to_le_bytes());
+    out
 }
 
 /// FUN_SET_OP's function: the queue the MCU answers on (Q_SELECT).

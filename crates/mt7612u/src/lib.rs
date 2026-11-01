@@ -5,10 +5,13 @@
 //!
 //! So far: finding a stick, reading its registers and EEPROM, powering it on
 //! and starting its MCU with the ROM patch and firmware (mt76x2u_init_hardware
-//! up to mt76x2u_mcu_init), and talking to the MCU.
+//! up to mt76x2u_mcu_init), talking to the MCU, setting the MAC up, tuning a
+//! channel and receiving every frame on it.
 
+pub mod channel;
 pub mod mcu;
 pub mod regs;
+pub mod rx;
 
 use std::fmt;
 use std::thread;
@@ -183,9 +186,16 @@ pub struct Mt7612u {
     cmd_out: Endpoint<Bulk, Out>,
     /// The second bulk IN endpoint: the MCU's responses (MT_EP_IN_CMD_RESP).
     resp_in: Endpoint<Bulk, In>,
+    /// The first bulk IN endpoint: received frames (MT_EP_IN_PKT_RX).
+    rx_in: Endpoint<Bulk, In>,
     /// The last MCU command's sequence number, 1 to 15.
     seq: u8,
 }
+
+/// Bulk IN transfers kept in flight for received frames, and each one's size:
+/// one frame each (init_dma turns aggregation off), the largest an A-MSDU.
+const RX_QUEUE: usize = 8;
+const RX_BUF: usize = 16 * 1024;
 
 impl Mt7612u {
     /// The first stick connected.
@@ -217,11 +227,13 @@ impl Mt7612u {
         }
         let cmd_out = interface.endpoint::<Bulk, Out>(outs[0])?;
         let resp_in = interface.endpoint::<Bulk, In>(ins[1])?;
+        let rx_in = interface.endpoint::<Bulk, In>(ins[0])?;
         Ok(Mt7612u {
             info,
             interface,
             cmd_out,
             resp_in,
+            rx_in,
             seq: 0,
         })
     }
@@ -365,6 +377,289 @@ impl Mt7612u {
             .unwrap_or_default();
         mcu::random_read_values(&response, base, regs)
             .ok_or_else(|| Error::Mcu("its random read answered other registers".into()))
+    }
+
+    /// The rest of mt76x2u_init_hardware once the MCU runs: the MAC's
+    /// registers (mt76x2u_mac_reset), its address, the RF's and baseband's
+    /// registers from the MCU (LOAD_CR), and both receive and transmit
+    /// chains. The MAC is left stopped. `eeprom` is [`Mt7612u::eeprom`]'s.
+    pub fn init_mac(&mut self, eeprom: &[u8]) -> Result<(), Error> {
+        use Space::Mac;
+        let ee = |off| ee16(eeprom, off);
+
+        // mt76x2u_mac_reset
+        self.write(Mac, regs::WPDMA_GLO_CFG, (1 << 4) | (1 << 5))?;
+        self.write(Mac, regs::PBF_TX_MAX_PCNT, 0xefef_3f1f)?;
+        self.write(Mac, regs::PBF_RX_MAX_PCNT, 0xfebf)?;
+        for &(reg, val) in MAC_INITVALS {
+            self.write(Mac, reg, val)?;
+        }
+        self.write(Mac, regs::TX_LINK_CFG, 0x1020)?;
+        self.write(Mac, regs::AUTO_RSP_CFG, 0x13)?;
+        self.write(Mac, regs::MAX_LEN_CFG, 0x2f00)?;
+        self.write(Mac, regs::WMM_AIFSN, 0x2273)?;
+        self.write(Mac, regs::WMM_CWMIN, 0x2344)?;
+        self.write(Mac, regs::WMM_CWMAX, 0x34aa)?;
+        self.clear(
+            Mac,
+            regs::MAC_SYS_CTRL,
+            regs::MAC_SYS_CTRL_RESET_CSR | regs::MAC_SYS_CTRL_RESET_BBP,
+        )?;
+        self.clear(Mac, regs::COEXCFG0, regs::COEXCFG0_COEX_EN)?;
+        self.set(Mac, regs::EXT_CCA_CFG, 0xf000)?;
+        self.clear(Mac, regs::TX_ALC_CFG_4, 1 << 31)?;
+        self.fixup_xtal(eeprom)?;
+
+        // mt76x02_mac_setaddr, with the EEPROM's address
+        let mac = eeprom_mac(eeprom).ok_or(Error::Mcu("no MAC address in the EEPROM".into()))?;
+        let dw0 = u32::from_le_bytes([mac[0], mac[1], mac[2], mac[3]]);
+        let dw1 = u32::from(u16::from_le_bytes([mac[4], mac[5]]));
+        self.write(Mac, regs::MAC_ADDR_DW0, dw0)?;
+        self.write(Mac, regs::MAC_ADDR_DW1, dw1 | regs::MAC_ADDR_DW1_U2ME_MASK)?;
+        self.write(Mac, regs::MAC_BSSID_DW0, dw0)?;
+        // 8 APs + 8 STAs, the local bit, 7 more beacon slots
+        self.write(
+            Mac,
+            regs::MAC_BSSID_DW1,
+            dw1 | (3 << 16) | (1 << 21) | (7 << 18),
+        )?;
+
+        self.rmw(Mac, regs::US_CYC_CFG, regs::US_CYC_CNT, 0x1e)?;
+        self.write(Mac, regs::TXOP_CTRL_CFG, 0x583f)?;
+
+        // mt76x2_mcu_load_cr(dev, MT_RF_BBP_CR, 0, 0)
+        let cfg = (1 << 31)
+            | ((u32::from(ee(regs::ee::NIC_CONF_0)) >> 8) & 0x00ff)
+            | ((u32::from(ee(regs::ee::NIC_CONF_1)) << 8) & 0xff00);
+        let mut load_cr = vec![mcu::RF_BBP_CR, 0, 0, 0];
+        load_cr.extend_from_slice(&cfg.to_le_bytes());
+        self.mcu_send(mcu::cmd::LOAD_CR, &load_cr, true)?;
+
+        // mt76x02_phy_set_rxpath and _set_txdac, two chains each (0x202)
+        let agc0 = self.read(Mac, regs::bbp(regs::BBP_AGC, 0))?;
+        self.write(
+            Mac,
+            regs::bbp(regs::BBP_AGC, 0),
+            (agc0 & !(1 << 4)) | (1 << 3),
+        )?;
+        self.set(Mac, regs::bbp(regs::BBP_TXBE, 5), 0x3)?;
+
+        self.clear(
+            Mac,
+            regs::MAC_SYS_CTRL,
+            regs::MAC_SYS_CTRL_ENABLE_TX | regs::MAC_SYS_CTRL_ENABLE_RX,
+        )
+    }
+
+    /// mt76x2u_phy_set_channel, with the MAC stopped. Not yet: the EEPROM's
+    /// receive gain corrections (the MCU's gain is left at 0) and transmit
+    /// power.
+    pub fn set_channel(&mut self, eeprom: &[u8], ch: channel::Channel) -> Result<(), Error> {
+        use Space::Mac;
+        let t = ch.tuning();
+        let five = u32::from(ch.is_5ghz());
+        let rev = self.asic_version()? & 0xffff;
+
+        // mt76x02_phy_set_band
+        let (on, off) = if ch.is_5ghz() {
+            (regs::TX_BAND_CFG_5G, regs::TX_BAND_CFG_2G)
+        } else {
+            (regs::TX_BAND_CFG_2G, regs::TX_BAND_CFG_5G)
+        };
+        self.clear(Mac, regs::TX_BAND_CFG, off)?;
+        self.set(Mac, regs::TX_BAND_CFG, on)?;
+        self.rmw_field(
+            Mac,
+            regs::TX_BAND_CFG,
+            regs::TX_BAND_CFG_UPPER_40M,
+            u32::from(t.group & 1),
+        )?;
+
+        // mt76x02_phy_set_bw
+        let (core, agc) = match ch.width {
+            channel::Width::Ht20 => (0, 1),
+            _ => (2, 3),
+        };
+        let group = u32::from(t.group);
+        self.rmw_field(
+            Mac,
+            regs::bbp(regs::BBP_CORE, 1),
+            regs::BBP_CORE_R1_BW,
+            core,
+        )?;
+        self.rmw_field(Mac, regs::bbp(regs::BBP_AGC, 0), regs::BBP_AGC_R0_BW, agc)?;
+        self.rmw_field(
+            Mac,
+            regs::bbp(regs::BBP_AGC, 0),
+            regs::BBP_AGC_R0_CTRL_CHAN,
+            group,
+        )?;
+        self.rmw_field(
+            Mac,
+            regs::bbp(regs::BBP_TXBE, 0),
+            regs::BBP_TXBE_R0_CTRL_CHAN,
+            group,
+        )?;
+        self.rmw(
+            Mac,
+            regs::EXT_CCA_CFG,
+            regs::EXT_CCA_CFG_CCA_FIELDS,
+            ch.ext_cca(),
+        )?;
+
+        // mt76x2_mcu_set_channel: first without the extension channel
+        let mut switch = vec![t.center, 0, t.bw, 0];
+        switch.extend_from_slice(&0x0202u16.to_le_bytes()); // chainmask
+        switch.extend_from_slice(&[0, 0]);
+        self.mcu_send(mcu::cmd::SWITCH_CHANNEL_OP, &switch, true)?;
+        thread::sleep(ms(10));
+        switch[6] = 0xe0 + t.bw_index;
+        self.mcu_send(mcu::cmd::SWITCH_CHANNEL_OP, &switch, true)?;
+
+        // mt76x2_mcu_init_gain(dev, channel, gain, true)
+        let gain = 0;
+        self.mcu_send(
+            mcu::cmd::INIT_GAIN_OP,
+            &mcu::words(u32::from(t.center) | (1 << 31), gain),
+            true,
+        )?;
+
+        // Enable LDPC Rx
+        if rev >= regs::REV_E3 {
+            self.set(Mac, regs::bbp(regs::BBP_RXO, 13), 1 << 10)?;
+        }
+        if ee16(eeprom, regs::ee::BT_RCAL_RESULT) & 0xff != 0xff {
+            self.mcu_calibrate(mcu::cal::R, 0)?;
+        }
+        self.mcu_calibrate(mcu::cal::RXDCOC, u32::from(t.center))?;
+        // Rx LPF calibration
+        self.mcu_calibrate(mcu::cal::RC, 0)?;
+
+        self.write(Mac, regs::bbp(regs::BBP_AGC, 61), 0xff64_a4e2)?;
+        self.write(Mac, regs::bbp(regs::BBP_AGC, 7), 0x0808_1010)?;
+        self.write(Mac, regs::bbp(regs::BBP_AGC, 11), 0x0000_0404)?;
+        self.write(Mac, regs::bbp(regs::BBP_AGC, 2), 0x0000_7070)?;
+        self.write(Mac, regs::TXOP_CTRL_CFG, 0x0410_1b3f)?;
+        self.set(Mac, regs::bbp(regs::BBP_TXO, 4), 1 << 25)?;
+        self.set(Mac, regs::bbp(regs::BBP_RXO, 13), 1 << 8)?;
+
+        // mt76x2u_phy_channel_calibrate(dev, true)
+        if ch.is_5ghz() {
+            self.mcu_calibrate(mcu::cal::LC, 0)?;
+        }
+        self.mcu_calibrate(mcu::cal::TX_LOFT, five)?;
+        self.mcu_calibrate(mcu::cal::TXIQ, five)?;
+        self.mcu_calibrate(mcu::cal::RXIQC_FI, five)?;
+        self.mcu_calibrate(mcu::cal::TEMP_SENSOR, 0)?;
+        self.mcu_calibrate(mcu::cal::TX_SHAPING, 0)?;
+
+        // mt76x02_edcca_init, energy detection off
+        self.set(Mac, regs::TX_LINK_CFG, 1 << 12)?;
+        self.clear(Mac, regs::TXOP_CTRL_CFG, 1 << 20)?;
+        self.write(Mac, regs::bbp(regs::BBP_AGC, 2), 0x0000_7070)?;
+        self.set(Mac, regs::TXOP_HLDR_ET, 1 << 1)
+    }
+
+    /// mt76x02u_mac_start with a filter that keeps every frame but broken
+    /// ones and control frames other than Block Acks, then bulk IN transfers
+    /// queued for them.
+    pub fn start_rx(&mut self) -> Result<(), Error> {
+        use Space::Mac;
+        use regs::rx_filter::*;
+        let busy = regs::WPDMA_GLO_CFG_TX_DMA_BUSY | regs::WPDMA_GLO_CFG_RX_DMA_BUSY;
+        self.write(Mac, regs::MAC_SYS_CTRL, regs::MAC_SYS_CTRL_ENABLE_TX)?;
+        if !self.poll(Mac, regs::WPDMA_GLO_CFG, busy, 0, ms(200))? {
+            return Err(Error::Timeout("the DMA to go idle"));
+        }
+        let drop =
+            CRC_ERR | PHY_ERR | VER_ERR | DUP | CFACK | CFEND | ACK | CTS | RTS | PSPOLL | CTRL_RSV;
+        self.write(Mac, regs::RX_FILTR_CFG, drop)?;
+        self.write(
+            Mac,
+            regs::MAC_SYS_CTRL,
+            regs::MAC_SYS_CTRL_ENABLE_TX | regs::MAC_SYS_CTRL_ENABLE_RX,
+        )?;
+        if !self.poll(Mac, regs::WPDMA_GLO_CFG, busy, 0, ms(50))? {
+            return Err(Error::Timeout("the DMA to go idle"));
+        }
+        while self.rx_in.pending() < RX_QUEUE {
+            self.rx_in.submit(Buffer::new(RX_BUF));
+        }
+        Ok(())
+    }
+
+    /// The next frame received, waiting up to `timeout`; None when none came.
+    pub fn next_frame(&mut self, timeout: Duration) -> Result<Option<rx::RxFrame>, Error> {
+        let until = Instant::now() + timeout;
+        loop {
+            let left = until.saturating_duration_since(Instant::now());
+            let Some(done) = self.rx_in.wait_next_complete(left) else {
+                return Ok(None);
+            };
+            self.rx_in.submit(Buffer::new(RX_BUF));
+            done.status?;
+            if let Some(frame) = rx::parse(&done.buffer[..done.actual_len]) {
+                return Ok(Some(frame));
+            }
+        }
+    }
+
+    /// mt76x02_mcu_calibrate.
+    fn mcu_calibrate(&mut self, kind: u32, param: u32) -> Result<(), Error> {
+        self.mcu_send(mcu::cmd::CALIBRATION_OP, &mcu::words(kind, param), true)?;
+        Ok(())
+    }
+
+    /// mt76x2u_mac_fixup_xtal: the crystal's trim from the EEPROM, and the
+    /// timing fix-ups that come with it.
+    fn fixup_xtal(&self, eeprom: &[u8]) -> Result<(), Error> {
+        use Space::{Cfg, Mac};
+        let trim2 = ee16(eeprom, regs::ee::XTAL_TRIM_2);
+        let mut offset = i32::from(trim2 & 0x7f);
+        if trim2 & 0xff == 0xff {
+            offset = 0;
+        } else if trim2 & 0x80 != 0 {
+            offset = -offset;
+        }
+        let mut val = trim2 >> 8;
+        if val == 0x00 || val == 0xff {
+            val = ee16(eeprom, regs::ee::XTAL_TRIM_1) & 0xff;
+            if val == 0x00 || val == 0xff {
+                val = 0x14;
+            }
+        }
+        let c2 = (i32::from(val & 0x7f) + offset) as u32;
+        self.rmw_field(Cfg, regs::XO_CTRL5, regs::XO_CTRL5_C2_VAL, c2)?;
+        self.set(Cfg, regs::XO_CTRL6, regs::XO_CTRL6_C2_CTRL)?;
+
+        self.write(Mac, 0x504, 0x0600_0000)?;
+        self.write(Mac, 0x50c, 0x0880_0000)?;
+        thread::sleep(ms(5));
+        self.write(Mac, 0x504, 0)?;
+
+        // decrease SIFS from 16us to 13us
+        self.rmw_field(Mac, regs::XIFS_TIME_CFG, regs::XIFS_TIME_CFG_OFDM_SIFS, 0xd)?;
+        self.rmw_field(Mac, regs::BKOFF_SLOT_CFG, regs::BKOFF_SLOT_CFG_CC_DELAY, 1)?;
+        // init fce
+        self.clear(Mac, regs::FCE_L2_STUFF, regs::FCE_L2_STUFF_WR_MPDU_LEN_EN)?;
+
+        let option = (ee16(eeprom, regs::ee::NIC_CONF_2) & regs::ee::NIC_CONF_2_XTAL_OPTION) >> 9;
+        match option {
+            0 => self.write(Mac, regs::XO_CTRL7, 0x5c1f_ee80),
+            1 => self.write(Mac, regs::XO_CTRL7, 0x5c1f_eed0),
+            _ => Ok(()),
+        }
+    }
+
+    /// Replaces `mask` of a register with `val` (mt76_rmw).
+    fn rmw(&self, space: Space, addr: u32, mask: u32, val: u32) -> Result<(), Error> {
+        let old = self.read(space, addr)?;
+        self.write(space, addr, (old & !mask) | (val & mask))
+    }
+
+    /// Sets the field `mask` covers to `val` (mt76_rmw_field).
+    fn rmw_field(&self, space: Space, addr: u32, mask: u32, val: u32) -> Result<(), Error> {
+        self.rmw(space, addr, mask, val << mask.trailing_zeros())
     }
 
     /// A command to the MCU (__mt76x02u_mcu_send_msg). With `wait`, its
@@ -663,6 +958,83 @@ impl Mt7612u {
             thread::sleep(ms(5));
         }
         Err(last.expect("tried at least once").into())
+    }
+}
+
+/// mt76_write_mac_initvals: "copied from MediaTek reference source", then the
+/// protection settings (DEFAULT_PROT_CFG_CCK, _OFDM, _20 and _40 worked out).
+const MAC_INITVALS: &[(u32, u32)] = &[
+    (regs::PBF_SYS_CTRL, 0x0008_0c00),
+    (regs::PBF_CFG, 0x1efe_bcff),
+    (regs::FCE_PSE_CTRL, 0x0000_0001),
+    (regs::MAC_SYS_CTRL, 0x0000_0000),
+    (regs::MAX_LEN_CFG, 0x003e_3f00),
+    (regs::AMPDU_MAX_LEN_20M1S, 0xaaa9_9887),
+    (regs::AMPDU_MAX_LEN_20M2S, 0x0000_00aa),
+    (regs::XIFS_TIME_CFG, 0x33a4_0d0a),
+    (regs::BKOFF_SLOT_CFG, 0x0000_0209),
+    (regs::TBTT_SYNC_CFG, 0x0042_2010),
+    (regs::PWR_PIN_CFG, 0x0000_0000),
+    (0x1238, 0x0017_00c8),
+    (regs::TX_SW_CFG0, 0x0010_1001),
+    (regs::TX_SW_CFG1, 0x0001_0000),
+    (regs::TX_SW_CFG2, 0x0000_0000),
+    (regs::TXOP_CTRL_CFG, 0x0400_583f),
+    (regs::TX_RTS_CFG, 0x00ff_ff20),
+    (regs::TX_TIMEOUT_CFG, 0x000a_2290),
+    (regs::TX_RETRY_CFG, 0x47f0_1f0f),
+    (regs::EXP_ACK_TIME, 0x002c_00dc),
+    (regs::TX_PROT_CFG6, 0xe3f4_2004),
+    (regs::TX_PROT_CFG7, 0xe3f4_2084),
+    (regs::TX_PROT_CFG8, 0xe3f4_2104),
+    (regs::PIFS_TX_CFG, 0x0006_0fff),
+    (regs::RX_FILTR_CFG, 0x0001_5f97),
+    (regs::LEGACY_BASIC_RATE, 0x0000_017f),
+    (regs::HT_BASIC_RATE, 0x0000_4003),
+    (regs::PN_PAD_MODE, 0x0000_0003),
+    (regs::TXOP_HLDR_ET, 0x0000_0002),
+    (0xa44, 0x0000_0000),
+    (regs::HEADER_TRANS_CTRL_REG, 0x0000_0000),
+    (regs::TSO_CTRL, 0x0000_0000),
+    (regs::AUX_CLK_CFG, 0x0000_0000),
+    (regs::DACCLK_EN_DLY_CFG, 0x0000_0000),
+    (regs::TX_ALC_CFG_4, 0x0000_0000),
+    (regs::TX_ALC_VGA3, 0x0000_0000),
+    (regs::TX_PWR_CFG_0, 0x3a3a_3a3a),
+    (regs::TX_PWR_CFG_1, 0x3a3a_3a3a),
+    (regs::TX_PWR_CFG_2, 0x3a3a_3a3a),
+    (regs::TX_PWR_CFG_3, 0x3a3a_3a3a),
+    (regs::TX_PWR_CFG_4, 0x3a3a_3a3a),
+    (regs::TX_PWR_CFG_7, 0x3a3a_3a3a),
+    (regs::TX_PWR_CFG_8, 0x0000_003a),
+    (regs::TX_PWR_CFG_9, 0x0000_003a),
+    (regs::EFUSE_CTRL, 0x0000_d000),
+    (regs::PAUSE_ENABLE_CONTROL1, 0x0000_000a),
+    (regs::FCE_WLAN_FLOW_CONTROL1, 0x6040_1c18),
+    (regs::WPDMA_DELAY_INT_CFG, 0x94ff_0000),
+    (regs::TX_SW_CFG3, 0x0000_0004),
+    (regs::HT_FBK_TO_LEGACY, 0x0000_1818),
+    (regs::VHT_HT_FBK_CFG1, 0xedcb_a980),
+    (regs::PROT_AUTO_TX_CFG, 0x0083_0083),
+    (regs::HT_CTRL_CFG, 0x0000_01ff),
+    (regs::TX_LINK_CFG, 0x0000_1020),
+    // rate 0x3, NAV 1, TXOP allow 0x3f, RTS threshold
+    (regs::CCK_PROT_CFG, 0x07f4_0003),
+    // rate 0x2004, NAV 1, TXOP allow 0x3f, RTS threshold
+    (regs::OFDM_PROT_CFG, 0x07f4_2004),
+    // rate 0x2004, ctrl 1, NAV 1, TXOP allow 0x17
+    (regs::MM20_PROT_CFG, 0x0175_2004),
+    // rate 0x2084, ctrl 1, NAV 1, TXOP allow 0x3f
+    (regs::MM40_PROT_CFG, 0x03f5_2084),
+    (regs::GF20_PROT_CFG, 0x0175_2004),
+    (regs::GF40_PROT_CFG, 0x03f5_2084),
+];
+
+/// A 16-bit EEPROM value (mt76x02_eeprom_get); 0xffff past its end.
+fn ee16(eeprom: &[u8], offset: usize) -> u16 {
+    match eeprom.get(offset..offset + 2) {
+        Some(b) => u16::from_le_bytes([b[0], b[1]]),
+        None => 0xffff,
     }
 }
 
