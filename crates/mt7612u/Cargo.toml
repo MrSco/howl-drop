@@ -1,0 +1,15 @@
+[package]
+name = "mt7612u"
+description = "A user-space driver for the MediaTek MT7612U USB Wi-Fi chip, as a radio for owly-awdl: WinUSB on Windows, usbfs on Linux."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository = "https://github.com/MrSco/howl-drop"
+publish = false
+
+[dependencies]
+nusb = "0.2"
+
+[lints]
+workspace = true
