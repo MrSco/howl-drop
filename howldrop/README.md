@@ -93,7 +93,9 @@ and Windows asks once for permission to share the stick with WSL. The dot on
 the icon says how it is going: amber while it starts, green when the PC is
 on the share sheet (by its name), red when it needs you (no stick, say), and
 none while it is off. Turning it off, or quitting, gives the stick back to
-Windows.
+Windows. If the radio stops by itself once it has been on the share sheet (the
+PC slept and the stick went with it, or WSL shut down), HowlDrop starts it
+again, amber meanwhile; red means four tries in a row didn't bring it back.
 
 Files land in `Downloads\HowlDrop` (one copy; the Linux side writes there
 directly), text goes on the clipboard, and nothing listens on the network

@@ -100,6 +100,14 @@ int main() {
     expect(f && f->size() == 2 && (*f)[1] == "done", "an event on its own");
     f = wsl::event_fields("@howldrop\tsent\ta.jpg\tfailed\t\r");
     expect(f && f->size() == 4 && (*f)[3].empty(), "an empty last field, and a CR");
+    // The radio stopped by itself: again at once after it had been up, then
+    // waiting longer, and giving up after four starts that didn't take.
+    expect(wsl::restart_delay_ms(0) == 3000, "lost while up: again in 3 s");
+    expect(wsl::restart_delay_ms(1) > wsl::restart_delay_ms(0) && wsl::restart_delay_ms(3) == 30000,
+           "each failed start waits longer");
+    expect(wsl::restart_delay_ms(4) == -1, "four failed starts in a row: stop and say why");
+    f = wsl::event_fields("@howldrop\tstopped\tThe Wi-Fi interface wlan0 doesn't exist.");
+    expect(f && f->size() == 2 && (*f)[0] == "stopped", "why the stack stopped");
     f = wsl::event_fields("@howldrop");
     expect(f && f->empty(), "no fields");
     expect(!wsl::event_fields("Deliver: delivered IMG_1.JPG"), "a log line");

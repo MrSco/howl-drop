@@ -1031,6 +1031,15 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             }
             if (app->howl_window) app->howl_window->refresh();  // status, nearby devices
             return 0;
+        case WM_POWERBROADCAST:
+            // Back from sleep: AirDrop on this PC, if it gave up while the PC
+            // slept, gets another go. One still running starts again by itself
+            // when it finds the stick gone (WslRadio::run).
+            if (wparam == PBT_APMRESUMEAUTOMATIC && app->radio && app->radio_level == RadioLevel::Problem) {
+                log_line(*app, "AirDrop on this PC: the PC woke up, starting it again");
+                restart_radio(*app);
+            }
+            return TRUE;
         case WM_DESTROY:
             KillTimer(window, kStopTimer);
             Shell_NotifyIconW(NIM_DELETE, &app->icon);
