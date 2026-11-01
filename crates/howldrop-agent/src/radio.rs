@@ -48,6 +48,7 @@ impl Radio {
             Some(dir) => Radio::Usb(crate::usb::UsbRadio::new(
                 dir.clone(),
                 opts.tx_rate.as_deref(),
+                opts.aggregation,
             )?),
             None => Radio::Kernel(Box::new(Kernel::new(opts)?)),
         })

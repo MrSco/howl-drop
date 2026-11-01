@@ -25,17 +25,25 @@ pub struct UsbRadio {
     /// Holds mt7662_rom_patch.bin and mt7662.bin.
     firmware: PathBuf,
     tx_rate: Option<TxRate>,
+    /// Accept the phone's Block Ack sessions: the chip answers them
+    /// (mt7612u's rx_block_ack). On unless --aggregation off.
+    aggregation: bool,
     live: Option<(Native, JoinHandle<()>)>,
 }
 
 impl UsbRadio {
-    pub fn new(firmware: PathBuf, tx_rate: Option<&str>) -> Result<UsbRadio, String> {
+    pub fn new(
+        firmware: PathBuf,
+        tx_rate: Option<&str>,
+        aggregation: Option<bool>,
+    ) -> Result<UsbRadio, String> {
         let tx_rate = tx_rate
             .map(|r| TxRate::parse(r).ok_or_else(|| format!("tx_rate {r:?} isn't a rate")))
             .transpose()?;
         Ok(UsbRadio {
             firmware,
             tx_rate,
+            aggregation: aggregation.unwrap_or(true),
             live: None,
         })
     }
@@ -107,6 +115,7 @@ impl UsbRadio {
         if let Some(rate) = self.tx_rate {
             cfg.rate = rate;
         }
+        cfg.accept_addba = self.aggregation;
         let (peers_tx, peers) = watch::channel(Vec::new());
         let native = tokio::task::spawn_blocking(move || {
             Native::start_air(AWDL_IFACE, cfg, peers_tx, move || Ok(UsbAir::new(stick)))

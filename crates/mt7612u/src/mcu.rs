@@ -27,6 +27,7 @@ pub mod cmd {
     pub const LOAD_CR: u8 = 2;
     pub const INIT_GAIN_OP: u8 = 3;
     pub const RANDOM_READ: u8 = 10;
+    pub const RANDOM_WRITE: u8 = 12;
     pub const POWER_SAVING_OP: u8 = 20;
     pub const SWITCH_CHANNEL_OP: u8 = 30;
     pub const CALIBRATION_OP: u8 = 31;

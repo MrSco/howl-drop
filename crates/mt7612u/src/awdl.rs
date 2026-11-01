@@ -72,6 +72,11 @@ impl Air for Radio {
                 Some(f) => {
                     self.stats.rx += 1;
                     self.stats.rx_awdl += u64::from(rx::is_awdl(&f.frame));
+                    // A peer ending its session: the chip stops answering it.
+                    if let Some(BlockAck::Delba { tid }) = block_ack(&f.frame) {
+                        let peer = f.frame[10..16].try_into().unwrap();
+                        self.block_ack(peer, tid, false);
+                    }
                     return Ok(Received {
                         bytes: f.frame,
                         rssi: Some(f.rssi[0] as i8),
@@ -94,6 +99,13 @@ impl Air for Radio {
             TxRate::Ht { mcs, sgi } => tx::Rate::Ht { mcs, sgi },
         };
         self.maybe_log();
+        // The node accepting a peer's Block Ack session (AWDL-15): the chip
+        // answers its aggregates from now on, before the peer hears yes.
+        match block_ack(&bytes) {
+            Some(BlockAck::Accepted { tid }) => self.block_ack(to.0, tid, true),
+            Some(BlockAck::Delba { tid }) => self.block_ack(to.0, tid, false),
+            None => {}
+        }
         // What was sent, for the first full queue (diagnostics only).
         let what = format!(
             "{} bytes fc {:02x}{:02x} to {} {rate:?}{}",
@@ -151,4 +163,83 @@ impl Netif for NoNetif {
     }
 
     fn deliver(&mut self, _packet: Ipv6Packet) {}
+}
+
+impl Radio {
+    fn block_ack(&mut self, peer: [u8; 6], tid: u8, on: bool) {
+        let who = crate::format_mac(&peer);
+        match self.stick.rx_block_ack(peer, tid, on) {
+            Ok(()) if on => tracing::info!("Block Ack in hardware for {who}, TID {tid}"),
+            Ok(()) => tracing::info!("Block Ack in hardware stopped for {who}, TID {tid}"),
+            Err(e) => tracing::warn!("Block Ack for {who}, TID {tid}: {e}"),
+        }
+    }
+}
+
+/// A Block Ack session starting or ending, as the frames that do it say.
+#[derive(Debug, PartialEq, Eq)]
+enum BlockAck {
+    /// An ADDBA Response with status success.
+    Accepted { tid: u8 },
+    /// A DELBA.
+    Delba { tid: u8 },
+}
+
+/// Category 3 (Block Ack) action frames: an ADDBA Response (action 1:
+/// token, status, parameter set with the TID in bits 2-5) or a DELBA
+/// (action 2: parameter set with the TID in bits 12-15).
+fn block_ack(frame: &[u8]) -> Option<BlockAck> {
+    let body = frame.get(24..)?;
+    if frame.first() != Some(&0xd0) || body.first() != Some(&3) {
+        return None;
+    }
+    let le16 = |at: usize| Some(u16::from_le_bytes([*body.get(at)?, *body.get(at + 1)?]));
+    match body.get(1)? {
+        1 if le16(3)? == 0 => Some(BlockAck::Accepted {
+            tid: ((le16(5)? >> 2) & 0xf) as u8,
+        }),
+        2 => Some(BlockAck::Delba {
+            tid: (le16(2)? >> 12) as u8,
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn action(body: &[u8]) -> Vec<u8> {
+        let mut f = vec![0xd0, 0, 0, 0];
+        f.extend_from_slice(&[0x4e, 0x4f, 0x7b, 0xa7, 0xf2, 0x70]);
+        f.extend_from_slice(&[0x00, 0xc0, 0xca, 0xba, 0xa7, 0x0b]);
+        f.extend_from_slice(&[0x00, 0xc0, 0xca, 0xba, 0xa7, 0x0b]);
+        f.extend_from_slice(&[0, 0]);
+        f.extend_from_slice(body);
+        f
+    }
+
+    #[test]
+    fn block_ack_sessions_are_seen_starting_and_ending() {
+        // ADDBA Response: token 7, success, parameters with TID 5, timeout
+        let params: u16 = 0x0002 | (5 << 2) | (64 << 6);
+        let mut body = vec![3, 1, 7, 0, 0];
+        body.extend_from_slice(&params.to_le_bytes());
+        body.extend_from_slice(&[0, 0]);
+        assert_eq!(
+            block_ack(&action(&body)),
+            Some(BlockAck::Accepted { tid: 5 })
+        );
+        // refused: no session
+        body[3] = 37;
+        assert_eq!(block_ack(&action(&body)), None);
+        // DELBA, TID 6
+        let delba = (6u16 << 12).to_le_bytes();
+        assert_eq!(
+            block_ack(&action(&[3, 2, delba[0], delba[1], 1, 0])),
+            Some(BlockAck::Delba { tid: 6 })
+        );
+        // AWDL's own action frames aren't Block Ack
+        assert_eq!(block_ack(&action(&[127, 0x00, 0x17, 0xf2, 8])), None);
+    }
 }

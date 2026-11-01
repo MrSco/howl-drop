@@ -210,3 +210,34 @@ pub const TX_ALC_CFG_3: u32 = 0x13ac;
 pub const TX_ALC_CFG_0: u32 = 0x13b0;
 pub const TX_ALC_CFG_0_CH_INIT_0: u32 = 0x3f;
 pub const TX_ALC_CFG_0_CH_INIT_1: u32 = 0x3f << 8;
+
+/// The WCID table (MT_WCID_ADDR, MT_WCID_ATTR): a station's address, and
+/// its receive Block Ack bits, one per TID, in the 16 bits after it.
+pub const fn wcid_addr(n: u32) -> u32 {
+    0x1800 + n * 8
+}
+pub const fn wcid_attr(n: u32) -> u32 {
+    0xa800 + n * 4
+}
+
+/// The two words of a WCID address entry (struct mt76_wcid_addr): the MAC
+/// address, then the Block Ack mask.
+pub fn wcid_words(mac: [u8; 6], ba_mask: u16) -> [u32; 2] {
+    [
+        u32::from_le_bytes([mac[0], mac[1], mac[2], mac[3]]),
+        u32::from(u16::from_le_bytes([mac[4], mac[5]])) | (u32::from(ba_mask) << 16),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wcid_entry_holds_the_address_then_the_block_ack_bits() {
+        let mac = [0x4e, 0x4f, 0x7b, 0xa7, 0xf2, 0x70];
+        assert_eq!(wcid_words(mac, 1 << 5), [0xa77b_4f4e, 0x0020_70f2]);
+        assert_eq!(wcid_addr(1), 0x1808);
+        assert_eq!(wcid_attr(2), 0xa808);
+    }
+}

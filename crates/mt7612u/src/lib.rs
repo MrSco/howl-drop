@@ -204,6 +204,11 @@ pub struct Mt7612u {
     tx_out: Endpoint<Bulk, Out>,
     /// Sent frames whose USB transfer failed.
     tx_errors: u64,
+    /// The WCID table's entries from 1 on: each peer with a Block Ack
+    /// session, and its TIDs' bits.
+    wcids: Vec<([u8; 6], u16)>,
+    /// The entry a full table reuses next.
+    wcid_next: usize,
     /// The last MCU command's sequence number, 1 to 15.
     seq: u8,
 }
@@ -215,6 +220,8 @@ const RX_BUF: usize = 16 * 1024;
 /// Frames handed to the chip and not yet sent; past this, [`Mt7612u::send`]
 /// says the queue is full.
 const TX_QUEUE: usize = 32;
+/// Peers with Block Ack sessions at once, in WCID entries 1 on.
+const MAX_WCIDS: usize = 32;
 
 impl Mt7612u {
     /// The first stick connected.
@@ -256,6 +263,8 @@ impl Mt7612u {
             rx_in,
             tx_out,
             tx_errors: 0,
+            wcids: Vec::new(),
+            wcid_next: 0,
             seq: 0,
         })
     }
@@ -408,6 +417,69 @@ impl Mt7612u {
             .ok_or_else(|| Error::Mcu("its random read answered other registers".into()))
     }
 
+    /// Registers written by the MCU (CMD_RANDOM_WRITE, mt76x02u_mcu_wr_rp):
+    /// `base` plus each address, 24 to a command, the last one answered.
+    pub fn mcu_write(&mut self, base: u32, pairs: &[(u32, u32)]) -> Result<(), Error> {
+        let chunks: Vec<_> = pairs.chunks(mcu::INBAND_MAX / 8).collect();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let payload: Vec<u8> = chunk
+                .iter()
+                .flat_map(|&(reg, val)| mcu::words(base + reg, val))
+                .collect();
+            self.mcu_send(mcu::cmd::RANDOM_WRITE, &payload, i + 1 == chunks.len())?;
+        }
+        Ok(())
+    }
+
+    /// Takes the frames a peer aggregates on `tid` with a Block Ack from the
+    /// chip, or stops (mt76x02_ampdu_action, RX_START and RX_STOP): the
+    /// peer's entry in the WCID table, its bit for `tid` set or cleared.
+    pub fn rx_block_ack(&mut self, peer: [u8; 6], tid: u8, on: bool) -> Result<(), Error> {
+        let bit = 1u16 << (tid & 0xf);
+        let idx = match self.wcids.iter().position(|(mac, _)| *mac == peer) {
+            Some(i) => i,
+            None if !on => return Ok(()),
+            None if self.wcids.len() < MAX_WCIDS => {
+                self.wcids.push((peer, 0));
+                self.wcids.len() - 1
+            }
+            // Full: the next entry round makes room, in place, so the
+            // others keep their slots.
+            None => {
+                let i = self.wcid_next % MAX_WCIDS;
+                self.wcid_next += 1;
+                self.wcids[i] = (peer, 0);
+                i
+            }
+        };
+        let mask = &mut self.wcids[idx].1;
+        if on {
+            *mask |= bit;
+        } else {
+            *mask &= !bit;
+        }
+        let [w0, w1] = regs::wcid_words(peer, *mask);
+        // Entry 0 is left alone, as mt76 keeps it.
+        let at = regs::wcid_addr(idx as u32 + 1);
+        self.write(Space::Mac, at, w0)?;
+        self.write(Space::Mac, at + 4, w1)
+    }
+
+    /// The WCID table emptied (as mt76x2u_init_hardware resets it): every
+    /// station's attributes, and the addresses and Block Ack bits of the
+    /// first 128.
+    fn reset_wcids(&mut self) -> Result<(), Error> {
+        let mut pairs: Vec<(u32, u32)> = (0..256).map(|i| (regs::wcid_attr(i), 0)).collect();
+        for i in 0..128 {
+            pairs.push((regs::wcid_addr(i), 0));
+            pairs.push((regs::wcid_addr(i) + 4, 0));
+        }
+        self.mcu_write(regs::MCU_MEMMAP_WLAN, &pairs)?;
+        self.wcids.clear();
+        self.wcid_next = 0;
+        Ok(())
+    }
+
     /// The rest of mt76x2u_init_hardware once the MCU runs: the MAC's
     /// registers (mt76x2u_mac_reset), its address, the RF's and baseband's
     /// registers from the MCU (LOAD_CR), and both receive and transmit
@@ -472,6 +544,9 @@ impl Mt7612u {
             (agc0 & !(1 << 4)) | (1 << 3),
         )?;
         self.set(Mac, regs::bbp(regs::BBP_TXBE, 5), 0x3)?;
+
+        // reset wcid table
+        self.reset_wcids()?;
 
         self.clear(
             Mac,
