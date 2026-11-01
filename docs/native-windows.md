@@ -114,11 +114,12 @@ the kernel's `mt76x2u` set aside, on an Alfa AWUS036ACM (`0e8d:7612`):
 5. **Network, on Linux first**: `howldrop-agent --usb-radio FW` runs the
    receiver on the stick, `awdl0` the TAP owly-radio makes (`Native::start_air`).
    The iPhone found "HowlDrop Native", asked and sent a 1.1 MB photo in
-   1.1 s. Wintun on Windows is next.
+   1.1 s. With Block Ack in hardware (the peer in the WCID table, its
+   TID's bit set as the node accepts the session) its 14.7 MB video took
+   3.8 s, against 3.2 s on the kernel's driver. Wintun on Windows is next.
 
 Not ported yet: the EEPROM's receive gain corrections and per-rate transmit
-power, 2.4 GHz transmit power, the periodic recalibration, and hardware
-Block Ack (step 7). Startup in WSL takes 1 to 10 s, nearly all of it the
+power, 2.4 GHz transmit power, and the periodic recalibration. Startup in WSL takes 1 to 10 s, nearly all of it the
 EEPROM read over usbip; on Windows that's local USB.
 
 ## Trying it
