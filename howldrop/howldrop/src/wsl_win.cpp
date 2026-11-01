@@ -412,13 +412,36 @@ void WslRadio::run() {
         state(stopping() ? "Off" : error, stopping() ? RadioLevel::Off : RadioLevel::Problem);
         return;
     }
-    run_stack(stick);
-    give_back(stick.busid);
-    up_.store(false);
-    if (config_.on_up) config_.on_up(false);
-    std::string out;
-    run_command(wsl_exe(), {L"--terminate", wide(wsl::kDistro)}, out, 30000);
-    if (stopping()) state("Off", RadioLevel::Off);
+    // Once it has been on the share sheet, it starts again by itself when it
+    // stops (wsl::restart_delay_ms): as turning it off and on would, with
+    // the stick found again, since a wake can bring it back at another bus ID.
+    bool was_up = false;
+    for (int failed = 0;;) {
+        std::string why = run_stack(stick);
+        give_back(stick.busid);
+        const bool came_up = up_.exchange(false);
+        if (config_.on_up) config_.on_up(false);
+        std::string out;
+        run_command(wsl_exe(), {L"--terminate", wide(wsl::kDistro)}, out, 30000);
+        if (stopping()) break;
+        was_up = was_up || came_up;
+        failed = came_up ? 0 : failed + 1;
+        for (;;) {
+            const int delay = was_up ? wsl::restart_delay_ms(failed) : -1;
+            if (delay < 0) {
+                state(stick_failed_ ? why : "Stopped: " + why + ". Turn it off and on to retry.", RadioLevel::Problem);
+                return;
+            }
+            log("starting again in " + std::to_string(delay / 1000) + " s: " + why);
+            state("Starting again: " + why);
+            pause(delay);
+            if (stopping() || find_stick(stick, why)) break;
+            stick_failed_ = true;  // find_stick's why says it all
+            ++failed;
+        }
+        if (stopping()) break;
+    }
+    state("Off", RadioLevel::Off);
 }
 
 bool WslRadio::prepare(std::string& error) {
@@ -629,8 +652,10 @@ bool WslRadio::find_stick(wsl::UsbDevice& stick, std::string& error) {
     return false;
 }
 
-void WslRadio::run_stack(const wsl::UsbDevice& stick) {
+std::string WslRadio::run_stack(const wsl::UsbDevice& stick) {
     const std::string& busid = stick.busid;
+    stop_reason_.clear();
+    stick_failed_ = false;
     const auto save = wsl::wsl_path(path_to_utf8(config_.inbox));
     const auto outbox = wsl::wsl_path(path_to_utf8(outbox_));
     const auto scan = wsl::wsl_path(path_to_utf8(scan_request_));
@@ -638,7 +663,7 @@ void WslRadio::run_stack(const wsl::UsbDevice& stick) {
     std::error_code ec;
     fs::remove(scan_request_, ec);
     fs::create_directories(asks_, ec);
-    if (stopping()) return;
+    if (stopping()) return {};
     state("Starting");
     auto stack = std::make_shared<ChildProcess>();
     std::string error;
@@ -648,8 +673,7 @@ void WslRadio::run_stack(const wsl::UsbDevice& stick) {
                                                wide(*scan), L"--receive", wide(config_.receive), L"--senders",
                                                wide(config_.senders), L"--ask-dir", wide(asks.value_or(""))})),
                       error)) {
-        state("Couldn't start the Linux part: " + error, RadioLevel::Problem);
-        return;
+        return "couldn't start the Linux part: " + error;
     }
     {
         std::lock_guard<std::mutex> hold(process_mu_);
@@ -662,18 +686,16 @@ void WslRadio::run_stack(const wsl::UsbDevice& stick) {
     std::string line;
     while (stack->read_line(line)) handle_line(line, busid);
     stack->wait(INFINITE);
-    log("the Linux part ended (exit " + std::to_string(stack->exit_code()) + ")");
+    const auto code = stack->exit_code();
+    log("the Linux part ended (exit " + std::to_string(code) + ")");
     {
         std::lock_guard<std::mutex> hold(process_mu_);
         stack_.reset();
     }
-    if (!stopping()) {
-        const bool failed_stick = last_line_.rfind("stick: ", 0) == 0;
-        state(failed_stick ? last_line_.substr(7)
-                           : "Stopped" + (last_line_.empty() ? std::string() : ": " + last_line_) +
-                                 ". Turn it off and on to retry.",
-              RadioLevel::Problem);
-    }
+    if (!stop_reason_.empty()) return stop_reason_;
+    // 0x40010004: Windows ended wsl.exe, as when WSL shuts its VM down.
+    if (code == 0x40010004) return "WSL shut down";
+    return "the Linux part ended (exit " + std::to_string(code) + ")";
 }
 
 void WslRadio::handle_line(const std::string& line, const std::string& busid) {
@@ -681,13 +703,7 @@ void WslRadio::handle_line(const std::string& line, const std::string& busid) {
     const auto event = wsl::event_fields(line);
     // outbox.py starts on a file: its window (180 s) is when the phone must hear the wake.
     if (line.rfind("Send: sending ", 0) == 0) hold_wake(200);
-    if (!event) {
-        const std::string t = trim(line);
-        if (!t.empty() && t.rfind("OWL:", 0) != 0 && t.rfind("Traceback", 0) != 0 && line[0] != ' ') {
-            last_line_ = t;
-        }
-        return;
-    }
+    if (!event) return;
     const auto& f = *event;
     if (f.empty()) return;
     const std::string& what = f[0];
@@ -699,9 +715,12 @@ void WslRadio::handle_line(const std::string& line, const std::string& busid) {
         } else if (field(1) == "ready") {
             state("Starting the radio");
         } else if (field(1) == "failed") {
-            last_line_ = "stick: " + field(2);
+            stop_reason_ = field(2);
+            stick_failed_ = true;
             state(field(2), RadioLevel::Problem);
         }
+    } else if (what == "stopped") {
+        stop_reason_ = field(1);
     } else if (what == "up") {
         up_.store(true);
         state("On the share sheet as " + config_.name + (stick_note_.empty() ? "" : " (" + stick_note_.substr(2) + ")"),

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.2
+
+- For howldrop.exe: when the agent stops on an error it says why in an event (`stopped`), which the PC shows. Nothing changes for the add-on.
+
 ## 0.19.1
 
 - Transfer times in the log count from the upload's start, and one under a second reads "in under a second" instead of an impossible speed.

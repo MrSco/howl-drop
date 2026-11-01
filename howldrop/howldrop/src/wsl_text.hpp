@@ -89,4 +89,11 @@ std::optional<std::string> wsl_path(const std::string& windows_path);
 // follow a prefix ("Deliver: @howldrop\treceived\t...").
 std::optional<std::vector<std::string>> event_fields(const std::string& line);
 
+// After the radio stopped by itself, once it had been on the share sheet
+// (the PC slept and usbipd let go of the stick, WSL shut down, the driver
+// reloaded): how long to wait before starting it again, in ms, or -1 to
+// stop and say why. failed: the starts in a row since it was last up that
+// didn't get it back there (0: it was up until it stopped).
+int restart_delay_ms(int failed);
+
 }  // namespace howldrop::wsl

@@ -82,7 +82,8 @@ private:
     bool ensure_distro(std::string& error);
     bool download_linux(const std::filesystem::path& tar, std::string& error);
     bool find_stick(wsl::UsbDevice& stick, std::string& error);
-    void run_stack(const wsl::UsbDevice& stick);
+    // Runs the stack until it ends; why it ended, or nothing when stopped.
+    std::string run_stack(const wsl::UsbDevice& stick);
     void handle_line(const std::string& line, const std::string& busid);
     void attach(const std::string& busid);
     void give_back(const std::string& busid);
@@ -110,7 +111,10 @@ private:
     bool scanning_ = false;
     std::vector<std::string> devices_;
     std::mutex log_mu_;
-    std::string last_line_;
+    // Why the stack ended, from its events (stopped, stick failed), and
+    // whether the stick itself failed: that says enough on its own.
+    std::string stop_reason_;
+    bool stick_failed_ = false;
     std::string stick_note_;  // ", RTL8852BU, untested" for an untested stick
     std::thread wake_thread_;
     std::mutex wake_mu_;

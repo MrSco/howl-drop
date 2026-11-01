@@ -11,7 +11,9 @@
 //!   iPhone nearby, and the nearby devices when asked.
 //!
 //! It prints log lines, and with `--events` the `@howldrop` events
-//! howldrop.exe reads. SIGTERM or SIGINT takes the radio down.
+//! howldrop.exe reads (`up STATION` on the share sheet, `stopped WHY` when
+//! it ends on an error, and [`receive`]'s and [`send`]'s). SIGTERM or SIGINT
+//! takes the radio down.
 
 mod bluez;
 mod contacts;
@@ -152,7 +154,8 @@ fn main() -> ExitCode {
     match rt.block_on(run(args)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            say(e);
+            say(&e);
+            emit(&["stopped", e.as_str()]);
             ExitCode::from(1)
         }
     }

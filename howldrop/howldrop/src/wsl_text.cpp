@@ -138,4 +138,10 @@ std::optional<std::vector<std::string>> event_fields(const std::string& line) {
     return fields;
 }
 
+int restart_delay_ms(int failed) {
+    // Long enough at the end for a stick that is slow to come back after a wake.
+    static constexpr int kDelays[] = {3000, 5000, 15000, 30000};
+    return failed >= 0 && failed < 4 ? kDelays[failed] : -1;
+}
+
 }  // namespace howldrop::wsl
