@@ -3,6 +3,9 @@
 - **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed. Needs WSL 2 (`wsl --install`) and usbipd-win, which HowlDrop offers to install. The first time, it downloads `howldrop-linux.tar.gz` below (the radio, in a WSL distro of its own; checked against the SHA-256 built into the exe).
 - **Through Home Assistant**: the HowlDrop add-on forwards what arrives there.
 
+**New in 0.19.2**
+- **Comes back by itself** after the PC sleeps (when Windows takes the stick back from WSL) or WSL shuts down: the dot goes amber and the PC is back on the share sheet in seconds, instead of staying red until you turned it off and on. When it does go red, it says why.
+
 **New in 0.19.1**
 - A transfer that takes under a second reads "621 KB in under a second" instead of an impossible speed, and times count from the upload's start.
 
