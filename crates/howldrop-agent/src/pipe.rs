@@ -20,19 +20,33 @@ const WATCH: Duration = Duration::from_millis(300);
 /// The pipe, open as long as the process, once attached.
 static PIPE: OnceLock<File> = OnceLock::new();
 
+/// A log file standard output and error went to (`--setup LOG`).
+static LOG: OnceLock<File> = OnceLock::new();
+
 /// Connects to the pipe `name` and makes it standard output and error.
-#[allow(unsafe_code)]
 pub fn attach(name: &str) -> io::Result<()> {
     let file = File::options().read(true).write(true).open(name)?;
-    let file = PIPE.get_or_init(|| file);
+    output_to(PIPE.get_or_init(|| file));
+    Ok(())
+}
+
+/// Standard output and error to the file `path`, made anew.
+pub fn log_to(path: &str) -> io::Result<()> {
+    let file = File::create(path)?;
+    output_to(LOG.get_or_init(|| file));
+    Ok(())
+}
+
+#[allow(unsafe_code)]
+fn output_to(file: &'static File) {
     let handle = file.as_raw_handle();
-    // SAFETY: the handle stays open for the rest of the process (PIPE is
-    // never dropped), and std reads the standard handles anew on each write.
+    // SAFETY: the handle stays open for the rest of the process (the
+    // statics are never dropped), and std reads the standard handles anew
+    // on each write.
     unsafe {
         SetStdHandle(STD_OUTPUT_HANDLE, handle);
         SetStdHandle(STD_ERROR_HANDLE, handle);
     }
-    Ok(())
 }
 
 /// The pipe, when `attach` connected one.

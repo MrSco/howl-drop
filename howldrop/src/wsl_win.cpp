@@ -32,6 +32,14 @@
 #ifndef HOWLDROP_LINUX_VERSION
 #define HOWLDROP_LINUX_VERSION ""
 #endif
+// And the native part, for AirDrop without WSL (HOWLDROP_NATIVE_*): a local
+// build uses howldrop-agent.exe beside it instead.
+#ifndef HOWLDROP_NATIVE_URL
+#define HOWLDROP_NATIVE_URL ""
+#endif
+#ifndef HOWLDROP_NATIVE_SHA256
+#define HOWLDROP_NATIVE_SHA256 ""
+#endif
 
 namespace howldrop {
 
@@ -42,6 +50,8 @@ namespace {
 const std::string kLinuxUrl = HOWLDROP_LINUX_URL;
 const std::string kLinuxSha256 = HOWLDROP_LINUX_SHA256;
 const std::string kLinuxVersion = HOWLDROP_LINUX_VERSION;
+const std::string kNativeUrl = HOWLDROP_NATIVE_URL;
+const std::string kNativeSha256 = HOWLDROP_NATIVE_SHA256;
 
 // One child is created at a time, so the pipe ends a child inherits are its
 // own: an inheritable handle goes to every child made while it is open.
@@ -120,7 +130,7 @@ std::vector<std::wstring> stack_args(const wsl::UsbDevice& stick, std::vector<st
 
 // A child process with its output (stdout and stderr) on a pipe, or in a
 // file, or in a console window of its own; or, run as administrator, on a
-// named pipe it connects to (start_elevated).
+// named pipe it connects to (start_task).
 struct ChildProcess {
     PROCESS_INFORMATION pi{};
     HANDLE out = nullptr;
@@ -137,14 +147,11 @@ struct ChildProcess {
         if (pi.hProcess) CloseHandle(pi.hProcess);
     }
 
-    // exe as administrator (Windows asks the user), with "--pipe NAME"
-    // after args: a named pipe of ours it connects to and prints to, since
-    // Windows starts it without our handles. Disconnecting the pipe tells it
-    // to stop (disconnect). False, with why, when the user said no or it
-    // ended before connecting.
-    bool start_elevated(const fs::path& exe, const std::vector<std::wstring>& args, std::string& error) {
-        const std::wstring name = L"\\\\.\\pipe\\howldrop-agent-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
-                                  std::to_wstring(GetTickCount64());
+    // A named pipe of ours that a program run elsewhere (start_task)
+    // connects to and prints to: its name.
+    bool make_pipe(std::wstring& name, std::string& error) {
+        name = L"\\\\.\\pipe\\howldrop-agent-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+               std::to_wstring(GetTickCount64());
         out = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
                                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 65536,
                                65536, 0, nullptr);
@@ -154,32 +161,46 @@ struct ChildProcess {
             error = "could not make a pipe";
             return false;
         }
-        std::wstring params;
-        for (const auto& a : args) params += quote(a) + L" ";
-        params += L"--pipe " + quote(name);
-        SHELLEXECUTEINFOW info{};
-        info.cbSize = sizeof(info);
-        info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
-        info.lpVerb = L"runas";
-        const std::wstring file = exe.wstring();
-        info.lpFile = file.c_str();
-        info.lpParameters = params.c_str();
-        info.nShow = SW_HIDE;
-        if (!ShellExecuteExW(&info) || !info.hProcess) {
-            const DWORD code = GetLastError();
-            error = code == ERROR_CANCELLED ? "Windows' permission to run it as administrator wasn't given"
-                                            : "could not run " + path_to_utf8(exe.filename()) + " (error " +
-                                                  std::to_string(code) + ")";
+        return true;
+    }
+
+    // The scheduled task (setup.rs), which runs the agent as administrator
+    // without asking: its arguments, with "--pipe NAME", go in args_file
+    // first. No process handle: the pipe says when it has ended.
+    bool start_task(const std::wstring& task, const fs::path& args_file, const std::vector<std::wstring>& args,
+                    std::string& error) {
+        std::wstring name;
+        if (!make_pipe(name, error)) return false;
+        std::error_code ec;
+        fs::create_directories(args_file.parent_path(), ec);
+        {
+            std::ofstream file(args_file, std::ios::binary | std::ios::trunc);
+            for (const auto& a : args) file << path_to_utf8(a) << '\n';
+            file << "--pipe\n" << path_to_utf8(name) << '\n';
+            if (!file) {
+                error = "could not write " + path_to_utf8(args_file);
+                return false;
+            }
+        }
+        std::string output;
+        ChildProcess schtasks;
+        if (!schtasks.start(L"schtasks.exe", {L"/run", L"/tn", task}, error) || !schtasks.read_all(output, 30000) ||
+            schtasks.exit_code() != 0) {
+            error = "Task Scheduler didn't start it: " + trim(output.empty() ? error : output);
             return false;
         }
-        pi.hProcess = info.hProcess;
+        return connect(error);
+    }
+
+    // Waits for the child to connect to the pipe, or for it to end first.
+    bool connect(std::string& error) {
         OVERLAPPED ov{};
         ov.hEvent = event;
         if (!ConnectNamedPipe(out, &ov)) {
             const DWORD code = GetLastError();
             if (code == ERROR_IO_PENDING) {
                 const HANDLE both[] = {event, pi.hProcess};
-                if (WaitForMultipleObjects(2, both, FALSE, 60000) != WAIT_OBJECT_0) {
+                if (WaitForMultipleObjects(pi.hProcess ? 2 : 1, both, FALSE, 60000) != WAIT_OBJECT_0) {
                     CancelIoEx(out, &ov);
                     DWORD n = 0;
                     GetOverlappedResult(out, &ov, &n, TRUE);
@@ -195,7 +216,7 @@ struct ChildProcess {
         return true;
     }
 
-    // Disconnects start_elevated's pipe: the child sees it go and stops.
+    // Disconnects start_task's pipe: the child sees it go and stops.
     void disconnect() {
         if (out && event) DisconnectNamedPipe(out);
     }
@@ -275,7 +296,7 @@ struct ChildProcess {
         }
     }
 
-    // One read of the output; overlapped on start_elevated's pipe, so that
+    // One read of the output; overlapped on start_task's pipe, so that
     // disconnect() can end it from another thread.
     bool read_some(char* buf, DWORD size, DWORD& n) {
         if (!event) return ReadFile(out, buf, size, &n, nullptr);
@@ -357,6 +378,25 @@ int run_elevated(const fs::path& exe, const std::wstring& params) {
     GetExitCodeProcess(info.hProcess, &code);
     CloseHandle(info.hProcess);
     return static_cast<int>(code);
+}
+
+// The scheduled task that runs howldrop-agent.exe as administrator (the
+// agent's setup.rs makes it).
+const wchar_t* const kAgentTask = L"\\HowlDrop\\AirDrop";
+
+// Whether two files hold the same bytes; false when either can't be read.
+bool same_contents(const fs::path& a, const fs::path& b) {
+    std::error_code ec;
+    if (fs::file_size(a, ec) != fs::file_size(b, ec) || ec) return false;
+    std::ifstream fa(a, std::ios::binary);
+    std::ifstream fb(b, std::ios::binary);
+    std::vector<char> ba(1 << 16), bb(1 << 16);
+    while (fa && fb) {
+        fa.read(ba.data(), static_cast<std::streamsize>(ba.size()));
+        fb.read(bb.data(), static_cast<std::streamsize>(bb.size()));
+        if (fa.gcount() != fb.gcount() || !std::equal(ba.begin(), ba.begin() + fa.gcount(), bb.begin())) return false;
+    }
+    return fa.eof() && fb.eof();
 }
 
 std::string lower(std::string s) {
@@ -447,7 +487,7 @@ void WslRadio::stop() {
         if (config_.native) {
             // The agent sees its pipe go, and gives the stick back.
             stack->disconnect();
-            if (!stack->wait(20000)) stack->kill();
+            for (int i = 0; i < 40 && task_running(); ++i) Sleep(500);
         } else {
             // run.sh's own stop: OWL goes, the card goes back to managed mode.
             std::string out;
@@ -500,6 +540,7 @@ void WslRadio::run() {
     // stops (wsl::restart_delay_ms): as turning it off and on would, with
     // the stick found again, since a wake can bring it back at another bus ID.
     bool was_up = false;
+    bool set_up_again = false;
     for (int failed = 0;;) {
         std::string why = native ? run_agent() : run_stack(stick);
         if (!native) give_back(stick.busid);
@@ -510,6 +551,16 @@ void WslRadio::run() {
             run_command(wsl_exe(), {L"--terminate", wide(wsl::kDistro)}, out, 30000);
         }
         if (stopping()) break;
+        // The stick isn't on WinUSB (a new one, or put back on its own
+        // driver): the setup puts it on, once, and it starts again.
+        if (native && needs_setup_ && !set_up_again) {
+            set_up_again = true;
+            if (!prepare_native(error)) {
+                state(stopping() ? "Off" : error, stopping() ? RadioLevel::Off : RadioLevel::Problem);
+                return;
+            }
+            continue;
+        }
         was_up = was_up || came_up;
         failed = came_up ? 0 : failed + 1;
         for (;;) {
@@ -595,7 +646,7 @@ bool WslRadio::ensure_distro(std::string& error) {
         return false;
     }
     const fs::path tar = config_.home / L"howldrop-linux.tar.gz";
-    if (!download_linux(tar, error)) return false;
+    if (!download(kLinuxUrl, kLinuxSha256, "the Linux part", tar, error)) return false;
     state("Installing the Linux part (a minute or two)");
     std::error_code ec;
     fs::create_directories(config_.home / L"wsl", ec);
@@ -612,9 +663,10 @@ bool WslRadio::ensure_distro(std::string& error) {
     return true;
 }
 
-bool WslRadio::download_linux(const fs::path& tar, std::string& error) {
-    state("Downloading the Linux part");
-    const std::wstring url = wide(kLinuxUrl);
+bool WslRadio::download(const std::string& address, const std::string& sha256, const std::string& what,
+                        const fs::path& tar, std::string& error) {
+    state("Downloading " + what);
+    const std::wstring url = wide(address);
     URL_COMPONENTSW parts{};
     parts.dwStructSize = sizeof(parts);
     wchar_t host[256];
@@ -624,7 +676,7 @@ bool WslRadio::download_linux(const fs::path& tar, std::string& error) {
     parts.lpszUrlPath = path;
     parts.dwUrlPathLength = 2048;
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS) {
-        error = "The Linux part's address is not https: " + kLinuxUrl;
+        error = "The address of " + what + " is not https: " + address;
         return false;
     }
     const std::wstring agent = L"HowlDrop/" + wide(kVersion);
@@ -646,7 +698,7 @@ bool WslRadio::download_linux(const fs::path& tar, std::string& error) {
         !WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
                              &status, &size, WINHTTP_NO_HEADER_INDEX) ||
         status != 200) {
-        error = "Couldn't download the Linux part (" +
+        error = "Couldn't download " + what + " (" +
                 (status ? "HTTP " + std::to_string(status) : "error " + std::to_string(GetLastError())) +
                 "). Check the connection and turn this on again.";
         close_all();
@@ -680,7 +732,7 @@ bool WslRadio::download_linux(const fs::path& tar, std::string& error) {
         const int percent = total ? static_cast<int>(got * 100 / total) : -1;
         if (percent != shown && percent >= 0) {
             shown = percent;
-            state("Downloading the Linux part: " + std::to_string(percent) + "% of " +
+            state("Downloading " + what + ": " + std::to_string(percent) + "% of " +
                   std::to_string(total / (1024 * 1024)) + " MB");
         }
     }
@@ -689,14 +741,14 @@ bool WslRadio::download_linux(const fs::path& tar, std::string& error) {
     std::error_code ec;
     if (!ok || stopping() || !file) {
         fs::remove(part, ec);
-        if (!stopping()) error = "The download of the Linux part broke off. Turn this on again to retry.";
+        if (!stopping()) error = "The download of " + what + " broke off. Turn this on again to retry.";
         return false;
     }
     const std::string digest = to_hex(sha.finish());
-    if (lower(digest) != lower(kLinuxSha256)) {
+    if (lower(digest) != lower(sha256)) {
         fs::remove(part, ec);
-        log("download hash " + digest + ", expected " + kLinuxSha256);
-        error = "The downloaded Linux part isn't the one this howldrop.exe expects (its SHA-256 differs), so it "
+        log("download hash " + digest + ", expected " + sha256);
+        error = "The download of " + what + " isn't the one this howldrop.exe expects (its SHA-256 differs), so it "
                 "was deleted. Turn this on again to retry.";
         return false;
     }
@@ -784,6 +836,43 @@ std::string WslRadio::run_stack(const wsl::UsbDevice& stick) {
     return "the Linux part ended (exit " + std::to_string(code) + ")";
 }
 
+// The native part this exe goes with, from its release, unpacked into
+// home\native\bin (with what it was, .sha256) unless it's there already;
+// agent_ is its howldrop-agent.exe.
+bool WslRadio::fetch_native(std::string& error) {
+    const fs::path bin = config_.home / L"native" / L"bin";
+    agent_ = bin / L"howldrop-agent.exe";
+    std::string have;
+    {
+        std::ifstream in(bin / L".sha256", std::ios::binary);
+        std::getline(in, have);
+    }
+    std::error_code ec;
+    if (fs::exists(agent_, ec) && !kNativeSha256.empty() && lower(trim(have)) == lower(kNativeSha256)) return true;
+    if (kNativeUrl.empty()) {
+        error = "AirDrop without WSL needs howldrop-agent.exe beside howldrop.exe (not in this local build).";
+        return false;
+    }
+    const fs::path zip = config_.home / L"howldrop-native.zip";
+    if (!download(kNativeUrl, kNativeSha256, "the part for AirDrop without WSL", zip, error)) return false;
+    fs::remove_all(bin, ec);
+    fs::create_directories(bin, ec);
+    // Windows' own tar (10 1803 and later) reads zip.
+    wchar_t system[MAX_PATH];
+    const UINT sn = GetSystemDirectoryW(system, MAX_PATH);
+    const fs::path tar = (sn > 0 && sn < MAX_PATH ? fs::path(system) : fs::path(L"C:\\Windows\\System32")) / L"tar.exe";
+    std::string out;
+    const int code = run_command(tar, {L"-xf", zip.wstring(), L"-C", bin.wstring()}, out, 120000);
+    fs::remove(zip, ec);
+    if (code != 0 || !fs::exists(agent_, ec)) {
+        log("tar -xf howldrop-native.zip: exit " + std::to_string(code) + ": " + trim(out));
+        error = "Unpacking the part for AirDrop without WSL failed. Turn this on again to retry.";
+        return false;
+    }
+    std::ofstream(bin / L".sha256", std::ios::binary) << kNativeSha256 << '\n';
+    return true;
+}
+
 bool WslRadio::prepare_native(std::string& error) {
     std::error_code ec;
     fs::create_directories(config_.home, ec);
@@ -792,8 +881,32 @@ bool WslRadio::prepare_native(std::string& error) {
     wchar_t self[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
     agent_ = (n > 0 && n < MAX_PATH ? fs::path(self).parent_path() : fs::path()) / L"howldrop-agent.exe";
-    if (!fs::exists(agent_, ec)) {
-        error = "AirDrop without WSL needs howldrop-agent.exe beside howldrop.exe (not in this build).";
+    if (!fs::exists(agent_, ec) && !fetch_native(error)) return false;
+    // Set up once (setup.rs): the agent in Program Files, its task, and the
+    // stick on WinUSB; again when this agent isn't the one installed.
+    std::string out;
+    const bool task = run_command(L"schtasks.exe", {L"/query", L"/tn", kAgentTask}, out, 30000) == 0;
+    wchar_t programs[MAX_PATH];
+    const DWORD pn = GetEnvironmentVariableW(L"ProgramFiles", programs, MAX_PATH);
+    const fs::path installed = fs::path(pn > 0 && pn < MAX_PATH ? programs : L"C:\\Program Files") / L"HowlDrop" /
+                               L"howldrop-agent.exe";
+    if (task && same_contents(agent_, installed) && !needs_setup_) return true;
+    needs_setup_ = false;
+    state("Setting up AirDrop without WSL (Windows asks for permission, this once)");
+    const fs::path setup_log = config_.home / L"native-setup.log";
+    const int code = run_elevated(agent_, L"--setup " + quote(setup_log.wstring()));
+    std::string said;
+    {
+        std::ifstream in(setup_log, std::ios::binary);
+        said.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    log("howldrop-agent --setup: exit " + std::to_string(code) + "\n" + trim(said));
+    if (code != 0) {
+        const auto last = trim(said).rfind('\n');
+        const std::string why = trim(last == std::string::npos ? trim(said) : trim(said).substr(last + 1));
+        error = code == -1 ? "Setting up AirDrop without WSL needs Windows' permission. Turn it on again to retry."
+                           : "Setting up AirDrop without WSL failed: " + (why.empty() ? "exit " + std::to_string(code)
+                                                                                      : why);
         return false;
     }
     return true;
@@ -806,17 +919,19 @@ std::string WslRadio::run_agent() {
     fs::remove(scan_request_, ec);
     fs::create_directories(asks_, ec);
     if (stopping()) return {};
-    state("Starting (Windows asks to let it run as administrator)");
+    // A run still giving the stick back: the task starts no second one.
+    for (int i = 0; i < 40 && task_running() && !stopping(); ++i) Sleep(500);
+    state("Starting");
     const fs::path data = config_.home / L"native";
     auto agent = std::make_shared<ChildProcess>();
     std::string error;
-    if (!agent->start_elevated(agent_,
-                               {L"--name", wide(config_.name), L"--staging", (data / L"staging").wstring(),
-                                L"--deliver", config_.inbox.wstring(), L"--identity", (data / L"identity").wstring(),
-                                L"--receive", wide(config_.receive), L"--senders", wide(config_.senders), L"--ask-dir",
-                                asks_.wstring(), L"--outbox", outbox_.wstring(), L"--discard", L"--scan-request",
-                                scan_request_.wstring(), L"--events"},
-                               error)) {
+    if (!agent->start_task(kAgentTask, data / L"agent.args",
+                           {L"--name", wide(config_.name), L"--staging", (data / L"staging").wstring(), L"--deliver",
+                            config_.inbox.wstring(), L"--identity", (data / L"identity").wstring(), L"--receive",
+                            wide(config_.receive), L"--senders", wide(config_.senders), L"--ask-dir", asks_.wstring(),
+                            L"--outbox", outbox_.wstring(), L"--discard", L"--scan-request", scan_request_.wstring(),
+                            L"--events"},
+                           error)) {
         log("howldrop-agent: " + error);
         return error;
     }
@@ -827,15 +942,20 @@ std::string WslRadio::run_agent() {
     if (stopping()) agent->disconnect();  // stop() came while it started
     std::string line;
     while (agent->read_line(line)) handle_line(line, {});
-    agent->wait(30000);
-    const auto code = agent->exit_code();
-    log("howldrop-agent ended (exit " + std::to_string(code) + ")");
+    log("howldrop-agent ended");
     {
         std::lock_guard<std::mutex> hold(process_mu_);
         stack_.reset();
     }
     if (!stop_reason_.empty()) return stop_reason_;
-    return "howldrop-agent ended (exit " + std::to_string(code) + ")";
+    return "howldrop-agent ended";
+}
+
+// Whether the task's agent is still running (schtasks' CSV status).
+bool WslRadio::task_running() {
+    std::string out;
+    run_command(L"schtasks.exe", {L"/query", L"/tn", kAgentTask, L"/fo", L"csv", L"/nh"}, out, 30000);
+    return out.find("\"Running\"") != std::string::npos;
 }
 
 void WslRadio::handle_line(const std::string& line, const std::string& busid) {
@@ -858,6 +978,8 @@ void WslRadio::handle_line(const std::string& line, const std::string& busid) {
             stop_reason_ = field(2);
             stick_failed_ = true;
             state(field(2), RadioLevel::Problem);
+        } else if (field(1) == "needs-winusb") {
+            needs_setup_ = true;
         }
     } else if (what == "stopped") {
         stop_reason_ = field(1);

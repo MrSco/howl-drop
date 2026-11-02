@@ -9,6 +9,12 @@ name: Release howldrop.exe
 # version (CI's images job pushes it when main gets that version), with
 # tools/wsl-distro on top. The exe is built knowing its address and SHA-256,
 # and refuses any other file.
+#
+# And howldrop-native.zip, which AirDrop on this PC downloads instead when
+# it runs without WSL (docs/native-windows.md): howldrop-agent.exe and its
+# launcher built here, WireGuard's wintun.dll, and the stick's firmware from
+# the linux-firmware commit the add-on uses, each checked by hash, with
+# their licences. Known to the exe the same way.
 on:
   push:
     tags: ['windows-v*']
@@ -44,8 +50,49 @@ jobs:
           path: howldrop-linux.tar.gz
           compression-level: 0
 
+  native-part:
+    runs-on: windows-latest
+    outputs:
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the agent and its launcher
+        run: cargo build --release --locked -p howldrop-agent
+      - name: Pack howldrop-native.zip
+        id: pack
+        shell: pwsh
+        run: |
+          function Get-Checked($url, $out, $sha256) {
+            Invoke-WebRequest $url -OutFile $out
+            $got = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+            if ($got -ne $sha256) { throw "$url is $got, not $sha256" }
+          }
+          $d = 'native'
+          New-Item -ItemType Directory -Force "$d/firmware", "$d/licenses" | Out-Null
+          Copy-Item target/release/howldrop-agent.exe, target/release/howldrop-agentw.exe $d
+          Get-Checked https://www.wintun.net/builds/wintun-0.14.1.zip wintun.zip `
+            07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+          Expand-Archive wintun.zip wintun
+          Copy-Item wintun/wintun/bin/amd64/wintun.dll $d
+          Copy-Item wintun/wintun/LICENSE.txt "$d/licenses/wintun.txt"
+          # As addon/Dockerfile's LINUX_FIRMWARE.
+          $fw = 'https://gitlab.com/kernel-firmware/linux-firmware/-/raw/fed51005f935bab093a4377d0f23f5c7ede81870'
+          Get-Checked "$fw/mediatek/mt7662.bin" "$d/firmware/mt7662.bin" `
+            f7e52492f58088cae50e51a54cca68e4abc5b74f7d0b6b731dbb4c04465a94b6
+          Get-Checked "$fw/mediatek/mt7662_rom_patch.bin" "$d/firmware/mt7662_rom_patch.bin" `
+            6f0e871268f6e4d99196d90d89bcc09fe493d010366260a2cfcaa5dd66095f8c
+          Invoke-WebRequest "$fw/LICENCE.ralink_a_mediatek_company_firmware" -OutFile "$d/licenses/mt7662-firmware.txt"
+          Compress-Archive "$d/*" howldrop-native.zip
+          Get-Item howldrop-native.zip | Format-List Name, Length
+          "sha256=$((Get-FileHash howldrop-native.zip -Algorithm SHA256).Hash.ToLower())" >> $env:GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: howldrop-native
+          path: howldrop-native.zip
+          compression-level: 0
+
   release:
-    needs: linux-part
+    needs: [linux-part, native-part]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -61,13 +108,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: howldrop-linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: howldrop-native
       - name: Build
         run: |
           version="${GITHUB_REF_NAME#windows-v}"
           cmake -S howldrop -B build/howldrop -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DHOWLDROP_LINUX_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/howldrop-linux.tar.gz" \
             -DHOWLDROP_LINUX_SHA256="${{ needs.linux-part.outputs.sha256 }}" \
-            -DHOWLDROP_LINUX_VERSION="$version"
+            -DHOWLDROP_LINUX_VERSION="$version" \
+            -DHOWLDROP_NATIVE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/howldrop-native.zip" \
+            -DHOWLDROP_NATIVE_SHA256="${{ needs.native-part.outputs.sha256 }}"
           cmake --build build/howldrop
       - name: Test
         run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-wsl-test.exe && build/howldrop/howldrop-transfers-test.exe
@@ -77,5 +129,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = "$env:GITHUB_REF_NAME".Substring("windows-v".Length)
-          gh release create "$env:GITHUB_REF_NAME" build/howldrop/howldrop.exe howldrop-linux.tar.gz `
+          gh release create "$env:GITHUB_REF_NAME" build/howldrop/howldrop.exe howldrop-linux.tar.gz howldrop-native.zip `
             --title "HowlDrop for Windows $version" --notes-file howldrop/RELEASE.md --verify-tag

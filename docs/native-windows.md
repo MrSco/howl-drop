@@ -85,14 +85,12 @@ Windows.
 
 ## Open questions
 
-- **Binding the stick to WinUSB** for users. Zadig/libwdi installs a
-  self-signed certificate; UsbDk is signed (Red Hat) and libusb can use it; a
-  signed INF of our own needs a code-signing certificate. During development,
-  Zadig on the developer's machine is enough, and uninstalling the device's
-  driver undoes it.
-- **Wintun needs an administrator** to make its adapter and open its
-  session. For now howldrop.exe starts the agent as administrator, so
-  Windows asks each time it starts; milestone 7 is a small service.
+- **Going back to WSL** with a stick on WinUSB: untried. usbipd binds
+  whatever driver a device has, so it likely works as it is; else Device
+  Manager's "Update driver" puts the stick's own back.
+- **Taking it off a PC**: nothing removes the task, Program Files\HowlDrop
+  or the Wintun adapter yet (`schtasks /delete /tn \HowlDrop\AirDrop`, and
+  the folder, by hand).
 - **Timing**: AWDL's availability windows are 16 TU; the node runs its timers
   in software (`timer late avg` about 1.1 ms on Linux). Windows wakes them on
   its 15.6 ms tick (6.5 ms late on average, 16 ms at worst) unless the
@@ -152,6 +150,35 @@ Windows.
 
    Not yet measured: the video to the iPhone (about 16 s on WSL). Not done:
    fetching what a link points at (a link stays a `.url` shortcut).
+7. **Install**: the first time it's turned on, howldrop.exe runs
+   `howldrop-agent.exe --setup` as administrator (Windows asks, once; again
+   only for a new agent), which (setup.rs):
+   - copies the agent, its launcher howldrop-agentw.exe, wintun.dll and the
+     firmware into Program Files\HowlDrop, where only an administrator can
+     change them;
+   - registers the task `\HowlDrop\AirDrop`, which runs the launcher with
+     the user's full rights, at normal priority (a task's default runs it
+     below normal) and without a console window, reading the agent's
+     options from `%LOCALAPPDATA%\HowlDrop\native\agent.args`; folders
+     there outside the user's profile are refused;
+   - puts each supported stick on Windows' own WinUSB (winusb.inf's "WinUsb
+     Device", as Device Manager's "Let me pick" does: no package or
+     certificate of ours), then restarts it by cycling its hub port, since
+     the driver it had (`netr28ux`, Windows' own) leaves the chip
+     answering nothing.
+
+   From then on howldrop.exe writes the options, starts the task, and the
+   agent connects to its pipe: no prompt, no window. A stick that answers
+   nothing at start (after a sleep) is restarted the same way, once; one
+   not on WinUSB makes the agent say so (`stick needs-winusb`) and
+   howldrop.exe run the setup again. A release carries howldrop-native.zip
+   (the agent, launcher, wintun.dll, firmware and their licences, built and
+   checked by hash in release-windows.yml), which howldrop.exe downloads as
+   it does the Linux part; a local build uses the agent beside it.
+
+   Tested on the user's PC from a stick on `netr28ux`: one prompt, then the
+   stick on WinUSB and the agent on the share sheet; off and on without a
+   prompt. Not yet tried: a release's download of the native part.
 
 Not ported yet: the EEPROM's receive gain corrections and per-rate transmit
 power, 2.4 GHz transmit power, and the periodic recalibration. Startup in WSL
@@ -173,8 +200,10 @@ cargo run -p mt7612u --example awdl -- FW 60
 
 `listen` and `awdl` want an iPhone nearby with its share sheet open.
 
-On Windows, with the stick on WinUSB (Zadig): put `howldrop-agent.exe`
-(`cargo build --release -p howldrop-agent`), WireGuard's `wintun.dll` and a
-`firmware` folder with the two files beside howldrop.exe, tick "Without WSL"
-under "AirDrop on this PC" in its menu, then turn AirDrop on this PC on and
-let Windows run the agent as administrator.
+On Windows, from a local build: put `howldrop-agent.exe` and
+`howldrop-agentw.exe` (`cargo build --release -p howldrop-agent`),
+WireGuard's `wintun.dll` and a `firmware` folder with the two files beside
+howldrop.exe, tick "Without WSL" under "AirDrop on this PC" in its menu,
+then turn AirDrop on this PC on and let Windows run the setup.
+`howldrop-agent --restart-stick`, as administrator, restarts the stick as
+unplugging it would.

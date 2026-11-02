@@ -16,8 +16,9 @@
 // Or, native (experimental, docs/native-windows.md), no WSL: the same
 // agent as howldrop-agent.exe beside howldrop.exe, driving an MT7612U on
 // WinUSB itself, with the same events and folders. It runs as administrator
-// (its Wintun adapter needs it), so Windows asks each time it starts, and
-// it prints to a named pipe of ours instead of an inherited one.
+// (its Wintun adapter needs it): set up once, with Windows asking, as a
+// scheduled task that runs it without asking from then on. It prints to a
+// named pipe of ours, and stops when we disconnect it.
 
 #include "node.hpp"
 #include "wsl_text.hpp"
@@ -87,14 +88,19 @@ private:
     void run();
     bool prepare(std::string& error);
     bool ensure_distro(std::string& error);
-    bool download_linux(const std::filesystem::path& tar, std::string& error);
+    // A release file to tar, checked against sha256; what names it for the user.
+    bool download(const std::string& address, const std::string& sha256, const std::string& what,
+                  const std::filesystem::path& tar, std::string& error);
     bool find_stick(wsl::UsbDevice& stick, std::string& error);
     // Runs the stack until it ends; why it ended, or nothing when stopped.
     std::string run_stack(const wsl::UsbDevice& stick);
-    // Native: howldrop-agent.exe, and what it needs, beside us.
+    // Native: howldrop-agent.exe, beside us or from the release, and the
+    // one-time setup that runs it as administrator without asking.
     bool prepare_native(std::string& error);
+    bool fetch_native(std::string& error);
     // Native: runs the agent until it ends, as run_stack does the stack.
     std::string run_agent();
+    static bool task_running();
     void handle_line(const std::string& line, const std::string& busid);
     void attach(const std::string& busid);
     void give_back(const std::string& busid);
@@ -127,6 +133,7 @@ private:
     // whether the stick itself failed: that says enough on its own.
     std::string stop_reason_;
     bool stick_failed_ = false;
+    bool needs_setup_ = false;  // native: the agent said the stick isn't on WinUSB
     std::string stick_note_;  // ", RTL8852BU, untested" for an untested stick
     std::thread wake_thread_;
     std::mutex wake_mu_;

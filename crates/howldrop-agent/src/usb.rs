@@ -72,6 +72,21 @@ impl UsbRadio {
 
     pub fn unusable(&self) -> Option<String> {
         match mt7612u::sticks() {
+            // On Windows only WinUSB lets a program open it: howldrop.exe's
+            // setup puts it on that (setup.rs) when it hears so.
+            #[cfg(windows)]
+            Ok(s)
+                if !s.is_empty()
+                    && !s
+                        .iter()
+                        .any(|d| d.driver().is_some_and(|v| v.eq_ignore_ascii_case("winusb"))) =>
+            {
+                emit(&["stick", "needs-winusb"]);
+                Some(format!(
+                    "The MT7612U is on {}, not WinUSB.",
+                    s[0].driver().unwrap_or("no driver")
+                ))
+            }
             Ok(s) if !s.is_empty() => None,
             Ok(_) => Some(if cfg!(windows) {
                 "No MT7612U stick on WinUSB is connected.".into()
@@ -94,17 +109,23 @@ impl UsbRadio {
                 std::fs::read(dir.join(f)).map_err(|e| format!("{}: {e}", dir.join(f).display()))
             };
             let (rom_patch, firmware) = (read("mt7662_rom_patch.bin")?, read("mt7662.bin")?);
-            let err = |e: mt7612u::Error| e.to_string();
-            let mut stick = Mt7612u::open().map_err(err)?;
-            let eeprom = stick.eeprom().map_err(err)?;
-            let mac = mt7612u::eeprom_mac(&eeprom).ok_or("no MAC address in the EEPROM")?;
-            stick.start_mcu(&rom_patch, &firmware).map_err(err)?;
-            stick.init_mac(&eeprom).map_err(err)?;
-            stick
-                .set_channel(&eeprom, Channel::new(CHANNEL, Width::Ht40Plus))
-                .map_err(err)?;
-            stick.start_rx().map_err(err)?;
-            Ok((stick, MacAddr(mac)))
+            match bring_up(&rom_patch, &firmware) {
+                Ok(up) => Ok(up),
+                // Nothing resets the stick here (Linux resets it on
+                // probe): one that answers nothing, as another driver or a
+                // sleep can leave it, is restarted as if replugged, once.
+                #[cfg(windows)]
+                Err(e) => match crate::setup::cycle_sticks() {
+                    Ok(n) if n > 0 => {
+                        say(format!("The stick didn't start ({e}); restarting it."));
+                        std::thread::sleep(std::time::Duration::from_secs(4));
+                        bring_up(&rom_patch, &firmware)
+                    }
+                    _ => Err(e),
+                },
+                #[cfg(not(windows))]
+                Err(e) => Err(e),
+            }
         })
         .await
         .map_err(|e| e.to_string())??;
@@ -150,6 +171,21 @@ impl UsbRadio {
             let _ = tokio::task::spawn_blocking(move || stop_node(live)).await;
         }
     }
+}
+
+/// The stick opened, its firmware running and channel 149 tuned.
+fn bring_up(rom_patch: &[u8], firmware: &[u8]) -> Result<(Mt7612u, MacAddr), String> {
+    let err = |e: mt7612u::Error| e.to_string();
+    let mut stick = Mt7612u::open().map_err(err)?;
+    let eeprom = stick.eeprom().map_err(err)?;
+    let mac = mt7612u::eeprom_mac(&eeprom).ok_or("no MAC address in the EEPROM")?;
+    stick.start_mcu(rom_patch, firmware).map_err(err)?;
+    stick.init_mac(&eeprom).map_err(err)?;
+    stick
+        .set_channel(&eeprom, Channel::new(CHANNEL, Width::Ht40Plus))
+        .map_err(err)?;
+    stick.start_rx().map_err(err)?;
+    Ok((stick, MacAddr(mac)))
 }
 
 /// The node on the stick, with `awdl0` as owly-radio's Native makes it:

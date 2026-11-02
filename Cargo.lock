@@ -725,21 +725,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "howldrop-native"
-version = "0.1.0"
-dependencies = [
- "mt7612u",
- "owly-airdrop",
- "owly-awdl",
- "rustls",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "windows-sys 0.61.2",
- "wintun",
-]
-
-[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"

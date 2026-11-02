@@ -58,10 +58,16 @@ if(WIN32)
     set(HOWLDROP_LINUX_URL "" CACHE STRING "https address of howldrop-linux.tar.gz")
     set(HOWLDROP_LINUX_SHA256 "" CACHE STRING "its SHA-256, hex")
     set(HOWLDROP_LINUX_VERSION "" CACHE STRING "the add-on version it was made from")
+    # And, without WSL, the native part: howldrop-agent.exe, its launcher,
+    # wintun.dll and the stick's firmware (docs/native-windows.md).
+    set(HOWLDROP_NATIVE_URL "" CACHE STRING "https address of howldrop-native.zip")
+    set(HOWLDROP_NATIVE_SHA256 "" CACHE STRING "its SHA-256, hex")
     target_compile_definitions(howldrop PRIVATE
         HOWLDROP_LINUX_URL="${HOWLDROP_LINUX_URL}"
         HOWLDROP_LINUX_SHA256="${HOWLDROP_LINUX_SHA256}"
         HOWLDROP_LINUX_VERSION="${HOWLDROP_LINUX_VERSION}"
+        HOWLDROP_NATIVE_URL="${HOWLDROP_NATIVE_URL}"
+        HOWLDROP_NATIVE_SHA256="${HOWLDROP_NATIVE_SHA256}"
     )
     if(MINGW)
         target_link_options(howldrop PRIVATE -static -static-libgcc -static-libstdc++)

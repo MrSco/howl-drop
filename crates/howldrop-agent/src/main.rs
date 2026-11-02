@@ -33,6 +33,8 @@ mod preview;
 mod radio;
 mod receive;
 mod send;
+#[cfg(windows)]
+mod setup;
 mod usb;
 #[cfg(windows)]
 mod wintun;
@@ -166,9 +168,14 @@ const RESTARTS: u32 = 3;
 const STEADY: Duration = Duration::from_secs(600);
 
 fn main() -> ExitCode {
-    let args = Args::parse();
+    let args = match windows_entry() {
+        Ok(Some(args)) => args,
+        Ok(None) => Args::parse(),
+        Err(code) => return code,
+    };
     #[cfg(windows)]
     if let Some(name) = &args.pipe
+        && pipe::attached().is_none()
         && let Err(e) = pipe::attach(name)
     {
         eprintln!("the pipe {name}: {e}");
@@ -424,6 +431,76 @@ fn stop_signals(stdin: bool) -> io::Result<watch::Receiver<bool>> {
             })?;
     }
     Ok(rx)
+}
+
+/// Windows' two ways in besides options ([`setup`]): `--setup [LOG]`, run
+/// once as administrator, its output to LOG, which ends here with its exit
+/// code; and `--args-file FILE`, the scheduled task's, whose options come
+/// from the file. None for the usual command line.
+#[cfg(windows)]
+fn windows_entry() -> Result<Option<Args>, ExitCode> {
+    let argv: Vec<String> = std::env::args().collect();
+    let rest = argv.get(1..).unwrap_or_default();
+    if let [setup, log] = rest
+        && setup == "--setup"
+        && pipe::log_to(log).is_err()
+    {
+        return Err(ExitCode::from(1));
+    }
+    match rest {
+        // As unplugging the stick and plugging it in; as administrator.
+        [restart] if restart == "--restart-stick" => Err(match setup::cycle_sticks() {
+            Ok(n) => {
+                say(format!("{n} stick(s) restarted."));
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                say(format!("Restarting the stick: {e}"));
+                ExitCode::from(1)
+            }
+        }),
+        [setup, ..] if setup == "--setup" && rest.len() <= 2 => Err(match setup::run() {
+            Ok(()) => {
+                say("Setup: done.");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                say(format!("Setup: {e}"));
+                ExitCode::from(1)
+            }
+        }),
+        [flag, file] if flag == "--args-file" => {
+            let args = setup::read_args(file.as_ref());
+            // The pipe first, so howldrop.exe hears what's wrong with the
+            // rest.
+            if let Ok(args) = &args
+                && let Some(i) = args.iter().position(|a| a == "--pipe")
+                && let Some(name) = args.get(i + 1)
+                && pipe::attach(name).is_err()
+            {
+                return Err(ExitCode::from(1));
+            }
+            let parsed = args.and_then(|args| {
+                Args::try_parse_from(std::iter::once(argv[0].clone()).chain(args))
+                    .map_err(|e| e.to_string())
+            });
+            match parsed {
+                Ok(args) => Ok(Some(args)),
+                Err(e) => {
+                    let why = format!("the task's arguments: {}", e.trim());
+                    say(&why);
+                    say(events::line(&["stopped", &why]));
+                    Err(ExitCode::from(1))
+                }
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+#[cfg(not(windows))]
+fn windows_entry() -> Result<Option<Args>, ExitCode> {
+    Ok(None)
 }
 
 /// `firmware` beside this program, where the Windows build ships it.
