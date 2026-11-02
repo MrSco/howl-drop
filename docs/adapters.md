@@ -42,8 +42,8 @@ MT7612U.
 | Adapter (chip) | USB ID | | Notes |
 |---|---|---|---|
 | MediaTek **MT7612U** (Alfa AWUS036ACM) | `0e8d:7612` | ✅ | Tested both ways: a 14.7 MB video from the iPhone in about 4 s. Runs on 5 GHz. |
-| MT7612U with another USB ID: Netgear A6210 (`0846:9053`), ASUS USB-AC55 (`0b05:17eb`), and the others Linux's `mt76x2u` driver takes | `045e:02e6` `045e:02fe` `0471:2126` `0471:7600` `056e:400a` `057c:8503` `0846:9014` `0846:9053` `0b05:17eb` `0b05:180b` `0b05:1833` `0e8d:7632` `2357:0137` `2c4e:0103` | 🟡 | Same chip as the tested one, and HowlDrop for Windows drives them as it does it. Not tried yourself? Tell us how it went. |
-| Any other adapter, the Realtek RTL8852BU included | | ❌ | HowlDrop for Windows has a driver for the MT7612U only. Other chips work with the Home Assistant add-on (below). |
+| MT7612U with another USB ID: Netgear A6210 (`0846:9053`), ASUS USB-AC55 (`0b05:17eb`), and the others Linux's `mt76x2u` driver takes | `045e:02e6` `045e:02fe` `0471:2126` `0471:7600` `056e:400a` `057c:8503` `0846:9014` `0846:9053` `0b05:17eb` `0b05:180b` `0b05:1833` `0e8d:7632` `2357:0137` `2c4e:0103` | 🟡 | Same chip as the tested one, and HowlDrop for Windows drives them as it does it. Have one? [Test it](#test-yours-and-tell-us). |
+| Any other adapter, the Realtek RTL8852BU included | | ❌ | HowlDrop for Windows has a driver for the MT7612U only. Other chips work with the Home Assistant add-on (below). [Test yours](#test-yours-and-tell-us) anyway: the report tells us which driver to write next. |
 | **Your PC's or laptop's built-in Wi-Fi** (any brand) | | ❌ | Windows' own Wi-Fi drivers can't do AWDL. Use a USB MT7612U. |
 
 You don't need a Bluetooth adapter: HowlDrop wakes the iPhone with the PC's
@@ -82,10 +82,35 @@ The full per-driver details are in Owly's
 [supported hardware](https://github.com/t4t5/owly#supported-hardware)
 table and this repo's [hardware notes](hardware-notes.md).
 
-## Something not listed?
+## Test yours and tell us
 
-On Home Assistant, a card whose Linux driver Owly's table lists might work.
-On Windows, an MT7612U with a USB ID not listed might too. Open an issue with
-its USB ID, and with `radio.log` and `radio.log.1` from
-`%LOCALAPPDATA%\HowlDrop` if HowlDrop tried it. Your report helps the next
-person, whether it works or not.
+Got a USB Wi-Fi adapter? Test it in a few minutes and send us how it went,
+whether it works or not. Every report helps the next person choose, and
+tells us which chips to write a driver for next.
+
+On the Windows PC with the adapter plugged in, open PowerShell (Start, type
+`powershell`, Enter; no administrator needed) and paste:
+
+```powershell
+irm https://raw.githubusercontent.com/MrSco/howl-drop/main/tools/test-adapter.ps1 | iex
+```
+
+It:
+
+1. Finds the adapter and tells you whether HowlDrop for Windows can drive it.
+2. If it can, walks you through a photo from the iPhone to the PC and one
+   back, with HowlDrop doing the AirDrop (it helps you get HowlDrop running
+   if it isn't), and times both.
+3. Writes a report to your Desktop and opens a GitHub issue with it filled
+   in. Nothing is sent until you press **Create** there.
+
+The report has the adapter's name, USB ID and Windows driver, the Windows
+and HowlDrop versions, and how each step went. It has no names (the PC's,
+the iPhone's or yours), serial numbers, addresses or file names. Read
+[the script](../tools/test-adapter.ps1) first if you like.
+
+On Home Assistant or Linux, a card whose Linux driver Owly's table lists
+might work: open a
+[Wi-Fi adapter report](https://github.com/MrSco/howl-drop/issues/new?template=adapter-report.yml)
+and fill it in by hand, with the `Wi-Fi card:` line from the top of the
+add-on's log.

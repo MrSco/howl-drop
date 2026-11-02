@@ -13,6 +13,14 @@ All it takes is `howldrop.exe` and a USB Wi-Fi stick with a MediaTek
 too, untested). No Mac, no Home Assistant, nothing on the phone. **[Which Wi-Fi adapter?](../docs/adapters.md)** lists what works, what
 might, and what can't (your PC's built-in Wi-Fi can't, on Windows).
 
+**Have a USB Wi-Fi adapter? Help us support more of them.** Paste this
+into PowerShell. It tests the adapter and fills in a report for you to send
+us, and nothing goes anywhere until you press Create:
+
+```powershell
+irm https://raw.githubusercontent.com/MrSco/howl-drop/main/tools/test-adapter.ps1 | iex
+```
+
 <p align="center">
   <img src="../docs/screenshots/window.png" alt="The HowlDrop window: a transfer under way, the drop zone, nearby devices and recent transfers" width="320">
   &nbsp;

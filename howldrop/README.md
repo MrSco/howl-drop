@@ -111,6 +111,13 @@ HowlDrop wakes the phone with a Bluetooth advert while it sends or looks for
 devices, and your Bluetooth devices stay connected. The radio's log is
 `%LOCALAPPDATA%\HowlDrop\radio.log`.
 
+**Slow?** With the MT7612U a photo takes about a second and a 15 MB video
+about five. Much slower is most often the iPhone busy on its own Wi-Fi (an
+iCloud Photos upload, a VPN with an exit node): it then spends less time on
+AirDrop's channel. On the iPhone, open Control Center and tap the Wi-Fi icon
+once; AirDrop keeps working. `radio.log`'s `schedule` lines say how many of
+its 16 time slots each nearby Apple device gives HowlDrop's channel.
+
 ## Sending to your iPhone
 
 Set the iPhone's AirDrop to **Everyone for 10 Minutes**, send, and accept on
