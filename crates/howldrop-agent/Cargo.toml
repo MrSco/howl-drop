@@ -2,7 +2,7 @@
 name = "howldrop-agent"
 description = "HowlDrop's radio, AirDrop receiver and sender: on Linux's Wi-Fi drivers in the Home Assistant add-on, and on Windows on a USB stick driven from user space."
 # HowlDrop's version, not Owly's: --version says which release this is.
-version = "0.20.0"
+version = "0.21.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -41,13 +41,18 @@ nix = { version = "0.31", default-features = false, features = ["signal"] }
 owly-radio = { path = "../owly-radio" }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 
-# Windows: a Wintun adapter as the link, and timers to the millisecond.
+# Windows: a TCP/IP stack of the agent's own as the link (netstack.rs), and
+# timers to the millisecond.
 [target.'cfg(windows)'.dependencies]
+futures-util = { version = "0.3", default-features = false, features = ["alloc", "sink"] }
 # The preview of a picture sent (send.rs file_icon), where there's no Pillow.
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 openjpeg-sys = "1"
+smoltcp = { version = "0.13", default-features = false, features = ["std", "medium-ip", "proto-ipv6", "socket-tcp", "socket-udp", "async"] }
+# Its code wants IPv4 compiled in too, though only IPv6 is used.
+tokio-smoltcp = "0.6"
+tokio-util = "0.7"
 windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Usb", "Win32_Foundation", "Win32_Media", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
-wintun = "0.5"
 
 [lints]
 workspace = true

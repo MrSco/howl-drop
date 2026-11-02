@@ -70,6 +70,9 @@ pub struct Options {
 pub struct Air {
     pub index: u32,
     pub peers: watch::Receiver<Vec<PeerInfo>>,
+    /// The agent's own stack, which the sender connects through on Windows.
+    #[cfg(windows)]
+    pub stack: std::sync::Arc<crate::netstack::Stack>,
 }
 
 /// A receiver that answered `/Discover`.
@@ -81,7 +84,7 @@ struct Listed {
 }
 
 pub async fn run(air: Air, opts: Options) {
-    let sender = match new_sender(&opts.name, &opts.model) {
+    let sender = match new_sender(&opts.name, &opts.model, &air) {
         Ok(s) => s,
         Err(e) => {
             say(format!("Send: sending isn't available: {e}"));
@@ -132,11 +135,17 @@ pub async fn run(air: Air, opts: Options) {
 
 /// The sender, as a Mac: with Owly's "Linux" for a model, an iPhone left
 /// the preview out of its prompt (it shows a Mac's, as it did 0.18.0's).
-fn new_sender(name: &str, model: &str) -> io::Result<Sender> {
+fn new_sender(name: &str, model: &str, air: &Air) -> io::Result<Sender> {
     let mut config = Config::new(name, crate::receive::random_id()?);
     config.model_name = model.to_string();
     config.ask_timeout = ASK_TIMEOUT;
-    Sender::new(config)
+    #[cfg(windows)]
+    return Sender::with_connector(config, crate::netstack::Connector(air.stack.clone()));
+    #[cfg(not(windows))]
+    {
+        let _ = air;
+        Sender::new(config)
+    }
 }
 
 async fn send_one(
