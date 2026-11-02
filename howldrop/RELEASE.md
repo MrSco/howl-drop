@@ -32,4 +32,4 @@ Either way: files in `Downloads\HowlDrop` (deleted after 30 days unless you turn
 
 **Send to iPhone**: set the iPhone's AirDrop to Everyone for 10 Minutes, drop files on the window and pick the phone (or the tray menu's Send to iPhone, or Explorer's Send to, iPhone (HowlDrop)), and accept on the phone. With AirDrop on this PC, the PC's Bluetooth wakes the phone (it stays connected to your other devices); through Home Assistant, the add-on needs `send_to_iphone`.
 
-Use the release that matches your add-on version. The [Windows app's README](https://github.com/MrSco/howl-drop/blob/main/howldrop/README.md) has the menu, the commands and how pairing works.
+It pairs with the Home Assistant add-on 0.19.2 as before. The [Windows app's README](https://github.com/MrSco/howl-drop/blob/main/howldrop/README.md) has the menu, the commands and how pairing works.
