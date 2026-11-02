@@ -54,7 +54,7 @@ discover -s tests`).
 Then check what upstream changed that HowlDrop uses: `drivers.toml` (cards,
 modes, channels), the receiver and sender APIs the agent calls, and the
 radio's set-up. A card upstream adds works in the add-on at once; on Windows
-it also needs its driver in WSL's kernel and its firmware (see
+only the MT7612U runs, on HowlDrop's own driver (`crates/mt7612u`; see
 [adapters.md](adapters.md)).
 
 Upstream's workflows (`.github/workflows/ci.yml`, release, AUR) stay as they

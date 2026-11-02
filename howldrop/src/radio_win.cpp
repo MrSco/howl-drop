@@ -1,13 +1,13 @@
-// AirDrop on this PC (wsl_win.hpp): setting up WSL's side once, then running
-// the radio stack in it as a child process.
+// AirDrop on this PC (radio_win.hpp): howldrop-agent.exe, set up once and
+// then run by its scheduled task, read through a named pipe.
 
-#include "wsl_win.hpp"
+#include "radio_win.hpp"
 
 #include "ble_wake_win.hpp"
 #include "config.hpp"
 #include "pairing.hpp"
+#include "radio_text.hpp"
 #include "text.hpp"
-#include "wsl_text.hpp"
 
 #include <windows.h>
 #include <roapi.h>
@@ -20,20 +20,9 @@
 #include <fstream>
 #include <thread>
 
-// A release build names the Linux part it goes with (CMake: HOWLDROP_LINUX_*,
-// set by .github/workflows/release-windows.yml). A local build has none and
-// uses a HowlDrop distro already imported, whatever its version.
-#ifndef HOWLDROP_LINUX_URL
-#define HOWLDROP_LINUX_URL ""
-#endif
-#ifndef HOWLDROP_LINUX_SHA256
-#define HOWLDROP_LINUX_SHA256 ""
-#endif
-#ifndef HOWLDROP_LINUX_VERSION
-#define HOWLDROP_LINUX_VERSION ""
-#endif
-// And the native part, for AirDrop without WSL (HOWLDROP_NATIVE_*): a local
-// build uses howldrop-agent.exe beside it instead.
+// A release build names the agent it goes with, howldrop-native.zip (CMake:
+// HOWLDROP_NATIVE_*, set by .github/workflows/release-windows.yml). A local
+// build has none and uses howldrop-agent.exe beside it.
 #ifndef HOWLDROP_NATIVE_URL
 #define HOWLDROP_NATIVE_URL ""
 #endif
@@ -47,9 +36,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-const std::string kLinuxUrl = HOWLDROP_LINUX_URL;
-const std::string kLinuxSha256 = HOWLDROP_LINUX_SHA256;
-const std::string kLinuxVersion = HOWLDROP_LINUX_VERSION;
 const std::string kNativeUrl = HOWLDROP_NATIVE_URL;
 const std::string kNativeSha256 = HOWLDROP_NATIVE_SHA256;
 
@@ -90,40 +76,6 @@ std::wstring quote(const std::wstring& arg) {
     out.append(slashes * 2, L'\\');
     out.push_back(L'"');
     return out;
-}
-
-fs::path wsl_exe() {
-    wchar_t dir[MAX_PATH];
-    const UINT n = GetSystemDirectoryW(dir, MAX_PATH);
-    return (n > 0 && n < MAX_PATH) ? fs::path(dir) / L"wsl.exe" : fs::path(L"wsl.exe");
-}
-
-fs::path find_usbipd() {
-    wchar_t buf[MAX_PATH];
-    const DWORD n = GetEnvironmentVariableW(L"ProgramFiles", buf, MAX_PATH);
-    std::error_code ec;
-    if (n > 0 && n < MAX_PATH) {
-        const fs::path p = fs::path(buf) / L"usbipd-win" / L"usbipd.exe";
-        if (fs::exists(p, ec)) return p;
-    }
-    wchar_t found[MAX_PATH];
-    if (SearchPathW(nullptr, L"usbipd.exe", nullptr, MAX_PATH, found, nullptr) > 0) return fs::path(found);
-    return {};
-}
-
-// wsl.exe arguments to run a command in the distro as root, without a shell.
-std::vector<std::wstring> in_distro(const std::vector<std::wstring>& command) {
-    std::vector<std::wstring> args = {L"-d", wide(wsl::kDistro), L"-u", L"root", L"-e"};
-    args.insert(args.end(), command.begin(), command.end());
-    return args;
-}
-
-// wsl-run.sh's arguments, with the stick's driver and chip, and --untested
-// for one not tested with an iPhone.
-std::vector<std::wstring> stack_args(const wsl::UsbDevice& stick, std::vector<std::wstring> args) {
-    args.insert(args.end(), {L"--driver", wide(stick.kind->driver), L"--chip", wide(stick.kind->chip)});
-    if (!stick.kind->tested) args.push_back(L"--untested");
-    return args;
 }
 
 }  // namespace
@@ -362,7 +314,7 @@ int run_command(const fs::path& exe, const std::vector<std::wstring>& args, std:
     return static_cast<int>(child.exit_code());
 }
 
-// usbipd bind needs an administrator: Windows asks the user (UAC).
+// The agent's setup needs an administrator: Windows asks the user (UAC).
 int run_elevated(const fs::path& exe, const std::wstring& params) {
     SHELLEXECUTEINFOW info{};
     info.cbSize = sizeof(info);
@@ -408,17 +360,15 @@ std::string lower(std::string s) {
 
 // --- the radio ---------------------------------------------------------------------
 
-WslRadio::WslRadio(WslRadioConfig config) : config_(std::move(config)) {
+Radio::Radio(RadioConfig config) : config_(std::move(config)) {
     outbox_ = config_.home / L"outbox";
     scan_request_ = outbox_ / L".scan-request";
     asks_ = config_.home / L"asks";
-    // wsl.exe's own messages (and --list) in UTF-8, not UTF-16.
-    SetEnvironmentVariableW(L"WSL_UTF8", L"1");
 }
 
-WslRadio::~WslRadio() { stop(); }
+Radio::~Radio() { stop(); }
 
-void WslRadio::start() {
+void Radio::start() {
     if (thread_.joinable()) return;
     stop_.store(false);
     {
@@ -429,7 +379,7 @@ void WslRadio::start() {
     thread_ = std::thread([this]() { run(); });
 }
 
-void WslRadio::wake_loop() {
+void Radio::wake_loop() {
     const HRESULT ro = RoInitialize(RO_INIT_MULTITHREADED);
     BleWake wake;
     std::string last_error;
@@ -460,7 +410,7 @@ void WslRadio::wake_loop() {
     if (SUCCEEDED(ro)) RoUninitialize();
 }
 
-void WslRadio::hold_wake(int seconds) {
+void Radio::hold_wake(int seconds) {
     std::lock_guard<std::mutex> hold(wake_mu_);
     const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
     if (until > wake_until_) wake_until_ = until;
@@ -468,7 +418,7 @@ void WslRadio::hold_wake(int seconds) {
 }
 
 // A send or a scan finished: the wake stays a moment for any left.
-void WslRadio::done_waking() {
+void Radio::done_waking() {
     std::lock_guard<std::mutex> hold(wake_mu_);
     if (sends_pending_ > 0) return;
     const auto soon = std::chrono::steady_clock::now() + std::chrono::seconds(3);
@@ -476,24 +426,17 @@ void WslRadio::done_waking() {
     wake_cv_.notify_all();
 }
 
-void WslRadio::stop() {
+void Radio::stop() {
     stop_.store(true);
-    std::shared_ptr<ChildProcess> stack;
+    std::shared_ptr<ChildProcess> agent;
     {
         std::lock_guard<std::mutex> hold(process_mu_);
-        stack = stack_;
+        agent = agent_process_;
     }
-    if (stack && !stack->wait(0)) {
-        if (config_.native) {
-            // The agent sees its pipe go, and gives the stick back.
-            stack->disconnect();
-            for (int i = 0; i < 40 && task_running(); ++i) Sleep(500);
-        } else {
-            // run.sh's own stop: OWL goes, the card goes back to managed mode.
-            std::string out;
-            run_command(wsl_exe(), in_distro({L"/wsl-run.sh", L"--stop"}), out, 40000);
-            if (!stack->wait(10000)) stack->kill();
-        }
+    if (agent) {
+        // The agent sees its pipe go, and gives the stick back.
+        agent->disconnect();
+        for (int i = 0; i < 40 && task_running(); ++i) Sleep(500);
     }
     if (thread_.joinable()) thread_.join();
     {
@@ -504,22 +447,22 @@ void WslRadio::stop() {
     if (wake_thread_.joinable()) wake_thread_.join();
 }
 
-void WslRadio::pause(int ms) {
+void Radio::pause(int ms) {
     for (int waited = 0; waited < ms && !stopping(); waited += 100) Sleep(100);
 }
 
-void WslRadio::log(const std::string& line) {
+void Radio::log(const std::string& line) {
     std::lock_guard<std::mutex> hold(log_mu_);
     std::ofstream out(config_.home / L"radio.log", std::ios::app | std::ios::binary);
     out << line << '\n';
 }
 
-void WslRadio::state(const std::string& text, RadioLevel level) {
+void Radio::state(const std::string& text, RadioLevel level) {
     log("state: " + text);
     if (config_.on_state) config_.on_state(text, level);
 }
 
-void WslRadio::run() {
+void Radio::run() {
     {
         std::lock_guard<std::mutex> hold(log_mu_);
         // The last run's log stays beside it, so a start that failed can
@@ -530,32 +473,24 @@ void WslRadio::run() {
             << "HowlDrop " << kVersion << ": AirDrop on this PC\n";
     }
     std::string error;
-    wsl::UsbDevice stick;
-    const bool native = config_.native;
-    if (native ? !prepare_native(error) : (!prepare(error) || !find_stick(stick, error))) {
+    if (!prepare(error)) {
         state(stopping() ? "Off" : error, stopping() ? RadioLevel::Off : RadioLevel::Problem);
         return;
     }
     // Once it has been on the share sheet, it starts again by itself when it
-    // stops (wsl::restart_delay_ms): as turning it off and on would, with
-    // the stick found again, since a wake can bring it back at another bus ID.
+    // stops (radio::restart_delay_ms), as turning it off and on would.
     bool was_up = false;
     bool set_up_again = false;
     for (int failed = 0;;) {
-        std::string why = native ? run_agent() : run_stack(stick);
-        if (!native) give_back(stick.busid);
+        std::string why = run_agent();
         const bool came_up = up_.exchange(false);
         if (config_.on_up) config_.on_up(false);
-        if (!native) {
-            std::string out;
-            run_command(wsl_exe(), {L"--terminate", wide(wsl::kDistro)}, out, 30000);
-        }
         if (stopping()) break;
         // The stick isn't on WinUSB (a new one, or put back on its own
         // driver): the setup puts it on, once, and it starts again.
-        if (native && needs_setup_ && !set_up_again) {
+        if (needs_setup_ && !set_up_again) {
             set_up_again = true;
-            if (!prepare_native(error)) {
+            if (!prepare(error)) {
                 state(stopping() ? "Off" : error, stopping() ? RadioLevel::Off : RadioLevel::Problem);
                 return;
             }
@@ -563,107 +498,20 @@ void WslRadio::run() {
         }
         was_up = was_up || came_up;
         failed = came_up ? 0 : failed + 1;
-        for (;;) {
-            const int delay = was_up ? wsl::restart_delay_ms(failed) : -1;
-            if (delay < 0) {
-                state(stick_failed_ ? why : "Stopped: " + why + ". Turn it off and on to retry.", RadioLevel::Problem);
-                return;
-            }
-            log("starting again in " + std::to_string(delay / 1000) + " s: " + why);
-            state("Starting again: " + why);
-            pause(delay);
-            if (stopping() || native || find_stick(stick, why)) break;
-            stick_failed_ = true;  // find_stick's why says it all
-            ++failed;
+        const int delay = was_up ? radio::restart_delay_ms(failed) : -1;
+        if (delay < 0) {
+            state("Stopped: " + why + ". Turn it off and on to retry.", RadioLevel::Problem);
+            return;
         }
+        log("starting again in " + std::to_string(delay / 1000) + " s: " + why);
+        state("Starting again: " + why);
+        pause(delay);
         if (stopping()) break;
     }
     state("Off", RadioLevel::Off);
 }
 
-bool WslRadio::prepare(std::string& error) {
-    std::error_code ec;
-    fs::create_directories(config_.home, ec);
-    fs::create_directories(outbox_, ec);
-    fs::create_directories(config_.inbox, ec);
-    if (!wsl::wsl_path(path_to_utf8(config_.inbox)) || !wsl::wsl_path(path_to_utf8(outbox_))) {
-        error = "The HowlDrop folder must be on a drive of this PC (it is " + path_to_utf8(config_.inbox) + ").";
-        return false;
-    }
-
-    state("Checking WSL");
-    std::string out;
-    if (run_command(wsl_exe(), {L"--version"}, out, 30000) != 0) {
-        error = "WSL isn't installed. Open a terminal as administrator, run: wsl --install, restart Windows, "
-                "then turn AirDrop on this PC on again.";
-        return false;
-    }
-
-    usbipd_ = find_usbipd();
-    if (usbipd_.empty()) {
-        const bool yes = config_.ask &&
-                         config_.ask(L"AirDrop on this PC hands the USB Wi-Fi stick to WSL with usbipd-win, which "
-                                     L"isn't installed.\n\nInstall it now with winget? A window shows the install, "
-                                     L"and Windows asks for permission.");
-        if (!yes) {
-            error = "Needs usbipd-win: install it (winget install usbipd), then turn this on again.";
-            return false;
-        }
-        state("Installing usbipd-win");
-        ChildProcess winget;
-        if (winget.start(L"winget.exe", {L"install", L"--exact", L"--id", L"dorssel.usbipd-win"}, error, {}, true)) {
-            while (!winget.wait(500) && !stopping()) {
-            }
-        }
-        usbipd_ = find_usbipd();
-        if (usbipd_.empty()) {
-            error = "usbipd-win didn't install. Install it (winget install usbipd), then turn this on again.";
-            return false;
-        }
-    }
-    return ensure_distro(error);
-}
-
-bool WslRadio::ensure_distro(std::string& error) {
-    std::string out;
-    run_command(wsl_exe(), {L"--list", L"--quiet"}, out, 30000);
-    const auto names = wsl::parse_distros(out);
-    bool have = std::find(names.begin(), names.end(), wsl::kDistro) != names.end();
-    if (have && !kLinuxVersion.empty()) {
-        std::string version;
-        run_command(wsl_exe(), in_distro({L"cat", L"/etc/howldrop-version"}), version, 60000);
-        if (trim(version) != kLinuxVersion) {
-            state("Updating the Linux part to " + kLinuxVersion);
-            log("installed Linux part: " + trim(version) + "; this howldrop.exe goes with " + kLinuxVersion);
-            run_command(wsl_exe(), {L"--terminate", wide(wsl::kDistro)}, out, 30000);
-            run_command(wsl_exe(), {L"--unregister", wide(wsl::kDistro)}, out, 120000);
-            have = false;
-        }
-    }
-    if (have) return true;
-    if (kLinuxUrl.empty()) {
-        error = "This howldrop.exe has no Linux part to download (a local build). Use a release from GitHub.";
-        return false;
-    }
-    const fs::path tar = config_.home / L"howldrop-linux.tar.gz";
-    if (!download(kLinuxUrl, kLinuxSha256, "the Linux part", tar, error)) return false;
-    state("Installing the Linux part (a minute or two)");
-    std::error_code ec;
-    fs::create_directories(config_.home / L"wsl", ec);
-    const int code = run_command(wsl_exe(),
-                                 {L"--import", wide(wsl::kDistro), (config_.home / L"wsl").wstring(), tar.wstring(),
-                                  L"--version", L"2"},
-                                 out, 15 * 60 * 1000);
-    fs::remove(tar, ec);
-    if (code != 0) {
-        log("wsl --import: " + out);
-        error = "Installing the Linux part failed: " + trim(out);
-        return false;
-    }
-    return true;
-}
-
-bool WslRadio::download(const std::string& address, const std::string& sha256, const std::string& what,
+bool Radio::download(const std::string& address, const std::string& sha256, const std::string& what,
                         const fs::path& tar, std::string& error) {
     state("Downloading " + what);
     const std::wstring url = wide(address);
@@ -760,86 +608,7 @@ bool WslRadio::download(const std::string& address, const std::string& sha256, c
     return true;
 }
 
-bool WslRadio::find_stick(wsl::UsbDevice& stick, std::string& error) {
-    bool asked = false;
-    while (!stopping()) {
-        std::string out;
-        run_command(usbipd_, {L"list"}, out, 30000);
-        const auto found = wsl::find_stick(wsl::parse_usbipd_list(out));
-        if (!found) {
-            state("Plug in a USB Wi-Fi stick HowlDrop supports (an MT7612U is best)", RadioLevel::Problem);
-            pause(3000);
-            continue;
-        }
-        stick = *found;
-        const std::string& busid = stick.busid;
-        log(std::string("Wi-Fi stick: ") + stick.kind->chip + " (" + stick.id + ", " + stick.kind->driver + "), " +
-            (stick.kind->tested ? "tested" : "untested") + ", on USB " + busid);
-        stick_note_ = stick.kind->tested ? "" : std::string(", ") + stick.kind->chip + ", untested";
-        if (stick.shared()) return true;
-        if (asked) {
-            error = "The stick isn't shared with WSL (usbipd bind was cancelled). Turn this on again to retry.";
-            return false;
-        }
-        // Once per stick and port: usbipd remembers.
-        state("Sharing the stick with WSL (Windows asks for permission)");
-        const int code = run_elevated(usbipd_, L"bind --busid " + wide(busid));
-        log("usbipd bind --busid " + busid + ": exit " + std::to_string(code));
-        asked = true;
-    }
-    return false;
-}
-
-std::string WslRadio::run_stack(const wsl::UsbDevice& stick) {
-    const std::string& busid = stick.busid;
-    stop_reason_.clear();
-    stick_failed_ = false;
-    const auto save = wsl::wsl_path(path_to_utf8(config_.inbox));
-    const auto outbox = wsl::wsl_path(path_to_utf8(outbox_));
-    const auto scan = wsl::wsl_path(path_to_utf8(scan_request_));
-    const auto asks = wsl::wsl_path(path_to_utf8(asks_));
-    std::error_code ec;
-    fs::remove(scan_request_, ec);
-    fs::create_directories(asks_, ec);
-    if (stopping()) return {};
-    state("Starting");
-    auto stack = std::make_shared<ChildProcess>();
-    std::string error;
-    if (!stack->start(wsl_exe(),
-                      in_distro(stack_args(stick, {L"/wsl-run.sh", L"--name", wide(config_.name), L"--save",
-                                               wide(*save), L"--outbox", wide(*outbox), L"--scan-request",
-                                               wide(*scan), L"--receive", wide(config_.receive), L"--senders",
-                                               wide(config_.senders), L"--ask-dir", wide(asks.value_or(""))})),
-                      error)) {
-        return "couldn't start the Linux part: " + error;
-    }
-    {
-        std::lock_guard<std::mutex> hold(process_mu_);
-        stack_ = stack;
-    }
-    if (stopping()) {  // stop() came while it started, and did not see it
-        std::string out;
-        run_command(wsl_exe(), in_distro({L"/wsl-run.sh", L"--stop"}), out, 40000);
-    }
-    std::string line;
-    while (stack->read_line(line)) handle_line(line, busid);
-    stack->wait(INFINITE);
-    const auto code = stack->exit_code();
-    log("the Linux part ended (exit " + std::to_string(code) + ")");
-    {
-        std::lock_guard<std::mutex> hold(process_mu_);
-        stack_.reset();
-    }
-    if (!stop_reason_.empty()) return stop_reason_;
-    // 0x40010004: Windows ended wsl.exe, as when WSL shuts its VM down.
-    if (code == 0x40010004) return "WSL shut down";
-    return "the Linux part ended (exit " + std::to_string(code) + ")";
-}
-
-// The native part this exe goes with, from its release, unpacked into
-// home\native\bin (with what it was, .sha256) unless it's there already;
-// agent_ is its howldrop-agent.exe.
-bool WslRadio::fetch_native(std::string& error) {
+bool Radio::fetch_agent(std::string& error) {
     const fs::path bin = config_.home / L"native" / L"bin";
     agent_ = bin / L"howldrop-agent.exe";
     std::string have;
@@ -850,11 +619,11 @@ bool WslRadio::fetch_native(std::string& error) {
     std::error_code ec;
     if (fs::exists(agent_, ec) && !kNativeSha256.empty() && lower(trim(have)) == lower(kNativeSha256)) return true;
     if (kNativeUrl.empty()) {
-        error = "AirDrop without WSL needs howldrop-agent.exe beside howldrop.exe (not in this local build).";
+        error = "This local build has no howldrop-agent.exe beside it.";
         return false;
     }
     const fs::path zip = config_.home / L"howldrop-native.zip";
-    if (!download(kNativeUrl, kNativeSha256, "the part for AirDrop without WSL", zip, error)) return false;
+    if (!download(kNativeUrl, kNativeSha256, "the AirDrop part", zip, error)) return false;
     fs::remove_all(bin, ec);
     fs::create_directories(bin, ec);
     // Windows' own tar (10 1803 and later) reads zip.
@@ -866,14 +635,14 @@ bool WslRadio::fetch_native(std::string& error) {
     fs::remove(zip, ec);
     if (code != 0 || !fs::exists(agent_, ec)) {
         log("tar -xf howldrop-native.zip: exit " + std::to_string(code) + ": " + trim(out));
-        error = "Unpacking the part for AirDrop without WSL failed. Turn this on again to retry.";
+        error = "Unpacking the AirDrop part failed. Turn this on again to retry.";
         return false;
     }
     std::ofstream(bin / L".sha256", std::ios::binary) << kNativeSha256 << '\n';
     return true;
 }
 
-bool WslRadio::prepare_native(std::string& error) {
+bool Radio::prepare(std::string& error) {
     std::error_code ec;
     fs::create_directories(config_.home, ec);
     fs::create_directories(outbox_, ec);
@@ -881,7 +650,7 @@ bool WslRadio::prepare_native(std::string& error) {
     wchar_t self[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
     agent_ = (n > 0 && n < MAX_PATH ? fs::path(self).parent_path() : fs::path()) / L"howldrop-agent.exe";
-    if (!fs::exists(agent_, ec) && !fetch_native(error)) return false;
+    if (!fs::exists(agent_, ec) && !fetch_agent(error)) return false;
     // Set up once (setup.rs): the agent in Program Files, its task, and the
     // stick on WinUSB; again when this agent isn't the one installed.
     std::string out;
@@ -892,7 +661,7 @@ bool WslRadio::prepare_native(std::string& error) {
                                L"howldrop-agent.exe";
     if (task && same_contents(agent_, installed) && !needs_setup_) return true;
     needs_setup_ = false;
-    state("Setting up AirDrop without WSL (Windows asks for permission, this once)");
+    state("Setting up AirDrop on this PC (Windows asks for permission, this once)");
     const fs::path setup_log = config_.home / L"native-setup.log";
     const int code = run_elevated(agent_, L"--setup " + quote(setup_log.wstring()));
     std::string said;
@@ -904,17 +673,16 @@ bool WslRadio::prepare_native(std::string& error) {
     if (code != 0) {
         const auto last = trim(said).rfind('\n');
         const std::string why = trim(last == std::string::npos ? trim(said) : trim(said).substr(last + 1));
-        error = code == -1 ? "Setting up AirDrop without WSL needs Windows' permission. Turn it on again to retry."
-                           : "Setting up AirDrop without WSL failed: " + (why.empty() ? "exit " + std::to_string(code)
+        error = code == -1 ? "Setting up AirDrop on this PC needs Windows' permission. Turn it on again to retry."
+                           : "Setting up AirDrop on this PC failed: " + (why.empty() ? "exit " + std::to_string(code)
                                                                                       : why);
         return false;
     }
     return true;
 }
 
-std::string WslRadio::run_agent() {
+std::string Radio::run_agent() {
     stop_reason_.clear();
-    stick_failed_ = false;
     std::error_code ec;
     fs::remove(scan_request_, ec);
     fs::create_directories(asks_, ec);
@@ -937,31 +705,31 @@ std::string WslRadio::run_agent() {
     }
     {
         std::lock_guard<std::mutex> hold(process_mu_);
-        stack_ = agent;
+        agent_process_ = agent;
     }
     if (stopping()) agent->disconnect();  // stop() came while it started
     std::string line;
-    while (agent->read_line(line)) handle_line(line, {});
+    while (agent->read_line(line)) handle_line(line);
     log("howldrop-agent ended");
     {
         std::lock_guard<std::mutex> hold(process_mu_);
-        stack_.reset();
+        agent_process_.reset();
     }
     if (!stop_reason_.empty()) return stop_reason_;
     return "howldrop-agent ended";
 }
 
 // Whether the task's agent is still running (schtasks' CSV status).
-bool WslRadio::task_running() {
+bool Radio::task_running() {
     std::string out;
     run_command(L"schtasks.exe", {L"/query", L"/tn", kAgentTask, L"/fo", L"csv", L"/nh"}, out, 30000);
     return out.find("\"Running\"") != std::string::npos;
 }
 
-void WslRadio::handle_line(const std::string& line, const std::string& busid) {
+void Radio::handle_line(const std::string& line) {
     log(line);
-    const auto event = wsl::event_fields(line);
-    // outbox.py starts on a file: its window (180 s) is when the phone must hear the wake.
+    const auto event = radio::event_fields(line);
+    // The agent starts on a file: its window (180 s) is when the phone must hear the wake.
     if (line.rfind("Send: sending ", 0) == 0) hold_wake(200);
     if (!event) return;
     const auto& f = *event;
@@ -969,24 +737,12 @@ void WslRadio::handle_line(const std::string& line, const std::string& busid) {
     const std::string& what = f[0];
     const auto field = [&](std::size_t i) { return i < f.size() ? f[i] : std::string(); };
     if (what == "stick") {
-        if (field(1) == "waiting") {
-            state("Handing the stick to WSL");
-            attach(busid);
-        } else if (field(1) == "ready") {
-            state("Starting the radio");
-        } else if (field(1) == "failed") {
-            stop_reason_ = field(2);
-            stick_failed_ = true;
-            state(field(2), RadioLevel::Problem);
-        } else if (field(1) == "needs-winusb") {
-            needs_setup_ = true;
-        }
+        if (field(1) == "needs-winusb") needs_setup_ = true;
     } else if (what == "stopped") {
         stop_reason_ = field(1);
     } else if (what == "up") {
         up_.store(true);
-        state("On the share sheet as " + config_.name + (stick_note_.empty() ? "" : " (" + stick_note_.substr(2) + ")"),
-              RadioLevel::Up);
+        state("On the share sheet as " + config_.name, RadioLevel::Up);
         if (config_.on_up) config_.on_up(true);
     } else if (what == "received") {
         const std::string rel = field(1);
@@ -1016,33 +772,8 @@ void WslRadio::handle_line(const std::string& line, const std::string& busid) {
     }
 }
 
-// Once, through the HowlDrop distro (it has modprobe for vhci-hcd). Not
-// --auto-attach: its re-attach loop runs inside WSL and outlives usbipd.exe,
-// so it would take the stick back after give_back detached it.
-// Tried again for a minute: right after a stop detached the stick (a restart
-// for new settings), Windows may not have it back yet, and the one try left
-// wsl-run.sh waiting until it gave up.
-void WslRadio::attach(const std::string& busid) {
-    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-    for (int attempt = 1;; ++attempt) {
-        std::string out;
-        const int code =
-            run_command(usbipd_, {L"attach", L"--wsl", wide(wsl::kDistro), L"--busid", wide(busid)}, out, 60000);
-        log("usbipd attach: exit " + std::to_string(code) + ": " + trim(out));
-        if (code == 0 || stop_.load() || std::chrono::steady_clock::now() >= until) return;
-        log("usbipd attach: trying again (" + std::to_string(attempt) + ")");
-        std::this_thread::sleep_for(std::chrono::seconds(3));
-    }
-}
-
-void WslRadio::give_back(const std::string& busid) {
-    std::string out;
-    run_command(usbipd_, {L"detach", L"--busid", wide(busid)}, out, 30000);
-    log("usbipd detach: " + trim(out));
-}
-
-void WslRadio::decide(const std::string& id, bool accept) {
-    // An id is howl_ask.new_id()'s hex; anything else names no ask.
+void Radio::decide(const std::string& id, bool accept) {
+    // An id is the agent's hex (receive.rs random_id); anything else names no ask.
     if (id.empty() || id.size() > 32 || id.find_first_not_of("0123456789abcdef") != std::string::npos) return;
     std::error_code ec;
     fs::create_directories(asks_, ec);
@@ -1052,12 +783,12 @@ void WslRadio::decide(const std::string& id, bool accept) {
 
 // --- sending to the iPhone (Node::LocalIphone) ----------------------------------------
 
-Status WslRadio::queue(const fs::path& path, const std::string& to) {
+Status Radio::queue(const fs::path& path, const std::string& to) {
     if (!up_.load()) return Status::failure("AirDrop on this PC isn't on yet");
     std::error_code ec;
     if (!fs::is_regular_file(path, ec)) return Status::failure("that path is not a file");
     fs::create_directories(outbox_, ec);
-    // outbox.py takes a file once it stops growing, and skips *.partial; the
+    // The agent takes a file (send.rs) once it stops growing, and skips *.partial; the
     // device it is for goes beside it first (NAME.howldrop-to).
     const fs::path name = path.filename();
     fs::path dest = outbox_ / name;
@@ -1082,7 +813,7 @@ Status WslRadio::queue(const fs::path& path, const std::string& to) {
     return Status::success("handed to AirDrop on this PC");
 }
 
-Node::Nearby WslRadio::nearby() const {
+Node::Nearby Radio::nearby() const {
     std::lock_guard<std::mutex> hold(nearby_mu_);
     Node::Nearby out;
     out.relay = up_.load();
@@ -1092,7 +823,7 @@ Node::Nearby WslRadio::nearby() const {
     return out;
 }
 
-Status WslRadio::scan() {
+Status Radio::scan() {
     if (!up_.load()) return Status::failure("AirDrop on this PC isn't on yet");
     hold_wake(150);  // up to three tries (outbox.py scan); the phone only answers once woken
     std::ofstream(scan_request_, std::ios::binary) << "scan\n";

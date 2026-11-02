@@ -72,32 +72,32 @@ it on private networks (UDP 47631, TCP 47632).
 
 ## AirDrop on this PC
 
-Windows' own Wi-Fi drivers cannot do AirDrop's Wi-Fi (AWDL), so the radio
-runs in Linux: the Home Assistant add-on's stack, in a WSL 2 distro of its
-own that `howldrop.exe` downloads, starts and stops. You need:
+Windows' own Wi-Fi drivers cannot do AirDrop's Wi-Fi (AWDL), so HowlDrop
+drives a USB Wi-Fi stick itself: `howldrop-agent.exe` runs the stick from
+user space, AWDL and AirDrop on top of it, with a virtual network adapter
+(WireGuard's Wintun) as the link (`docs/native-windows.md`). You need:
 
-- Windows 11 (or 10) with WSL 2 (`wsl --install` in an administrator terminal,
-  then restart). Its kernel has the stick's driver.
+- Windows 11 (or 10, version 1803 or later).
 - A USB Wi-Fi stick with a MediaTek **MT7612U** (e.g. Alfa AWUS036ACM,
-  `0e8d:7612`, or Netgear A6210: any ID WSL's `mt76x2u` driver takes), or a
-  Realtek RTL8852BU, which runs untested. A USB 2.0 port worked best. The
-  PC's built-in Wi-Fi can't do it; [Which Wi-Fi adapter?](../docs/adapters.md)
-  has what works and what doesn't.
-- [usbipd-win](https://github.com/dorssel/usbipd-win), which hands the stick
-  to WSL. HowlDrop offers to install it (`winget install usbipd`).
+  `0e8d:7612`, or Netgear A6210: any ID Linux's `mt76x2u` driver takes). A
+  USB 2.0 port worked best. The PC's built-in Wi-Fi can't do it;
+  [Which Wi-Fi adapter?](../docs/adapters.md) has what works and what
+  doesn't.
 
 Turn on **AirDrop on this PC** in the menu. The first time, HowlDrop
-downloads its Linux part (about 250 MB, from its release, checked against
-the SHA-256 built into the exe) and imports it as the WSL distro `HowlDrop`,
-and Windows asks once for permission to share the stick with WSL. The dot on
-the icon says how it is going: amber while it starts, green when the PC is
+downloads its agent (about 8 MB, from its release, checked against the SHA-256
+built into the exe), and Windows asks once to let it set itself up: it goes
+into `Program Files\HowlDrop`, a scheduled task runs it with your full rights
+from then on (its virtual adapter needs them) without asking again, and the
+stick goes on Windows' own WinUSB driver so the agent can drive it. The dot
+on the icon says how it is going: amber while it starts, green when the PC is
 on the share sheet (by its name), red when it needs you (no stick, say), and
-none while it is off. Turning it off, or quitting, gives the stick back to
-Windows. If the radio stops by itself once it has been on the share sheet (the
-PC slept and the stick went with it, or WSL shut down), HowlDrop starts it
-again, amber meanwhile; red means four tries in a row didn't bring it back.
+none while it is off. Turning it off, or quitting, gives the stick back. If
+the radio stops by itself once it has been on the share sheet (the PC slept
+and the stick went with it), HowlDrop starts it again, amber meanwhile; red
+means four tries in a row didn't bring it back.
 
-Files land in `Downloads\HowlDrop` (one copy; the Linux side writes there
+Files land in `Downloads\HowlDrop` (one copy; the agent writes there
 directly), text goes on the clipboard, and nothing listens on the network
 between the two halves.
 
@@ -178,14 +178,16 @@ A cross-build from Linux uses `cmake/mingw-w64-x86_64.cmake`. CI builds
 `howldrop.exe` on every push (the `howldrop-windows` download on the run's
 page).
 
-To release it: set `kVersion` in `src/config.hpp` to the add-on version it
-goes with, push to main and let CI publish that add-on image, then push a tag
-`windows-vVERSION` (e.g. `windows-v0.17.0`).
-`.github/workflows/release-windows.yml` makes `howldrop-linux.tar.gz` from
-the amd64 add-on image of that version (`tools/wsl-distro`), builds and tests
-the exe with its address and SHA-256 built in, and publishes a GitHub release
-with both attached and `RELEASE.md` as its notes. A local build has no Linux
-part to download; it uses a `HowlDrop` distro already imported.
+To release it: set `kVersion` in `src/config.hpp` and the agent's version in
+`crates/howldrop-agent/Cargo.toml` to the same one, push it, then push a tag
+`windows-vVERSION` (e.g. `windows-v0.20.0`).
+`.github/workflows/release-windows.yml` builds the agent and packs
+`howldrop-native.zip` (the agent, its launcher, `wintun.dll` and the stick's
+firmware, with their licences), builds and tests the exe with its address
+and SHA-256 built in, and publishes a GitHub release with both attached and
+`RELEASE.md` as its notes. A local build has no agent to download; it uses
+the one beside it (`howldrop-agent.exe`, `howldrop-agentw.exe`, `wintun.dll`
+and `firmware\`).
 
 The pictures in `docs/screenshots` are drawn by the app itself, from made-up
 data (`src/screenshots_win.cpp`); after changing the window or the cards,
@@ -197,7 +199,7 @@ howldrop.exe screenshots docs\screenshots
 
 `tests/` runs on Linux (`howldrop-test`, `howldrop-bridge-test`) and on
 both (`howldrop-open-test`, the rules for what opens by itself, in
-`src/open_policy.cpp`; `howldrop-wsl-test`, what AirDrop on this PC reads
-from usbipd, wsl.exe and the stack, and the 30-day cleanup;
+`src/open_policy.cpp`; `howldrop-radio-test`, what AirDrop on this PC reads
+from the agent, and the 30-day cleanup;
 `howldrop-transfers-test`, what the cards and the window show for each
 transfer, and the Recent list's history).

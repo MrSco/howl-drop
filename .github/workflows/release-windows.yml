@@ -1,61 +1,34 @@
 name: Release howldrop.exe
 
 # Push a tag windows-vVERSION (VERSION = kVersion in howldrop/src/config.hpp,
-# the add-on version it goes with) to build, test and publish howldrop.exe as
-# a GitHub release. howldrop/README.md has the steps.
+# and the agent's own) to build, test and publish howldrop.exe as a GitHub
+# release. howldrop/README.md has the steps.
 #
-# With it goes howldrop-linux.tar.gz, the WSL distro AirDrop on this PC
-# downloads the first time it is turned on: the add-on image of the same
-# version (CI's images job pushes it when main gets that version), with
-# tools/wsl-distro on top. The exe is built knowing its address and SHA-256,
-# and refuses any other file.
-#
-# And howldrop-native.zip, which AirDrop on this PC downloads instead when
-# it runs without WSL (docs/native-windows.md): howldrop-agent.exe and its
-# launcher built here, WireGuard's wintun.dll, and the stick's firmware from
-# the linux-firmware commit the add-on uses, each checked by hash, with
-# their licences. Known to the exe the same way.
+# With it goes howldrop-native.zip, which AirDrop on this PC downloads the
+# first time it is turned on (docs/native-windows.md): howldrop-agent.exe
+# and its launcher built here, WireGuard's wintun.dll, and the stick's
+# firmware from one linux-firmware commit, each checked by
+# hash, with their licences. The exe is built knowing its address and
+# SHA-256, and refuses any other file.
 on:
   push:
     tags: ['windows-v*']
 
 jobs:
-  linux-part:
-    runs-on: ubuntu-latest
-    outputs:
-      sha256: ${{ steps.pack.outputs.sha256 }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: The tag matches the version the exe reports and the add-on's
-        run: |
-          tag="${GITHUB_REF_NAME#windows-v}"
-          exe=$(sed -n 's/.*kVersion = "\(.*\)";/\1/p' howldrop/src/config.hpp)
-          addon=$(awk -F'"' '/^version:/ {print $2}' addon/config.yaml)
-          echo "tag $tag, kVersion $exe, add-on $addon"
-          [ "$tag" = "$exe" ] && [ "$tag" = "$addon" ]
-      - name: Make the distro from the add-on image
-        id: pack
-        run: |
-          version="${GITHUB_REF_NAME#windows-v}"
-          docker build tools/wsl-distro --build-arg IMAGE="ghcr.io/mrsco/howldrop-amd64:$version" \
-            --build-arg VERSION="$version" -t howldrop-wsl
-          cid=$(docker create howldrop-wsl)
-          docker export "$cid" | gzip -9 > howldrop-linux.tar.gz
-          docker rm "$cid"
-          ls -l howldrop-linux.tar.gz
-          echo "sha256=$(sha256sum howldrop-linux.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: howldrop-linux
-          path: howldrop-linux.tar.gz
-          compression-level: 0
-
   native-part:
     runs-on: windows-latest
     outputs:
       sha256: ${{ steps.pack.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v4
+      - name: The tag matches the version the exe and the agent report
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#windows-v}"
+          exe=$(sed -n 's/.*kVersion = "\(.*\)";/\1/p' howldrop/src/config.hpp)
+          agent=$(awk -F'"' '/^version = / {print $2; exit}' crates/howldrop-agent/Cargo.toml)
+          echo "tag $tag, kVersion $exe, agent $agent"
+          [ "$tag" = "$exe" ] && [ "$tag" = "$agent" ]
       - name: Build the agent and its launcher
         run: cargo build --release --locked -p howldrop-agent
       - name: Pack howldrop-native.zip
@@ -75,7 +48,7 @@ jobs:
           Expand-Archive wintun.zip wintun
           Copy-Item wintun/wintun/bin/amd64/wintun.dll $d
           Copy-Item wintun/wintun/LICENSE.txt "$d/licenses/wintun.txt"
-          # As addon/Dockerfile's LINUX_FIRMWARE.
+          # linux-firmware, at one commit.
           $fw = 'https://gitlab.com/kernel-firmware/linux-firmware/-/raw/fed51005f935bab093a4377d0f23f5c7ede81870'
           Get-Checked "$fw/mediatek/mt7662.bin" "$d/firmware/mt7662.bin" `
             f7e52492f58088cae50e51a54cca68e4abc5b74f7d0b6b731dbb4c04465a94b6
@@ -92,7 +65,7 @@ jobs:
           compression-level: 0
 
   release:
-    needs: [linux-part, native-part]
+    needs: native-part
     runs-on: windows-latest
     permissions:
       contents: write
@@ -107,27 +80,20 @@ jobs:
           install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
       - uses: actions/download-artifact@v4
         with:
-          name: howldrop-linux
-      - uses: actions/download-artifact@v4
-        with:
           name: howldrop-native
       - name: Build
         run: |
-          version="${GITHUB_REF_NAME#windows-v}"
           cmake -S howldrop -B build/howldrop -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DHOWLDROP_LINUX_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/howldrop-linux.tar.gz" \
-            -DHOWLDROP_LINUX_SHA256="${{ needs.linux-part.outputs.sha256 }}" \
-            -DHOWLDROP_LINUX_VERSION="$version" \
             -DHOWLDROP_NATIVE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/howldrop-native.zip" \
             -DHOWLDROP_NATIVE_SHA256="${{ needs.native-part.outputs.sha256 }}"
           cmake --build build/howldrop
       - name: Test
-        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-wsl-test.exe && build/howldrop/howldrop-transfers-test.exe
+        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-radio-test.exe && build/howldrop/howldrop-transfers-test.exe
       - name: Publish
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = "$env:GITHUB_REF_NAME".Substring("windows-v".Length)
-          gh release create "$env:GITHUB_REF_NAME" build/howldrop/howldrop.exe howldrop-linux.tar.gz howldrop-native.zip `
+          gh release create "$env:GITHUB_REF_NAME" build/howldrop/howldrop.exe howldrop-native.zip `
             --title "HowlDrop for Windows $version" --notes-file howldrop/RELEASE.md --verify-tag

@@ -1,10 +1,10 @@
 # Which Wi-Fi adapter do I need?
 
 **Short answer: get a USB Wi-Fi adapter with a MediaTek MT7612U chip, like the
-Alfa AWUS036ACM.** It's the one
-HowlDrop is built and tested with, on Windows and on Home Assistant, and it's
-the fastest: on Windows a 14.7 MB iPhone video arrives in about 3 seconds, and
-goes back to the phone in about 16.
+Alfa AWUS036ACM.** It's the one HowlDrop is built and tested with, on
+Windows and on Home Assistant, and the only one HowlDrop for Windows can
+drive; it's also the fastest: on Windows a 14.7 MB iPhone video arrives in
+about 4 seconds.
 
 AirDrop needs a Wi-Fi radio that can do things normal Wi-Fi doesn't
 (Apple's AWDL: listening to everything on a channel, sending raw frames, and
@@ -16,17 +16,15 @@ won't let it. That's why the choice matters.
 A product's name doesn't tell you its chip, and makers change chips between
 versions. What counts is the **USB ID** (vendor:product).
 
-- **Windows:** plug it in, open a terminal, run `usbipd list` (after
-  installing [usbipd-win](https://github.com/dorssel/usbipd-win)), and read
-  the `VID:PID` column. Or: Device Manager → the adapter → Properties →
-  Details → Hardware Ids, and look for `VID_xxxx&PID_xxxx`.
+- **Windows:** Device Manager → the adapter → Properties → Details →
+  Hardware Ids, and look for `VID_xxxx&PID_xxxx`.
 - **Linux / Home Assistant:** `lsusb` for USB adapters, `lspci -nn` for
   built-in cards.
 
 HowlDrop for Windows recognizes a stick by its USB ID: the MT7612U's
-`0e8d:7612` (Alfa AWUS036ACM) and every other ID WSL's MT7612U driver
-takes, and the RTL8852BU's. The list is `kSticks` in
-[howldrop/src/wsl_text.hpp](../howldrop/src/wsl_text.hpp).
+`0e8d:7612` (Alfa AWUS036ACM) and every other ID Linux's MT7612U driver
+takes. The list is `USB_IDS` in
+[crates/mt7612u/src/lib.rs](../crates/mt7612u/src/lib.rs).
 
 ## The lists
 
@@ -36,19 +34,17 @@ Windows limits)
 
 ### On Windows: AirDrop on this PC
 
-The Windows app runs the radio in Linux inside WSL, and WSL can only borrow
-**USB** devices. So on Windows it has to be a USB adapter.
+Windows' own Wi-Fi drivers can't do AWDL, so HowlDrop drives the stick
+itself, with a driver of its own for one chip: the MT7612U
+([native-windows.md](native-windows.md)). So on Windows it has to be a USB
+MT7612U.
 
 | Adapter (chip) | USB ID | | Notes |
 |---|---|---|---|
-| MediaTek **MT7612U** (Alfa AWUS036ACM) | `0e8d:7612` | ✅ | Tested both ways: a 14.7 MB video from the iPhone in 3 s, to it in 16 s. Runs on 5 GHz. |
-| MT7612U with another USB ID: Netgear A6210 (`0846:9053`), ASUS USB-AC55 (`0b05:17eb`), and the others WSL's `mt76x2u` driver takes | `045e:02e6` `045e:02fe` `0471:2126` `0471:7600` `056e:400a` `057c:8503` `0846:9014` `0846:9053` `0b05:17eb` `0b05:180b` `0b05:1833` `0e8d:7632` `2357:0137` `2c4e:0103` | 🟡 | Same chip, driver and settings as the tested one, and HowlDrop for Windows uses them as it does it. Not tried yourself? Tell us how it went. |
-| Realtek **RTL8852BU** | `0bda:b832` `35bc:0108` `0586:3428` `0b05:1a62` `0bda:a85b` `0bda:b83a` `0bda:b852` `0bda:b85a` `0db0:6931` `0db0:f0c8` `2001:3327` `3574:6121` `35bc:0100` `7392:6822` | 🟡 | HowlDrop for Windows runs it (its firmware is in the Linux part), marked **untested**: in Owly's exclusive mode it worked on Linux, but nobody has tried it in WSL yet. The tray says "untested" beside the share sheet name. |
-| MediaTek MT7921AU, MT7925 (USB versions) | | 🟡 | WSL has drivers, untested. Their built-in (PCIe) twins: the MT7925 works on Linux; the MT7921 only unreliably. |
-| Realtek RTL8812AU, RTL8814AU, RTL8821AU, RTL8821CU, RTL8822BU, RTL8822CU | | 🟡 | WSL has drivers (rtw88), untested for AirDrop. |
-| **Your PC's or laptop's built-in Wi-Fi** (any brand) | | ❌ | Windows' own Wi-Fi drivers can't do AWDL, and WSL can't borrow a built-in card. Use a USB adapter. |
-| Wi-Fi 6/6E/7 USB adapters with no Linux driver | | ❌ | Nothing in WSL can drive them. If WSL has no driver for the chip, it can't work. |
-| 2.4 GHz-only adapters (e.g. MT7601U, RTL8188/RTL8192CU, RTL8187, ZD1211) | | ❌ | The iPhone moves transfers to 5 GHz. On 2.4 GHz (channel 6) it only stops by now and then, so transfers crawl or fail: a 1.1 MB photo took 27 s there, and about 1 s on 5 GHz. |
+| MediaTek **MT7612U** (Alfa AWUS036ACM) | `0e8d:7612` | ✅ | Tested both ways: a 14.7 MB video from the iPhone in about 4 s. Runs on 5 GHz. |
+| MT7612U with another USB ID: Netgear A6210 (`0846:9053`), ASUS USB-AC55 (`0b05:17eb`), and the others Linux's `mt76x2u` driver takes | `045e:02e6` `045e:02fe` `0471:2126` `0471:7600` `056e:400a` `057c:8503` `0846:9014` `0846:9053` `0b05:17eb` `0b05:180b` `0b05:1833` `0e8d:7632` `2357:0137` `2c4e:0103` | 🟡 | Same chip as the tested one, and HowlDrop for Windows drives them as it does it. Not tried yourself? Tell us how it went. |
+| Any other adapter, the Realtek RTL8852BU included | | ❌ | HowlDrop for Windows has a driver for the MT7612U only. Other chips work with the Home Assistant add-on (below). |
+| **Your PC's or laptop's built-in Wi-Fi** (any brand) | | ❌ | Windows' own Wi-Fi drivers can't do AWDL. Use a USB MT7612U. |
 
 You don't need a Bluetooth adapter: HowlDrop wakes the iPhone with the PC's
 own Bluetooth when sending to it (receiving doesn't need Bluetooth at all),
@@ -88,7 +84,8 @@ table and this repo's [hardware notes](hardware-notes.md).
 
 ## Something not listed?
 
-If it's a USB adapter whose chip WSL has a driver for (the 🟡 rows), it might
-work. Open an issue with its USB ID, and with `radio.log` and `radio.log.1`
-from `%LOCALAPPDATA%\HowlDrop` if HowlDrop tried it. Your report helps the
-next person, whether it works or not.
+On Home Assistant, a card whose Linux driver Owly's table lists might work.
+On Windows, an MT7612U with a USB ID not listed might too. Open an issue with
+its USB ID, and with `radio.log` and `radio.log.1` from
+`%LOCALAPPDATA%\HowlDrop` if HowlDrop tried it. Your report helps the next
+person, whether it works or not.

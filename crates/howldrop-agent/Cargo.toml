@@ -1,6 +1,6 @@
 [package]
 name = "howldrop-agent"
-description = "HowlDrop's radio, AirDrop receiver and sender: on Linux's Wi-Fi drivers in the Home Assistant add-on and WSL, and on Windows on a USB stick driven from user space."
+description = "HowlDrop's radio, AirDrop receiver and sender: on Linux's Wi-Fi drivers in the Home Assistant add-on, and on Windows on a USB stick driven from user space."
 # HowlDrop's version, not Owly's: --version says which release this is.
 version = "0.19.2"
 edition.workspace = true

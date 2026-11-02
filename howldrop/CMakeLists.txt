@@ -14,7 +14,7 @@ add_library(howldrop-core STATIC
     src/open_policy.cpp
     src/pairing.cpp
     src/purge.cpp
-    src/wsl_text.cpp
+    src/radio_text.cpp
     src/transfers.cpp
     src/history.cpp
 )
@@ -48,24 +48,18 @@ if(WIN32)
     # The tray app, with its icon, and no console window: commands typed in
     # a terminal attach to it (main.cpp).
     enable_language(RC)
-    target_sources(howldrop PRIVATE src/tray_win.cpp src/wsl_win.cpp src/ble_wake_win.cpp src/ui_win.cpp
+    target_sources(howldrop PRIVATE src/tray_win.cpp src/radio_win.cpp src/ble_wake_win.cpp src/ui_win.cpp
                    src/cards_win.cpp src/window_win.cpp src/screenshots_win.cpp res/howldrop.rc)
     set_target_properties(howldrop PROPERTIES WIN32_EXECUTABLE TRUE)
     target_link_libraries(howldrop PRIVATE shell32 user32 advapi32 comdlg32 ole32 uuid winhttp runtimeobject
                           d2d1 dwrite dwmapi windowscodecs)
-    # AirDrop on this PC downloads the Linux part this exe goes with (a
-    # release sets these; empty in a local build, wsl_win.cpp).
-    set(HOWLDROP_LINUX_URL "" CACHE STRING "https address of howldrop-linux.tar.gz")
-    set(HOWLDROP_LINUX_SHA256 "" CACHE STRING "its SHA-256, hex")
-    set(HOWLDROP_LINUX_VERSION "" CACHE STRING "the add-on version it was made from")
-    # And, without WSL, the native part: howldrop-agent.exe, its launcher,
-    # wintun.dll and the stick's firmware (docs/native-windows.md).
+    # AirDrop on this PC downloads the agent this exe goes with:
+    # howldrop-agent.exe, its launcher, wintun.dll and the stick's firmware
+    # (a release sets these; empty in a local build, which uses the agent
+    # beside it; radio_win.cpp).
     set(HOWLDROP_NATIVE_URL "" CACHE STRING "https address of howldrop-native.zip")
     set(HOWLDROP_NATIVE_SHA256 "" CACHE STRING "its SHA-256, hex")
     target_compile_definitions(howldrop PRIVATE
-        HOWLDROP_LINUX_URL="${HOWLDROP_LINUX_URL}"
-        HOWLDROP_LINUX_SHA256="${HOWLDROP_LINUX_SHA256}"
-        HOWLDROP_LINUX_VERSION="${HOWLDROP_LINUX_VERSION}"
         HOWLDROP_NATIVE_URL="${HOWLDROP_NATIVE_URL}"
         HOWLDROP_NATIVE_SHA256="${HOWLDROP_NATIVE_SHA256}"
     )
@@ -84,14 +78,14 @@ add_executable(howldrop-open-test tests/open_policy_test.cpp)
 target_link_libraries(howldrop-open-test PRIVATE howldrop-core)
 add_executable(howldrop-pairing-test tests/pairing_test.cpp)
 target_link_libraries(howldrop-pairing-test PRIVATE howldrop-core)
-add_executable(howldrop-wsl-test tests/wsl_test.cpp)
-target_link_libraries(howldrop-wsl-test PRIVATE howldrop-core)
+add_executable(howldrop-radio-test tests/radio_text_test.cpp)
+target_link_libraries(howldrop-radio-test PRIVATE howldrop-core)
 add_executable(howldrop-transfers-test tests/transfers_test.cpp)
 target_link_libraries(howldrop-transfers-test PRIVATE howldrop-core)
 if(NOT MSVC)
     target_compile_options(howldrop-open-test PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(howldrop-pairing-test PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(howldrop-wsl-test PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(howldrop-radio-test PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(howldrop-transfers-test PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 

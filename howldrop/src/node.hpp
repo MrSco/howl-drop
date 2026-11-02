@@ -106,7 +106,7 @@ public:
     Nearby iphone_nearby() const;
     // Ask the relay to look for nearby devices (about 30 s).
     Status request_iphone_scan();
-    // This PC's own radio (wsl_win.hpp), while it runs: sending to the
+    // This PC's own radio (radio_win.hpp), while it runs: sending to the
     // iPhone, nearby devices and scans go to it instead of the add-on's
     // relay. queue only hands the file over; it reports through on_sent
     // once the phone took it or not.

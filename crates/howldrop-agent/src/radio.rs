@@ -24,8 +24,8 @@ use owly_radio::sys::{Ops, System};
 use crate::events::{emit, say};
 use crate::link::Link;
 
-/// The radio options, as the add-on and wsl-run.sh give them. Most are the
-/// kernel driver's; Windows has only the stick.
+/// The radio options, as the add-on gives them. Most are the kernel
+/// driver's; Windows has only the stick.
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub struct Options {

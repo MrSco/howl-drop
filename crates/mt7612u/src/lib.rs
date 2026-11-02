@@ -27,8 +27,8 @@ use nusb::{DeviceInfo, Endpoint, Interface, MaybeFuture};
 
 use mcu::{Firmware, FirmwareError, RomPatch};
 
-/// The USB IDs Linux's mt76x2u takes (mt76x2/usb.c), as HowlDrop for Windows
-/// lists them (howldrop/src/wsl_text.hpp).
+/// The USB IDs Linux's mt76x2u takes (mt76x2/usb.c): the sticks this driver
+/// and HowlDrop for Windows run.
 pub const USB_IDS: &[(u16, u16)] = &[
     (0x045e, 0x02e6),
     (0x045e, 0x02fe),

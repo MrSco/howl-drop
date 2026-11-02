@@ -1,7 +1,7 @@
 //! howldrop-agent: HowlDrop's radio, receiver and sender in one process, on
-//! Owly's crates. The Home Assistant add-on (run.sh) and the Windows app's
-//! WSL part (wsl-run.sh) run it on Linux; howldrop.exe runs it on Windows
-//! itself, on a USB stick driven from user space (docs/native-windows.md):
+//! Owly's crates. The Home Assistant add-on (run.sh) runs it on Linux;
+//! howldrop.exe runs it on Windows, on a USB stick driven from user space
+//! (docs/native-windows.md):
 //!
 //! - the radio ([`radio`]): owly-radio's injection backend on the best Wi-Fi
 //!   card here, in the mode its driver needs, given back on the way out; or

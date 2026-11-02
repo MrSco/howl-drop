@@ -1,5 +1,5 @@
 //! What the agent prints: log lines, and with `--events` the `@howldrop`
-//! events howldrop.exe reads (wsl_win.cpp, transfers.cpp): `@howldrop`,
+//! events howldrop.exe reads (radio_win.cpp, transfers.cpp): `@howldrop`,
 //! then tab-separated fields, none holding a tab or a line break.
 
 use std::io::{self, Write};

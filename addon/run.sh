@@ -1,8 +1,7 @@
 #!/bin/bash
-# AirDrop on Home Assistant OS, and the Linux part of howldrop.exe in WSL
-# (wsl-run.sh runs this): howldrop-agent brings the radio up on a Wi-Fi card
-# the host kernel already drives (Owly's radio, in the mode the card's
-# driver needs), receives into a staging folder and sends what is put in
+# AirDrop on Home Assistant OS: howldrop-agent brings the radio up on a
+# Wi-Fi card the host kernel already drives (Owly's radio, in the mode the
+# card's driver needs), receives into a staging folder and sends what is put in
 # the outbox; deliver.py moves what arrives into save_folder; the panel
 # shows it; howldrop-bridge forwards it to a PC running howldrop.exe and
 # relays that PC's sends to the iPhone.
@@ -25,11 +24,7 @@ HISTORY=/data/drops.jsonl
 # the file whose appearance asks for a scan.
 SEND_STATUS=/data/send-status.json
 NEARBY=/data/send-nearby.json
-SCAN_REQUEST=${HOWLDROP_SCAN_REQUEST:-/data/send-scan.request}
-# howldrop.exe running this in WSL (wsl-run.sh) gives its own outbox
-# (HOWLDROP_OUTBOX), reads the agent's events (HOWLDROP_EVENTS=stdout), has
-# no use for the panel (HOWLDROP_PANEL=off), sends the Bluetooth wake from
-# Windows (HOWLDROP_BLE=off), and may answer asks (HOWLDROP_ASK_DIR).
+SCAN_REQUEST=/data/send-scan.request
 
 AGENT_PID=
 DELIVER_PID=
@@ -118,7 +113,7 @@ join_host_netns
 say "HowlDrop $(cat /etc/howldrop-version 2>/dev/null || echo add-on)"
 say "It uses a Wi-Fi card the host kernel already drives. Files and text from the phone are kept in save_folder (default /share/howldrop)."
 
-if ! dbus_host && [ "${HOWLDROP_BLE:-on}" != off ]; then
+if ! dbus_host; then
     say "The host D-Bus socket is not in this container: Bluetooth and NetworkManager can't be reached."
 fi
 
@@ -128,8 +123,8 @@ case "${SAVE_FOLDER:-/share/howldrop}" in
     *) say "save_folder must be an absolute path such as /share/howldrop; using /share/howldrop." ;;
 esac
 # What is AirDropped to the iPhone: save_folder/send, kept afterwards in its
-# sent/ and failed/. howldrop.exe's own outbox holds copies, deleted once tried.
-SEND_DIR=${HOWLDROP_OUTBOX:-$INBOX/send}
+# sent/ and failed/.
+SEND_DIR=$INBOX/send
 FETCH=$(option fetch_links)
 FETCH_MB=$(option fetch_max_mb)
 case "$FETCH_MB" in ""|*[!0-9]*) FETCH_MB=100 ;; esac
@@ -145,10 +140,8 @@ is_true "$(option send_to_iphone)" && SEND=true
 PANEL_ARGS=(--dest "$INBOX" --history "$HISTORY")
 [ "$SEND" != true ] || PANEL_ARGS+=(--outbox "$SEND_DIR" --send-status "$SEND_STATUS" --nearby "$NEARBY"
                                      --scan-request "$SCAN_REQUEST")
-if [ "${HOWLDROP_PANEL:-on}" != off ]; then
-    python3 "$PANEL" "${PANEL_ARGS[@]}" 2>&1 | sed -u 's/^/Panel: /' &
-    PANEL_PID=$!
-fi
+python3 "$PANEL" "${PANEL_ARGS[@]}" 2>&1 | sed -u 's/^/Panel: /' &
+PANEL_PID=$!
 
 # Off unless asked for: the share folder is the way to use this, and a PC
 # running howldrop.exe is an extra.
@@ -190,18 +183,15 @@ AGENT_ARGS=(--name "$PC_NAME" --staging "$STAGING" --identity /data/owly
             --receive "$RECEIVE" --senders "$SENDERS"
             --interface "$(option interface)" --channels "$(option channels)"
             --aggregation "$(option aggregation)")
-[ -z "${HOWLDROP_ASK_DIR:-}" ] || AGENT_ARGS+=(--ask-dir "$HOWLDROP_ASK_DIR")
 is_true "$(option allow_untested)" && AGENT_ARGS+=(--allow-untested)
 is_true "$(option tx_amsdu)" && AGENT_ARGS+=(--tx-amsdu)
 [ -z "$(option tx_rate)" ] || AGENT_ARGS+=(--tx-rate "$(option tx_rate)")
 is_true "$(option verbose)" && AGENT_ARGS+=(--verbose)
-[ "${HOWLDROP_EVENTS:-}" != stdout ] || AGENT_ARGS+=(--events)
 if [ "$SEND" = true ]; then
     mkdir -p "$SEND_DIR"
     AGENT_ARGS+=(--outbox "$SEND_DIR" --send-status "$SEND_STATUS" --nearby "$NEARBY"
                  --scan-request "$SCAN_REQUEST" --to "$(option send_to)")
-    [ -z "${HOWLDROP_OUTBOX:-}" ] || AGENT_ARGS+=(--discard)
-    [ "${HOWLDROP_BLE:-on}" = off ] || AGENT_ARGS+=(--ble)
+    AGENT_ARGS+=(--ble)
 fi
 
 # Delivery first, so an item the agent stores is moved as soon as it is
@@ -247,9 +237,8 @@ if [ "$FORWARD" = true ]; then
     ) &
 fi
 # The relay: a paired PC sends here (tray, Explorer's Send to, `howldrop
-# iphone`), into the send folder. Not under howldrop.exe in WSL: that PC
-# writes into SEND_DIR itself.
-if [ "$SEND" = true ] && [ -z "${HOWLDROP_OUTBOX:-}" ]; then
+# iphone`), into the send folder.
+if [ "$SEND" = true ]; then
     if pc_key_ok; then
         (
             while [ -f /tmp/howldrop-running ]; do

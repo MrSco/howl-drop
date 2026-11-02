@@ -1,13 +1,14 @@
 # AirDrop on Windows without WSL
 
-Today howldrop.exe runs the radio in WSL 2: usbipd-win hands the USB stick to
-WSL, the Linux kernel's driver runs it, and `howldrop-agent` (Owly's crates)
-does AWDL and AirDrop on top. It works, but it is a lot of machinery: WSL, a
-250 MB Linux part, usbipd, and a Linux kernel whose Wi-Fi stack can wedge after
-a sleep (only `wsl --shutdown` frees it).
+Until 0.19.2 howldrop.exe ran the radio in WSL 2: usbipd-win handed the USB
+stick to WSL, the Linux kernel's driver ran it, and `howldrop-agent` (Owly's
+crates) did AWDL and AirDrop on top. It worked, but it was a lot of
+machinery: WSL, a 250 MB Linux part, usbipd, and a Linux kernel whose Wi-Fi
+stack could wedge after a sleep (only `wsl --shutdown` freed it).
 
-This branch is about running the same agent as a Windows program, driving the
-stick itself over USB.
+Now the same agent runs as a Windows program, driving the stick itself over
+USB, and the WSL route is gone: the RTL8852BU, which only it ran, is the
+Home Assistant add-on's alone.
 
 ## What stays and what goes
 
@@ -19,21 +20,21 @@ node reaches the radio through two traits in `owly-awdl::driver`:
   and go.
 
 On Linux, `owly-radio` implements both with a monitor interface and a TAP
-device, on top of the kernel's driver. On Windows we need our own:
+device, on top of the kernel's driver. On Windows we have our own:
 
-| Layer | Linux (today) | Windows (this branch) |
+| Layer | Linux (the add-on) | Windows |
 |---|---|---|
 | AirDrop, AWDL | `owly-airdrop`, `owly-awdl` | the same |
 | `Air` | `owly-radio` + the kernel's `mt76x2u` | a user-space MT7612U driver over USB (`nusb`, WinUSB) |
 | `Netif` | TAP | Wintun |
-| BLE wake | the tray, Windows Bluetooth | the same |
-| Contacts check | the `openssl` command | Rust (`x509-parser`/`cms`, or `openssl` the crate) |
-| Previews (FileIcon) | Python + Pillow | Rust (`image` + a JPEG 2000 encoder) or the Windows Imaging Component |
-| Delivery | `deliver.py` | the tray, which already delivers what the add-on forwards |
+| BLE wake | BlueZ | the tray, Windows Bluetooth |
+| Contacts check | Rust (`pki.rs`) | the same |
+| Previews (FileIcon) | Python + Pillow | Rust (`image`, OpenJPEG) |
+| Delivery | `deliver.py` | the agent (`--deliver`) |
 
-The tray keeps reading the agent's `@howldrop` events on stdout, so the
-Windows app changes little: it starts `howldrop-agent.exe` instead of
-`wsl.exe ... /wsl-run.sh`.
+The tray reads the agent's `@howldrop` events, as it read them from WSL, so
+the Windows app changed little: it starts `howldrop-agent.exe` through its
+scheduled task instead of `wsl.exe ... /wsl-run.sh`.
 
 ## The driver
 
@@ -80,14 +81,11 @@ Windows.
    14.7 MB video from the iPhone in about 3 s, to it in about 16 s), Accept and
    Decline, contacts, Look for devices.
 7. **Install**: the stick on WinUSB and Wintun set up without the user
-   needing to know what either is (open questions below). WSL stays as the
-   fallback, and for sticks without a Windows driver of ours (the RTL8852BU).
+   needing to know what either is (open questions below). Then WSL goes, and
+   with it the sticks without a Windows driver of ours (the RTL8852BU).
 
 ## Open questions
 
-- **Going back to WSL** with a stick on WinUSB: untried. usbipd binds
-  whatever driver a device has, so it likely works as it is; else Device
-  Manager's "Update driver" puts the stick's own back.
 - **Taking it off a PC**: nothing removes the task, Program Files\HowlDrop
   or the Wintun adapter yet (`schtasks /delete /tn \HowlDrop\AirDrop`, and
   the folder, by hand).
@@ -133,8 +131,8 @@ Windows.
      run after another finds the chip still receiving and its IN endpoints
      full; `start_mcu` first stops the MAC and drains them.
 6. **The agent on Windows**: `howldrop-agent.exe` builds for Windows (owly-radio
-   and BlueZ are Linux's only), and howldrop.exe runs it with "Without WSL"
-   ticked. On the user's PC, from the tray:
+   and BlueZ are Linux's only), and howldrop.exe runs it in place of WSL.
+   On the user's PC, from the tray:
    - receiving: Accept on the PC, a contact accepted without asking (its
      Apple ID record and certificate checked in Rust, `pki.rs`: Apple's
      records are BER, which the check reads as openssl did), progress, and
@@ -203,7 +201,7 @@ cargo run -p mt7612u --example awdl -- FW 60
 On Windows, from a local build: put `howldrop-agent.exe` and
 `howldrop-agentw.exe` (`cargo build --release -p howldrop-agent`),
 WireGuard's `wintun.dll` and a `firmware` folder with the two files beside
-howldrop.exe, tick "Without WSL" under "AirDrop on this PC" in its menu,
-then turn AirDrop on this PC on and let Windows run the setup.
+howldrop.exe, then turn AirDrop on this PC on and let Windows run the
+setup.
 `howldrop-agent --restart-stick`, as administrator, restarts the stick as
 unplugging it would.
