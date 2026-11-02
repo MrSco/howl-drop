@@ -550,8 +550,8 @@ mod tests {
         // network on channel 44): country, social channels 6 and 44, the
         // BSSID (zeroed in the capture) and channel, its station address.
         let v = [
-            0x23, 0x9f, 0x58, 0x58, 0x58, 0x03, 0x00, 0, 0, 0, 0, 0, 0, 0x2c, 0x00, 2, 0, 0, 0,
-            0, 1,
+            0x23, 0x9f, 0x58, 0x58, 0x58, 0x03, 0x00, 0, 0, 0, 0, 0, 0, 0x2c, 0x00, 2, 0, 0, 0, 0,
+            1,
         ];
         let d = DataPathState::parse(&v).unwrap();
         assert_eq!(d.infra_channel, Some(44));
