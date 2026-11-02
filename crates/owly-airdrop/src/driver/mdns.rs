@@ -2,8 +2,10 @@
 //! hosts without a system responder (MDNS-1, MDNS-3, MDNS-6), announcing in
 //! the bursts the radio asks for (MDNS-7).
 
+use std::fmt;
 use std::io;
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+use std::sync::Arc;
 use std::time::Instant;
 
 use socket2::{Domain, Protocol, Socket, Type};
@@ -11,6 +13,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep;
 
+use super::transport::Datagrams;
 use crate::proto::mdns::{
     self, Announcer, Browser, Burst, MDNS_GROUP, MDNS_PORT, Message, Service,
 };
@@ -20,6 +23,18 @@ use crate::proto::mdns::{
 pub struct Mdns {
     scope_id: u32,
     burst: Option<Burst>,
+    datagrams: Option<Opener>,
+}
+
+/// Fork: opens the datagram socket mDNS runs on, from a network stack other
+/// than the host's (transport).
+#[derive(Clone)]
+struct Opener(Arc<dyn Fn() -> io::Result<Arc<dyn Datagrams>> + Send + Sync>);
+
+impl fmt::Debug for Opener {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Opener")
+    }
 }
 
 /// A registered service, withdrawn when dropped.
@@ -38,7 +53,17 @@ impl Mdns {
         Mdns {
             scope_id,
             burst: None,
+            datagrams: None,
         }
+    }
+
+    /// Fork: runs on the sockets `open` gives, not the host's.
+    pub fn with_datagrams(
+        mut self,
+        open: impl Fn() -> io::Result<Arc<dyn Datagrams>> + Send + Sync + 'static,
+    ) -> Self {
+        self.datagrams = Some(Opener(Arc::new(open)));
+        self
     }
 
     /// Repeats the announcement in bursts for as long as the service is
@@ -72,7 +97,10 @@ impl Mdns {
         })
     }
 
-    fn socket(&self) -> io::Result<UdpSocket> {
+    fn socket(&self) -> io::Result<Arc<dyn Datagrams>> {
+        if let Some(open) = &self.datagrams {
+            return (open.0)();
+        }
         let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
         socket.set_only_v6(true)?;
         socket.set_reuse_address(true)?;
@@ -84,7 +112,7 @@ impl Mdns {
         socket.set_multicast_hops_v6(255)?;
         socket.set_multicast_loop_v6(false)?;
         socket.set_nonblocking(true)?;
-        UdpSocket::from_std(socket.into())
+        Ok(Arc::new(UdpSocket::from_std(socket.into())?))
     }
 
     fn group(&self) -> SocketAddrV6 {
@@ -104,7 +132,7 @@ impl Mdns {
 
     async fn respond(
         self,
-        socket: UdpSocket,
+        socket: Arc<dyn Datagrams>,
         service: Service,
         mut stopped: oneshot::Receiver<()>,
     ) {
@@ -140,7 +168,7 @@ impl Mdns {
 
     async fn browse_loop(
         self,
-        socket: UdpSocket,
+        socket: Arc<dyn Datagrams>,
         events: mpsc::Sender<mdns::BrowseEvent>,
         mut stopped: oneshot::Receiver<()>,
     ) {

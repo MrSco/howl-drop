@@ -1,20 +1,19 @@
 #pragma once
 
 // AirDrop on this PC: howldrop-agent.exe (crates/howldrop-agent) driving a
-// USB MT7612U stick itself, from user space on WinUSB, with a Wintun
-// adapter as the AWDL link (docs/native-windows.md). Windows only.
+// USB MT7612U stick itself, from user space on WinUSB, with a TCP/IP stack
+// of its own as the AWDL link (docs/native-windows.md). Windows only.
 //
 // One program for the user: the first time it is turned on, howldrop.exe
 // downloads the agent from its own GitHub release (its SHA-256 is built into
-// the exe; a local build uses the agent beside it) and has it set itself up,
-// as administrator, with Windows asking once: into Program Files, a
-// scheduled task that runs it as administrator without asking from then on,
-// and the stick on WinUSB. Each start runs the task, and the agent prints to
-// a named pipe of ours and stops when we disconnect it. Nothing listens on
-// the network between the two: the agent saves straight into the tray's
-// inbox, says what arrived in event lines (radio_text.hpp), and AirDrops
-// what the tray drops into an outbox folder. Turning it off gives the stick
-// back to Windows.
+// the exe; a local build uses the agent beside it), and runs it as the user,
+// without a window or an administrator. A stick not yet on WinUSB is the one
+// exception: the agent says so, and its setup puts it on, with Windows
+// asking once. The agent prints to a named pipe of ours and stops when we
+// disconnect it. Nothing listens on the network between the two: the agent
+// saves straight into the tray's inbox, says what arrived in event lines
+// (radio_text.hpp), and AirDrops what the tray drops into an outbox folder.
+// Turning it off gives the stick back to Windows.
 
 #include "node.hpp"
 #include "radio_text.hpp"
@@ -88,7 +87,6 @@ private:
                   const std::filesystem::path& dest, std::string& error);
     // Runs the agent until it ends; why it ended, or nothing when stopped.
     std::string run_agent();
-    static bool task_running();
     void handle_line(const std::string& line);
     void state(const std::string& text, RadioLevel level = RadioLevel::Working);
     void log(const std::string& line);

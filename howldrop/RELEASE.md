@@ -1,10 +1,14 @@
 `howldrop.exe` puts your Windows PC on the iPhone's AirDrop share sheet, two ways:
 
-- **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed, and nothing else to install. The first time, it downloads `howldrop-native.zip` below (the radio, about 8 MB; checked against the SHA-256 built into the exe) and Windows asks once to let it set up.
+- **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed, and nothing else to install. The first time, it downloads `howldrop-native.zip` below (the radio, about 8 MB; checked against the SHA-256 built into the exe) and runs it as you. Windows asks once, and only to put a new stick on its own WinUSB driver.
 - **Through Home Assistant**: the HowlDrop add-on forwards what arrives there.
 
+**New in 0.21.0**
+- **No administrator.** The radio now runs as you, with nothing installed: no Program Files folder, no scheduled task, no virtual network adapter. It brings its own network stack instead. Windows asks for permission only once, to put a stick on WinUSB, and not at all for one 0.20.0 already set up. 0.20.0's elevated scheduled task is what Microsoft Defender flagged (`Behavior:Win32/Persistence.A!ml`), and it's gone.
+- To clean up after 0.20.0, as administrator: `schtasks /delete /tn "\HowlDrop\AirDrop" /f`, then delete `C:\Program Files\HowlDrop`.
+
 **New in 0.20.0**
-- **Native on Windows: no WSL.** HowlDrop now drives the stick itself, from Windows, instead of handing it to a Linux running in WSL: no `wsl --install`, no usbipd-win, no 250 MB Linux part. The first time it's turned on, Windows asks once to let it set up (into Program Files, with the stick on Windows' own WinUSB driver and a scheduled task that starts it from then on without asking); after that it starts in under a second. A 14.7 MB video from the iPhone still arrives in about 4 s.
+- **Native on Windows: no WSL.** HowlDrop now drives the stick itself, from Windows, instead of handing it to a Linux running in WSL: no `wsl --install`, no usbipd-win, no 250 MB Linux part. It starts in under a second. A 14.7 MB video from the iPhone still arrives in about 4 s.
 - The stick restarts itself when Windows or a sleep leaves it unanswering, as if you'd unplugged it.
 - Only MT7612U sticks: the Realtek RTL8852BU, which ran (untested) in WSL, isn't supported on Windows any more. It still works with the Home Assistant add-on.
 - The PC keeps its entry on the share sheet across restarts, so a share sheet left open still reaches it.

@@ -6,9 +6,8 @@ name: Release howldrop.exe
 #
 # With it goes howldrop-native.zip, which AirDrop on this PC downloads the
 # first time it is turned on (docs/native-windows.md): howldrop-agent.exe
-# and its launcher built here, WireGuard's wintun.dll, and the stick's
-# firmware from one linux-firmware commit, each checked by
-# hash, with their licences. The exe is built knowing its address and
+# built here and the stick's firmware from one linux-firmware commit,
+# checked by hash, with its licence. The exe is built knowing its address and
 # SHA-256, and refuses any other file.
 on:
   push:
@@ -29,7 +28,7 @@ jobs:
           agent=$(awk -F'"' '/^version = / {print $2; exit}' crates/howldrop-agent/Cargo.toml)
           echo "tag $tag, kVersion $exe, agent $agent"
           [ "$tag" = "$exe" ] && [ "$tag" = "$agent" ]
-      - name: Build the agent and its launcher
+      - name: Build the agent
         run: cargo build --release --locked -p howldrop-agent
       - name: Pack howldrop-native.zip
         id: pack
@@ -42,12 +41,7 @@ jobs:
           }
           $d = 'native'
           New-Item -ItemType Directory -Force "$d/firmware", "$d/licenses" | Out-Null
-          Copy-Item target/release/howldrop-agent.exe, target/release/howldrop-agentw.exe $d
-          Get-Checked https://www.wintun.net/builds/wintun-0.14.1.zip wintun.zip `
-            07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
-          Expand-Archive wintun.zip wintun
-          Copy-Item wintun/wintun/bin/amd64/wintun.dll $d
-          Copy-Item wintun/wintun/LICENSE.txt "$d/licenses/wintun.txt"
+          Copy-Item target/release/howldrop-agent.exe $d
           # linux-firmware, at one commit.
           $fw = 'https://gitlab.com/kernel-firmware/linux-firmware/-/raw/fed51005f935bab093a4377d0f23f5c7ede81870'
           Get-Checked "$fw/mediatek/mt7662.bin" "$d/firmware/mt7662.bin" `

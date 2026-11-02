@@ -27,7 +27,7 @@ might, and what can't (your PC's built-in Wi-Fi can't, on Windows).
 ```
 iPhone ──AWDL (Wi-Fi) + BLE──▶ USB MT7612U ──WinUSB──▶ howldrop-agent.exe: the stick driven from user
                                                           │  space, Owly's AWDL and AirDrop receiver and
-                                                          │  sender, a Wintun adapter as the link
+                                                          │  sender, a TCP/IP stack of its own as the link
                                                           ▼
                                 howldrop.exe: tray, notifications, Downloads\HowlDrop, clipboard,
                                 Send to iPhone, the Bluetooth wake from Windows' own Bluetooth
@@ -44,11 +44,11 @@ iPhone ──AWDL (Wi-Fi) + BLE──▶ USB MT7612U ──WinUSB──▶ howld
    right-click its icon by the clock, and turn on **AirDrop on this PC**.
 
 The first time, HowlDrop downloads its agent (about 8 MB, from the same
-release, checked against the SHA-256 built into the exe), and Windows asks
-once to let it set itself up: into Program Files, as a scheduled task that
-starts it without asking from then on, with the stick on Windows' own WinUSB
-driver. The dot on the icon then turns green: the PC is on the share sheet
-under its own name. No WSL, no extra drivers to find.
+release, checked against the SHA-256 built into the exe) and runs it as you,
+with nothing installed. Only if the stick isn't on Windows' own WinUSB
+driver yet does Windows ask, once, to put it there. The dot on the icon then
+turns green: the PC is on the share sheet under its own name. No WSL, no
+administrator, no extra drivers to find.
 
 Click the tray icon for the HowlDrop window: drop files on it and pick the
 phone to AirDrop them (set the iPhone's AirDrop to **Everyone for 10
@@ -123,10 +123,9 @@ ships all three), and CI builds it on every push:
 tools\build-howldrop.ps1 -Run
 ```
 
-A local build has no agent to download: put `howldrop-agent.exe` and
-`howldrop-agentw.exe` (`cargo build --release -p howldrop-agent`),
-WireGuard's `wintun.dll` and a `firmware` folder with the stick's two files
-beside it ([docs/native-windows.md](../docs/native-windows.md)). Releasing is
+A local build has no agent to download: put `howldrop-agent.exe`
+(`cargo build --release -p howldrop-agent`) and a `firmware` folder with
+the stick's two files beside it ([docs/native-windows.md](../docs/native-windows.md)). Releasing is
 in [howldrop/README.md](../howldrop/README.md): set the version, then push a
 `windows-vVERSION` tag.
 

@@ -27,6 +27,7 @@
 
 use std::collections::HashMap;
 use std::io;
+#[cfg(not(windows))]
 use std::net::SocketAddrV6;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -138,10 +139,17 @@ pub async fn start(link: &Link, opts: Options) -> io::Result<Running> {
             ok
         })));
     }
-    let addr = SocketAddrV6::new(link.addr, PORT, 0, link.index);
     let mut options = ReceiverOptions::new(config, opts.staging.clone());
     options.progress = true;
-    let (receiver, mut events) = Receiver::bind(addr, &opts.identity, options).await?;
+    // On Windows, on the agent's own stack (netstack.rs).
+    #[cfg(windows)]
+    let (receiver, mut events) =
+        Receiver::with_listener(link.stack.listen(PORT).await?, &opts.identity, options)?;
+    #[cfg(not(windows))]
+    let (receiver, mut events) = {
+        let addr = SocketAddrV6::new(link.addr, PORT, 0, link.index);
+        Receiver::bind(addr, &opts.identity, options).await?
+    };
     let serve = tokio::spawn(receiver.run());
 
     let service_id = opts.service_id.clone();
@@ -150,8 +158,13 @@ pub async fn start(link: &Link, opts: Options) -> io::Result<Running> {
         interval: a.interval,
         pause: a.pause,
     });
-    let registration = Mdns::new(link.index)
-        .with_burst(burst)
+    let mdns = Mdns::new(link.index).with_burst(burst);
+    #[cfg(windows)]
+    let mdns = {
+        let stack = link.stack.clone();
+        mdns.with_datagrams(move || Ok(stack.mdns()))
+    };
+    let registration = mdns
         .register(Service {
             instance: service_id.clone(),
             host: format!("howldrop-{service_id}"),

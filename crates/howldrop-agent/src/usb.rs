@@ -2,8 +2,8 @@
 //! (crates/mt7612u), its firmware loaded and channel 149 tuned by this
 //! process, with owly-awdl on it. No kernel driver, monitor interface or
 //! nl80211 (docs/native-windows.md). The link is `awdl0` made as owly-radio
-//! makes it on Linux (`--usb-radio`, experimental there), and a Wintun
-//! adapter on Windows ([`crate::wintun`]), where this is the only radio.
+//! makes it on Linux (`--usb-radio`, experimental there), and on Windows,
+//! where this is the only radio, the agent's own stack ([`crate::netstack`]).
 
 use std::path::PathBuf;
 
@@ -24,7 +24,10 @@ const CHANNEL: u8 = 149;
 #[cfg(target_os = "linux")]
 type Live = owly_radio::native::Native;
 #[cfg(windows)]
-type Live = (owly_awdl::driver::Running, crate::wintun::Wintun);
+type Live = (
+    owly_awdl::driver::Running,
+    std::sync::Arc<crate::netstack::Stack>,
+);
 
 pub struct UsbRadio {
     /// Holds mt7662_rom_patch.bin and mt7662.bin.
@@ -113,7 +116,8 @@ impl UsbRadio {
                 Ok(up) => Ok(up),
                 // Nothing resets the stick here (Linux resets it on
                 // probe): one that answers nothing, as another driver or a
-                // sleep can leave it, is restarted as if replugged, once.
+                // sleep can leave it, is restarted as if replugged, once,
+                // where the agent may (as administrator, in its setup).
                 #[cfg(windows)]
                 Err(e) => match crate::setup::cycle_sticks() {
                     Ok(n) if n > 0 => {
@@ -121,7 +125,9 @@ impl UsbRadio {
                         std::thread::sleep(std::time::Duration::from_secs(4));
                         bring_up(&rom_patch, &firmware)
                     }
-                    _ => Err(e),
+                    _ => Err(format!(
+                        "{e}: the stick isn't answering; unplug it and plug it back in"
+                    )),
                 },
                 #[cfg(not(windows))]
                 Err(e) => Err(e),
@@ -141,6 +147,8 @@ impl UsbRadio {
         cfg.accept_addba = self.aggregation;
         let (peers_tx, peers) = watch::channel(Vec::new());
         let (live, name, index, mut failed) = start_node(stick, cfg, peers_tx).await?;
+        #[cfg(windows)]
+        let stack = live.1.clone();
 
         // The link is lost when the node stops by itself.
         let (state_tx, state) = watch::channel(LinkState::Up);
@@ -155,6 +163,8 @@ impl UsbRadio {
         let link = Link {
             name,
             index,
+            #[cfg(windows)]
+            stack,
             mac,
             addr: mac.link_local(),
             announce: Some(Announce::FIXED),
@@ -213,36 +223,28 @@ fn stop_node(native: Live) {
     native.stop();
 }
 
-/// The node on the stick, with a Wintun adapter as its link; wintun.dll
-/// beside this program.
+/// The node on the stick, with the agent's own TCP/IP stack as its link
+/// ([`crate::netstack`]): no adapter of Windows', nor an administrator.
 #[cfg(windows)]
 async fn start_node(
     stick: Mt7612u,
     cfg: owly_awdl::Config,
     peers: watch::Sender<Vec<owly_awdl::PeerInfo>>,
 ) -> Result<(Live, String, u32, watch::Receiver<Option<String>>), String> {
-    let dll = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(|d| d.join("wintun.dll")))
-        .ok_or("where this program is")?;
-    let mac = cfg.addr;
-    let (link, running) = tokio::task::spawn_blocking(move || -> Result<_, String> {
-        let mut link = crate::wintun::Wintun::create(&dll, mac)?;
-        let netif = link.netif().ok_or("the link's end is taken")?;
-        let running = owly_awdl::driver::spawn(cfg, move || Ok((UsbAir::new(stick), netif)), peers)
-            .map_err(|e| format!("AWDL on the stick: {e}"))?;
-        Ok((link, running))
+    let (stack, netif) = crate::netstack::Stack::new(cfg.addr.link_local());
+    let running = tokio::task::spawn_blocking(move || {
+        owly_awdl::driver::spawn(cfg, move || Ok((UsbAir::new(stick), netif)), peers)
     })
     .await
-    .map_err(|e| e.to_string())??;
-    let (index, failed) = (link.index, running.failed());
-    Ok(((running, link), "HowlDrop AWDL".into(), index, failed))
+    .map_err(|e| e.to_string())?
+    .map_err(|e| format!("AWDL on the stick: {e}"))?;
+    let failed = running.failed();
+    Ok(((running, stack), "the agent's own stack".into(), 0, failed))
 }
 
 #[cfg(windows)]
-fn stop_node((running, link): Live) {
+fn stop_node((running, _stack): Live) {
     running.stop();
-    link.close();
 }
 
 /// The name the node gives itself in its AWDL frames.

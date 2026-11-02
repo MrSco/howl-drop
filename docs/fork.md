@@ -29,6 +29,7 @@ accepted), which change it for everyone.
 | owly-airdrop | `Request.peer_certificate`: the sender's TLS client certificate | Contacts Only: the agent ties the Apple-signed record to the sender's account. |
 | owly-airdrop | `Config.discover_gate`: refuse a `/Discover` with 401 | Contacts Only: strangers don't see the PC. |
 | owly-airdrop | sender `Config.file_icon` and `Sender::send_with_icon` | The preview an iPhone shows for a picture sent to it. |
+| owly-airdrop | `driver/transport.rs`: `Receiver::with_listener`, `Sender::with_connector`, `Mdns::with_datagrams` | On Windows the agent's own TCP/IP stack is the link, not one of the host's interfaces, so nothing needs an administrator. |
 | owly-awdl | `reorder.rs`: a Block Ack session's frames put back in order | Out-of-order segments make TCP resend. (It was not what made uploads slow: the next one was.) |
 | owly-radio | `set_freq` tunes HT40+ on 5 GHz, else HT20 | The node announces 40 MHz and the iPhone sends at HT40: tuned HT20, the MT7612U heard a fraction of an upload. |
 | owly-radio | `Native::start_air`: AWDL and `awdl0` on any `Air` (`start` is its monitor case) | `howldrop-agent --usb-radio`: the user-space MT7612U driver as the radio (docs/native-windows.md). |
