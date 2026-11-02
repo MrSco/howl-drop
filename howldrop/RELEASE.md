@@ -1,6 +1,6 @@
 `howldrop.exe` puts your Windows PC on the iPhone's AirDrop share sheet, two ways:
 
-- **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed, and nothing else to install. The first time, it downloads `howldrop-native.zip` below (the radio, about 8 MB; checked against the SHA-256 built into the exe) and runs it as you. Windows asks once, and only to put a new stick on its own WinUSB driver.
+- **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed, and nothing else to install. The first time, it downloads `howldrop-native.zip` below (the radio, about 3.5 MB; checked against the SHA-256 built into the exe) and runs it as you. Windows asks once, and only to put a new stick on its own WinUSB driver.
 - **Through Home Assistant**: the HowlDrop add-on forwards what arrives there.
 
 **New in 0.21.0**

@@ -43,7 +43,7 @@ iPhone ──AWDL (Wi-Fi) + BLE──▶ USB MT7612U ──WinUSB──▶ howld
 2. Plug in the stick (a USB 2.0 port worked best), start `howldrop.exe`,
    right-click its icon by the clock, and turn on **AirDrop on this PC**.
 
-The first time, HowlDrop downloads its agent (about 8 MB, from the same
+The first time, HowlDrop downloads its agent (about 3.5 MB, from the same
 release, checked against the SHA-256 built into the exe) and runs it as you,
 with nothing installed. Only if the stick isn't on Windows' own WinUSB
 driver yet does Windows ask, once, to put it there. The dot on the icon then

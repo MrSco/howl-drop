@@ -86,7 +86,7 @@ installed. You need:
   doesn't.
 
 Turn on **AirDrop on this PC** in the menu. The first time, HowlDrop
-downloads its agent (about 8 MB, from its release, checked against the SHA-256
+downloads its agent (about 3.5 MB, from its release, checked against the SHA-256
 built into the exe). If the stick isn't on Windows' own WinUSB driver yet,
 Windows asks once to let HowlDrop put it there, so the agent can drive it;
 after that it starts without asking. The dot
