@@ -9,6 +9,7 @@ use std::net::{IpAddr, Ipv6Addr};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Duration;
 
 use owly_awdl::driver::Netif;
 use owly_awdl::{Ipv6Packet, MacAddr};
@@ -46,20 +47,25 @@ impl Link {
         netsh(&format!(
             "interface ipv6 set interface {index} mtu={MTU} dadtransmits=0 routerdiscovery=disabled"
         ))?;
-        for old in adapter.get_addresses().unwrap_or_default() {
-            if let IpAddr::V6(a) = old
-                && a != addr
-            {
-                let _ = netsh(&format!(
-                    "interface ipv6 delete address interface={index} address={a}"
-                ));
-            }
-        }
+        prune(&adapter, index, addr);
         netsh(&format!(
             "interface ipv6 add address interface={index} address={addr}"
         ))?;
 
         let session = Arc::new(adapter.start_session(RING).map_err(|e| e.to_string())?);
+        // Windows gives the link a link-local address of its own once the
+        // session brings it up, and may again later: it goes each time.
+        let watched = Arc::downgrade(&adapter);
+        std::thread::Builder::new()
+            .name("wintun-addresses".into())
+            .spawn(move || {
+                while let Some(adapter) = watched.upgrade() {
+                    prune(&adapter, index, addr);
+                    drop(adapter);
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            })
+            .map_err(|e| e.to_string())?;
         // What the host sends on the link, read on a thread of its own.
         let (tx, rx) = mpsc::channel(1024);
         let reader = session.clone();
@@ -138,6 +144,22 @@ impl Netif for WintunNetif {
         if let Ok(mut out) = self.session.allocate_send_packet(len) {
             out.bytes_mut().copy_from_slice(&packet.data);
             self.session.send_packet(out);
+        }
+    }
+}
+
+/// Every IPv6 address on the link but `keep` deleted.
+fn prune(adapter: &Adapter, index: u32, keep: Ipv6Addr) {
+    for old in adapter.get_addresses().unwrap_or_default() {
+        if let IpAddr::V6(a) = old
+            && a != keep
+        {
+            match netsh(&format!(
+                "interface ipv6 delete address interface={index} address={a}"
+            )) {
+                Ok(()) => tracing::debug!("{a} deleted from the link"),
+                Err(e) => tracing::warn!("{e}"),
+            }
         }
     }
 }

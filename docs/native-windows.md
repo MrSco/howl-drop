@@ -92,15 +92,17 @@ Windows.
   driver undoes it.
 - **Wintun needs an administrator** to create its adapter: once at setup, or
   a small service.
-- **Timing**: AWDL's availability windows are 16 TU; the node already runs its
-  timers in software on Linux (`timer late avg` about 1.1 ms), but user-space
-  USB on Windows adds its own latency. Milestone 4 measures it.
-- **Block Ack in hardware** (step 7 above).
+- **Timing**: AWDL's availability windows are 16 TU; the node runs its timers
+  in software (`timer late avg` about 1.1 ms on Linux). Windows wakes them on
+  its 15.6 ms tick (6.5 ms late on average, 16 ms at worst) unless the
+  process asks for 1 ms (`timeBeginPeriod`) and opts out of Windows 11's
+  timer throttling; `howldrop-native` does both and gets 1.2 ms.
 
 ## Where it is
 
-`crates/mt7612u` does milestones 1 to 5, tested so far in WSL (usbfs) with
-the kernel's `mt76x2u` set aside, on an Alfa AWUS036ACM (`0e8d:7612`):
+`crates/mt7612u` does milestones 1 to 5, in WSL (usbfs) with the kernel's
+`mt76x2u` set aside and on Windows (WinUSB), on an Alfa AWUS036ACM
+(`0e8d:7612`):
 
 1. **Talk to the stick**: chip `0x76120044`, the EEPROM's MAC address.
 2. **Firmware**: ROM patch and firmware running in about 0.25 s; the MCU's
@@ -116,12 +118,23 @@ the kernel's `mt76x2u` set aside, on an Alfa AWUS036ACM (`0e8d:7612`):
    The iPhone found "HowlDrop Native", asked and sent a 1.1 MB photo in
    1.1 s. With Block Ack in hardware (the peer in the WCID table, its
    TID's bit set as the node accepts the session) its 14.7 MB video took
-   3.8 s, against 3.2 s on the kernel's driver. Wintun on Windows is next.
+   3.8 s, against 3.2 s on the kernel's driver.
+6. **Network, on Windows**: `howldrop-native` (the stick on WinUSB, a Wintun
+   adapter as the link, run as administrator). The radio is up in 0.7 s; the
+   iPhone sent a 2 MB photo in 0.6 s and the 14.7 MB video in 4.2 s.
+   - Windows gives the Wintun link a random link-local address of its own
+     once the session starts, and sends from it; no MAC maps to it, so the
+     link deletes every address but the AWDL one, and keeps doing so.
+   - Nothing resets the stick on Windows (Linux resets it on probe), so a
+     run after another finds the chip still receiving and its IN endpoints
+     full; `start_mcu` first stops the MAC and drains them.
+   - The service name is kept beside the receiver's identity: a share sheet
+     left open across a restart still reaches it.
 
 Not ported yet: the EEPROM's receive gain corrections and per-rate transmit
 power, 2.4 GHz transmit power, and the periodic recalibration. Startup in WSL
-takes 1 to 10 s, nearly all of it the EEPROM read over usbip; on Windows
-that's local USB.
+takes 1 to 10 s, nearly all of it the EEPROM read over usbip; on Windows it's
+0.7 s.
 
 ## Trying it
 
@@ -137,3 +150,11 @@ cargo run -p mt7612u --example awdl -- FW 60
 ```
 
 `listen` and `awdl` want an iPhone nearby with its share sheet open.
+
+On Windows, with the stick on WinUSB (Zadig) and WireGuard's `wintun.dll`
+beside the program, as administrator:
+
+```
+cargo build --release -p howldrop-native
+howldrop-native FW STAGING_DIR "HowlDrop Native" 600
+```

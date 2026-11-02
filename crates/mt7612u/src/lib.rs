@@ -371,6 +371,10 @@ impl Mt7612u {
         let rom_patch = RomPatch::parse(rom_patch)?;
         let firmware = Firmware::parse(firmware)?;
         let rev = self.asic_version()? & 0xffff;
+        let drained = self.quiesce()?;
+        if drained > 0 {
+            tracing::debug!("{drained} transfers left from a run before, read and dropped");
+        }
 
         let t = Instant::now();
         let stage = |what: &str| tracing::debug!("{what}: {} ms", t.elapsed().as_millis());
@@ -924,6 +928,26 @@ impl Mt7612u {
             Some(r) => Error::Mcu(format!("command {cmd} (seq {seq}): answered {r:?}")),
             None => Error::Timeout("the MCU's response"),
         })
+    }
+
+    /// A stick a process before left running, made quiet: the MAC stopped,
+    /// then what waits on the bulk IN endpoints read and dropped. Linux
+    /// resets the whole device instead (usb_reset_device in mt76x2u_probe),
+    /// as does usbip's attach; WinUSB can't, and unread frames otherwise
+    /// hold up the MCU's answers. How many transfers it dropped.
+    fn quiesce(&mut self) -> Result<usize, Error> {
+        self.write(Space::Mac, regs::MAC_SYS_CTRL, 0)?;
+        let mut dropped = 0;
+        for ep in [&mut self.rx_in, &mut self.resp_in] {
+            for _ in 0..256 {
+                let done = ep.transfer_blocking(Buffer::new(RX_BUF), ms(20));
+                if done.status.is_err() {
+                    break;
+                }
+                dropped += 1;
+            }
+        }
+        Ok(dropped)
     }
 
     /// mt76x2_reset_wlan(dev, true).
