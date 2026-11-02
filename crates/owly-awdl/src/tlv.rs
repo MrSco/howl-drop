@@ -228,6 +228,9 @@ pub struct DataPathState {
     pub country: Option<[u8; 3]>,
     /// The sender's station address on its infrastructure network.
     pub infra: Option<MacAddr>,
+    /// The channel of that network, where the sender spends the slots its
+    /// sequence gives it.
+    pub infra_channel: Option<u8>,
 }
 
 mod data_path {
@@ -257,7 +260,9 @@ impl DataPathState {
             at += 2;
         }
         if flags & INFRA_INFO != 0 {
+            // The BSSID, then the channel and a reserved byte.
             b.slice(at, 8)?;
+            out.infra_channel = Some(b.u8(at + 6)?).filter(|&c| c != 0);
             at += 8;
         }
         if flags & INFRA_ADDRESS != 0 {
@@ -537,6 +542,23 @@ mod tests {
         let mut out = Vec::new();
         put_all(&mut out, &own, mif);
         out
+    }
+
+    #[test]
+    fn data_path_state_names_the_infrastructure_channel() {
+        // An iPhone's, from discovery-ios26.x-mt7925e-ch44-1.pcap (its
+        // network on channel 44): country, social channels 6 and 44, the
+        // BSSID (zeroed in the capture) and channel, its station address.
+        let v = [
+            0x23, 0x9f, 0x58, 0x58, 0x58, 0x03, 0x00, 0, 0, 0, 0, 0, 0, 0x2c, 0x00, 2, 0, 0, 0,
+            0, 1,
+        ];
+        let d = DataPathState::parse(&v).unwrap();
+        assert_eq!(d.infra_channel, Some(44));
+        assert_eq!(d.infra, Some(MacAddr([2, 0, 0, 0, 0, 1])));
+        // Not on a network: no channel.
+        let d = DataPathState::parse(&[0x00, 0x01, b'X', b'0', 0]).unwrap();
+        assert_eq!(d.infra_channel, None);
     }
 
     // spec: AWDL-4

@@ -26,6 +26,8 @@ pub struct Peer {
     pub ht: Option<HtCapabilities>,
     /// Its station address on its infrastructure network.
     pub infra: Option<MacAddr>,
+    /// That network's channel.
+    pub infra_channel: Option<u8>,
     /// Whether it has sent a MIF.
     pub mif: bool,
     /// Whether it sends Election Parameters version 2, which then wins
@@ -59,6 +61,7 @@ impl Peer {
             sync_offset_us: None,
             ht: None,
             infra: None,
+            infra_channel: None,
             mif: false,
             v2: false,
             valid: false,
@@ -91,8 +94,11 @@ impl Peer {
         if let Some(ht) = a.ht {
             self.ht = Some(ht);
         }
-        if let Some(infra) = a.data_path.and_then(|d| d.infra) {
-            self.infra = Some(infra);
+        if let Some(d) = a.data_path {
+            if let Some(infra) = d.infra {
+                self.infra = Some(infra);
+            }
+            self.infra_channel = d.infra_channel;
         }
         if let Some(e) = a.election
             && (a.election_v2 || !self.v2)

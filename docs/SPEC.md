@@ -226,7 +226,7 @@ Flags (offset 0, 2 bytes), then the fields the flags announce, in this order:
 |---|---|---|
 | `0x0100` | 3 | country code |
 | `0x0200` | 2 | social channel map: `0x1` channel 6, `0x2` channel 44, `0x4` channel 149 |
-| `0x0001` | 8 | infrastructure BSSID and channel |
+| `0x0001` | 8 | infrastructure network: BSSID (6 bytes), channel (1), reserved (1) |
 | `0x0002` | 6 | infrastructure address |
 | `0x0004` | 6 | AWDL address |
 
