@@ -25,9 +25,9 @@ might, and what can't (your PC's built-in Wi-Fi can't, on Windows).
 </p>
 
 ```
-iPhone ──AWDL (Wi-Fi) + BLE──▶ USB MT7612U ──usbipd──▶ WSL 2: howldrop-agent (Owly: the radio,
-                                                          │  AWDL, AirDrop receiver and sender), in a
-                                                          │  distro howldrop.exe downloads and runs
+iPhone ──AWDL (Wi-Fi) + BLE──▶ USB MT7612U ──WinUSB──▶ howldrop-agent.exe: the stick driven from user
+                                                          │  space, Owly's AWDL and AirDrop receiver and
+                                                          │  sender, a Wintun adapter as the link
                                                           ▼
                                 howldrop.exe: tray, notifications, Downloads\HowlDrop, clipboard,
                                 Send to iPhone, the Bluetooth wake from Windows' own Bluetooth
@@ -40,16 +40,15 @@ iPhone ──AWDL (Wi-Fi) + BLE──▶ USB MT7612U ──usbipd──▶ WSL 2
    somewhere it can stay (say `%LOCALAPPDATA%\Programs\HowlDrop`). Nothing to
    install. Windows SmartScreen may not recognize it (it is not code-signed):
    **More info**, **Run anyway**.
-2. Have WSL 2: in an administrator terminal, `wsl --install`, then restart.
-3. Plug in the stick (a USB 2.0 port worked best), start `howldrop.exe`,
+2. Plug in the stick (a USB 2.0 port worked best), start `howldrop.exe`,
    right-click its icon by the clock, and turn on **AirDrop on this PC**.
 
-The first time, HowlDrop offers to install
-[usbipd-win](https://github.com/dorssel/usbipd-win) (which hands the stick to
-WSL), downloads its Linux part (about 250 MB, from the same release, checked
-against the SHA-256 built into the exe), and Windows asks once to share the
-stick. The dot on the icon then turns green: the PC is on the share sheet
-under its own name.
+The first time, HowlDrop downloads its agent (about 8 MB, from the same
+release, checked against the SHA-256 built into the exe), and Windows asks
+once to let it set itself up: into Program Files, as a scheduled task that
+starts it without asking from then on, with the stick on Windows' own WinUSB
+driver. The dot on the icon then turns green: the PC is on the share sheet
+under its own name. No WSL, no extra drivers to find.
 
 Click the tray icon for the HowlDrop window: drop files on it and pick the
 phone to AirDrop them (set the iPhone's AirDrop to **Everyone for 10
@@ -64,7 +63,7 @@ The tray app, its menu, the commands and how it works:
 
 ## Home Assistant, Raspberry Pi and Linux
 
-The same radio stack also runs as a Home Assistant add-on, for a home server
+The same agent also runs as a Home Assistant add-on, for a home server
 that holds the stick instead of the PC: whatever the phone sends lands in
 Home Assistant's share folder, where any PC on the network can open it, and a
 PC running `howldrop.exe` also gets each file (the add-on's `forward_to_pc`,
@@ -94,8 +93,7 @@ The `ha-addon` branch is the add-on assembled from `main` by CI
 own folder. It points Home Assistant at prebuilt images,
 `ghcr.io/mrsco/howldrop-amd64` and `-aarch64`, which CI builds for each new
 version in `addon/config.yaml` before it updates the branch: bump the version
-to release a change. The amd64 image is also the Windows version's Linux part
-(`tools/wsl-distro`).
+to release a change.
 
 This is a fork of [t4t5/owly](https://github.com/t4t5/owly) (formerly
 omdrop-owl), AirDrop for Linux in Rust. Owly's crates are here as upstream
@@ -107,12 +105,13 @@ the patches and how to take in a new Owly.
 
 | Path | What |
 |---|---|
-| `howldrop/` | `howldrop.exe` (the Windows app: tray, AirDrop on this PC in WSL, the Bluetooth wake) and `howldrop-bridge` (the add-on's forwarder and relay), C++17, one CMake tree. |
-| `crates/howldrop-agent/` | HowlDrop's Linux side in one Rust process: the radio, the AirDrop receiver (who can send, asks, progress) and sender (the outbox, previews), the events howldrop.exe reads. |
+| `howldrop/` | `howldrop.exe` (the Windows app: tray, AirDrop on this PC through the agent, the Bluetooth wake) and `howldrop-bridge` (the add-on's forwarder and relay), C++17, one CMake tree. |
+| `crates/howldrop-agent/` | HowlDrop's radio side in one Rust process, on Linux (the add-on) and Windows: the radio, the AirDrop receiver (who can send, asks, progress) and sender (the outbox, previews), the events howldrop.exe reads; on Windows its one-time setup too. |
+| `crates/mt7612u/` | The MT7612U driven from user space over USB (WinUSB on Windows), ported from Linux's mt76: firmware, channel, frames in and out, Block Ack ([docs/native-windows.md](../docs/native-windows.md)). |
 | `crates/owly-*`, `owlyd`, `xtask`, `packaging/`, `docs/SPEC.md` … | [Owly](https://github.com/t4t5/owly), as upstream has it, with our patches ([docs/fork.md](../docs/fork.md)). |
-| `addon/` | The image, as a Home Assistant add-on and as the Windows version's Linux part: `config.yaml`, `Dockerfile` (builds the agent), `run.sh` (options to the agent), `wsl-run.sh` (its start under howldrop.exe), delivery (`deliver.py`, `announce.py`) and the sidebar panel (`panel.py`, `panel/`). |
+| `addon/` | The Home Assistant add-on's image: `config.yaml`, `Dockerfile` (builds the agent), `run.sh` (options to the agent), delivery (`deliver.py`, `announce.py`) and the sidebar panel (`panel.py`, `panel/`). |
 | `docker/` | The same image under Docker Compose, without Home Assistant OS: `compose.yaml`, default `options.json`, `install.sh`. |
-| `tools/` | `stage-addon.sh` assembles the add-on folder; `wsl-distro/` makes the Windows version's WSL distro from the image; `build-howldrop.ps1` builds `howldrop.exe`; `sync-upstream.sh` takes in a new Owly; `make-icons.py` makes the icons from `art/howldrop.png`. |
+| `tools/` | `stage-addon.sh` assembles the add-on folder; `build-howldrop.ps1` builds `howldrop.exe`; `sync-upstream.sh` takes in a new Owly; `make-icons.py` makes the icons from `art/howldrop.png`. |
 | `tests/test_*.py` | Delivery, the panel and the Docker install, against local files and sockets: no radio needed. (The rest of `tests/` is Owly's.) The Rust crates' tests are in each crate; `howldrop/tests/` has the Windows app's. |
 
 ## Develop
@@ -124,13 +123,15 @@ ships all three), and CI builds it on every push:
 tools\build-howldrop.ps1 -Run
 ```
 
-A local build has no Linux part to download: it runs a `HowlDrop` WSL distro
-already imported (a release's). Releasing is in
-[howldrop/README.md](../howldrop/README.md): push the version to `main`, then a
+A local build has no agent to download: put `howldrop-agent.exe` and
+`howldrop-agentw.exe` (`cargo build --release -p howldrop-agent`),
+WireGuard's `wintun.dll` and a `firmware` folder with the stick's two files
+beside it ([docs/native-windows.md](../docs/native-windows.md)). Releasing is
+in [howldrop/README.md](../howldrop/README.md): set the version, then push a
 `windows-vVERSION` tag.
 
-The Linux side's tests, on Linux (or WSL, from a copy on the Linux file
-system: cargo over `/mnt/c` is slow):
+The Rust and Python tests (the agent's Windows parts on Windows, the rest on
+either):
 
 ```bash
 cargo test --workspace

@@ -13,7 +13,7 @@
 #include "transfers.hpp"
 #include "ui_win.hpp"
 #include "window_win.hpp"
-#include "wsl_win.hpp"
+#include "radio_win.hpp"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -85,9 +85,9 @@ struct Settings {
     bool open_documents = false;
     bool share_clipboard = false;  // send what is copied here to other HowlDrop PCs
     bool send_to_menu = true;      // "iPhone (HowlDrop)" in Explorer's Send to
-    bool radio = false;            // AirDrop on this PC: the USB stick, in WSL (wsl_win.hpp)
+    bool radio = false;            // AirDrop on this PC: the USB stick (radio_win.hpp)
     bool cleanup = true;           // delete files from the inbox after kKeepDays
-    // Who may send to AirDrop on this PC (WslRadioConfig::receive): everyone,
+    // Who may send to AirDrop on this PC (RadioConfig::receive): everyone,
     // ask (contacts at once, anyone else after Accept), contacts.
     std::string receive = "ask";
     std::string senders;  // the contacts: phone numbers and emails, comma-separated
@@ -111,7 +111,7 @@ struct Drop {
     std::string kind;           // deliver.py's word for it, when the radio said
 };
 
-// From this PC's radio (wsl_win.hpp), posted from its thread. generation
+// From this PC's radio (radio_win.hpp), posted from its thread. generation
 // tells a radio turned off since from the one running now.
 struct RadioNote {
     unsigned generation = 0;
@@ -136,7 +136,7 @@ struct App {
     std::vector<std::string> menu_devices;  // the submenu's devices, as shown
     ULONGLONG scan_asked = 0;               // when Look for devices was chosen
     bool scan_seen = false;                 // the relay has said it is scanning
-    std::shared_ptr<WslRadio> radio;  // while AirDrop on this PC is on
+    std::shared_ptr<Radio> radio;  // while AirDrop on this PC is on
     unsigned radio_generation = 0;
     std::wstring radio_state;
     RadioLevel radio_level = RadioLevel::Off;
@@ -717,13 +717,13 @@ void start_radio(App& app) {
         return;
     }
     const unsigned generation = ++app.radio_generation;
-    WslRadioConfig config;
+    RadioConfig config;
     config.inbox = app.inbox;
     config.home = app.home;
     config.name = app.name;
     config.receive = app.settings.receive;
     config.senders = app.settings.senders;
-    config.on_event = [](const std::vector<std::string>& event) {
+    config.on_event =[](const std::vector<std::string>& event) {
         auto* copy = new std::vector<std::string>(event);
         if (!g_app || !g_app->window || !PostMessageW(g_app->window, kTransferMessage, 0, reinterpret_cast<LPARAM>(copy)))
             delete copy;
@@ -745,11 +745,7 @@ void start_radio(App& app) {
         post_drop(new Drop{saved, text, from, true, true, true, kind});
     };
     config.on_sent = [](const std::string& file, const Status& status) { post_sent(file, status); };
-    config.ask = [](const std::wstring& question) {
-        return MessageBoxW(nullptr, question.c_str(), L"HowlDrop",
-                           MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST) == IDYES;
-    };
-    app.radio = std::make_shared<WslRadio>(std::move(config));
+    app.radio = std::make_shared<Radio>(std::move(config));
     app.radio_state = L"Starting";
     app.radio_level = RadioLevel::Working;
     set_tip(app);
@@ -760,7 +756,7 @@ void start_radio(App& app) {
 void stop_radio(App& app, bool wait) {
     if (!app.radio) return;
     if (app.node) app.node->set_local_iphone(nullptr);
-    std::shared_ptr<WslRadio> radio = std::move(app.radio);
+    std::shared_ptr<Radio> radio = std::move(app.radio);
     ++app.radio_generation;  // what the old one still says is not shown
     app.radio_state.clear();
     app.radio_level = RadioLevel::Off;
@@ -1034,7 +1030,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         case WM_POWERBROADCAST:
             // Back from sleep: AirDrop on this PC, if it gave up while the PC
             // slept, gets another go. One still running starts again by itself
-            // when it finds the stick gone (WslRadio::run).
+            // when it finds the stick gone (Radio::run).
             if (wparam == PBT_APMRESUMEAUTOMATIC && app->radio && app->radio_level == RadioLevel::Problem) {
                 log_line(*app, "AirDrop on this PC: the PC woke up, starting it again");
                 restart_radio(*app);

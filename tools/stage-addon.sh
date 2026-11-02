@@ -24,7 +24,7 @@ DEST=${1:-}
 
 rm -rf "$OUT"
 mkdir -p "$OUT/rust" "$OUT/howldrop"
-cp "$ROOT"/addon/config.yaml "$ROOT"/addon/Dockerfile "$ROOT"/addon/run.sh "$ROOT"/addon/wsl-run.sh "$ROOT"/addon/deliver.py "$ROOT"/addon/announce.py "$ROOT"/addon/panel.py "$ROOT"/addon/README.md "$ROOT"/addon/DOCS.md "$ROOT"/addon/CHANGELOG.md "$ROOT"/addon/icon.png "$ROOT"/addon/logo.png "$OUT/"
+cp "$ROOT"/addon/config.yaml "$ROOT"/addon/Dockerfile "$ROOT"/addon/run.sh "$ROOT"/addon/deliver.py "$ROOT"/addon/announce.py "$ROOT"/addon/panel.py "$ROOT"/addon/README.md "$ROOT"/addon/DOCS.md "$ROOT"/addon/CHANGELOG.md "$ROOT"/addon/icon.png "$ROOT"/addon/logo.png "$OUT/"
 cp -r "$ROOT/addon/translations" "$ROOT/addon/panel" "$OUT/"
 # The whole workspace, which cargo needs to read even to build one crate.
 cp -r "$ROOT/Cargo.toml" "$ROOT/Cargo.lock" "$ROOT/.cargo" "$ROOT/crates" "$ROOT/xtask" "$OUT/rust/"

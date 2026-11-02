@@ -1,8 +1,8 @@
 [package]
 name = "howldrop-agent"
-description = "HowlDrop's Linux side: the radio, the AirDrop receiver and sender, as the Home Assistant add-on and the Windows app's WSL part run them."
+description = "HowlDrop's radio, AirDrop receiver and sender: on Linux's Wi-Fi drivers in the Home Assistant add-on, and on Windows on a USB stick driven from user space."
 # HowlDrop's version, not Owly's: --version says which release this is.
-version = "0.19.2"
+version = "0.20.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,23 +11,43 @@ publish = false
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+# Contacts: Apple's certificates and validation records, read here and
+# verified with ring (rustls' own).
+cms = "0.2"
+der = "0.7"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 getrandom = "0.3"
-nix = { version = "0.31", default-features = false, features = ["signal"] }
+mt7612u = { path = "../mt7612u" }
 owly-airdrop = { path = "../owly-airdrop", features = ["mdns"] }
-owly-awdl = { path = "../owly-awdl" }
-owly-radio = { path = "../owly-radio" }
+owly-awdl = { path = "../owly-awdl", features = ["driver"] }
 # The Apple ID validation record's payload, which may be an XML plist;
 # owly-airdrop's reader takes only bplist00.
 plist = { version = "1", default-features = false }
+ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde_json = "1"
 sha2 = "0.10"
-tempfile = "3"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+x509-cert = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+# Linux: the kernel's Wi-Fi drivers through owly-radio, BlueZ for the wake.
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+owly-radio = { path = "../owly-radio" }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+# Windows: a Wintun adapter as the link, and timers to the millisecond.
+[target.'cfg(windows)'.dependencies]
+# The preview of a picture sent (send.rs file_icon), where there's no Pillow.
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
+openjpeg-sys = "1"
+windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Usb", "Win32_Foundation", "Win32_Media", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
+wintun = "0.5"
 
 [lints]
 workspace = true

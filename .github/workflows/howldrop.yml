@@ -19,7 +19,7 @@ jobs:
         run: |
           shellcheck --severity=warning \
             tools/stage-addon.sh tools/publish-addon.sh tools/sync-upstream.sh \
-            addon/run.sh addon/wsl-run.sh docker/install.sh
+            addon/run.sh docker/install.sh
       - name: Unit tests
         run: python3 -m unittest discover -s tests
 
@@ -35,7 +35,7 @@ jobs:
         run: |
           build/howldrop/howldrop-open-test
           build/howldrop/howldrop-pairing-test
-          build/howldrop/howldrop-wsl-test
+          build/howldrop/howldrop-radio-test
           build/howldrop/howldrop-transfers-test
           build/howldrop/howldrop-bridge-test
           timeout 300 build/howldrop/howldrop-test
@@ -57,7 +57,7 @@ jobs:
       - name: Build
         run: cmake -S howldrop -B build/howldrop -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/howldrop
       - name: Test
-        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-wsl-test.exe && build/howldrop/howldrop-transfers-test.exe
+        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-radio-test.exe && build/howldrop/howldrop-transfers-test.exe
       - uses: actions/upload-artifact@v4
         with:
           name: howldrop-windows

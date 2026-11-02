@@ -3,9 +3,9 @@
 // The AirDrop wake from Windows' own Bluetooth. An iPhone set to Everyone
 // opens its AirDrop port only after a sender's Bluetooth LE advert: Apple
 // Continuity type 0x05 in manufacturer data (company 0x004C), the one
-// omdrop-awdl's ble-airdrop-adv.py sends (arm A, zero contact hashes). In
-// WSL there is no Bluetooth, so howldrop.exe sends it while AirDrop on this
-// PC sends or looks for devices (wsl_win.hpp). Receiving needs no wake.
+// omdrop-awdl's ble-airdrop-adv.py sends (arm A, zero contact hashes). The
+// agent has no Bluetooth of its own here, so howldrop.exe sends it while AirDrop
+// on this PC sends or looks for devices (radio_win.hpp). Receiving needs none.
 //
 // WinRT's BluetoothLEAdvertisementPublisher, through its ABI (MinGW has no
 // headers for it; the interface ids were checked against what Windows

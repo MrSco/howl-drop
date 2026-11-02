@@ -1,5 +1,5 @@
 // The transfer cards' model (transfers.hpp): event sequences from the radio
-// in WSL and the Home Assistant route's callbacks, and what each card shows.
+// (howldrop-agent) and the Home Assistant route's callbacks, and what each card shows.
 #include "history.hpp"
 #include "text.hpp"
 #include "transfers.hpp"

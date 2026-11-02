@@ -1,20 +1,23 @@
 #pragma once
 
-// AirDrop on this PC: the add-on's radio stack (OWL, the AirDrop receiver
-// and sender) in a WSL 2 distro of its own, driving a USB MT7612U stick
-// that usbipd-win hands to WSL. Windows only.
+// AirDrop on this PC: howldrop-agent.exe (crates/howldrop-agent) driving a
+// USB MT7612U stick itself, from user space on WinUSB, with a Wintun
+// adapter as the AWDL link (docs/native-windows.md). Windows only.
 //
 // One program for the user: the first time it is turned on, howldrop.exe
-// downloads the Linux part from its own GitHub release (its SHA-256 is built
-// into the exe), imports it as the distro HowlDrop, and from then on starts
-// it as a hidden child, wsl-run.sh, and reads its output. Nothing listens on
-// the network between the two: the stack saves straight into the tray's
-// inbox (the same folder, as /mnt/c/...), says what arrived in event lines
-// on its output (wsl_text.hpp), and AirDrops what the tray drops into an
-// outbox folder. Turning it off gives the stick back to Windows.
+// downloads the agent from its own GitHub release (its SHA-256 is built into
+// the exe; a local build uses the agent beside it) and has it set itself up,
+// as administrator, with Windows asking once: into Program Files, a
+// scheduled task that runs it as administrator without asking from then on,
+// and the stick on WinUSB. Each start runs the task, and the agent prints to
+// a named pipe of ours and stops when we disconnect it. Nothing listens on
+// the network between the two: the agent saves straight into the tray's
+// inbox, says what arrived in event lines (radio_text.hpp), and AirDrops
+// what the tray drops into an outbox folder. Turning it off gives the stick
+// back to Windows.
 
 #include "node.hpp"
-#include "wsl_text.hpp"
+#include "radio_text.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -29,18 +32,18 @@
 
 namespace howldrop {
 
-struct ChildProcess;  // wsl_win.cpp
+struct ChildProcess;  // radio_win.cpp
 
 // How it is going, for the tray icon's dot: none, amber, green, red.
 enum class RadioLevel { Off, Working, Up, Problem };
 
-struct WslRadioConfig {
+struct RadioConfig {
     std::filesystem::path inbox;  // where files land (the tray's, Downloads\HowlDrop)
-    std::filesystem::path home;   // %LOCALAPPDATA%\HowlDrop: the distro, the outbox, radio.log
+    std::filesystem::path home;   // %LOCALAPPDATA%\HowlDrop: the agent, the outbox, radio.log
     std::string name;             // what the iPhone's share sheet shows
     // Who may send: "everyone", "ask" (contacts at once, anyone else after
     // Accept on the PC) or "contacts"; senders: comma-separated phone
-    // numbers and emails (wsl-run.sh --receive, --senders).
+    // numbers and emails (the agent's --receive, --senders).
     std::string receive = "ask";
     std::string senders;
     // All called on the radio's own thread.
@@ -52,24 +55,22 @@ struct WslRadioConfig {
     // A transfer's news for its card (transfers.hpp): ask, asked, incoming,
     // receiving, stored, failed, sending; the fields after @howldrop.
     std::function<void(const std::vector<std::string>& event)> on_event;
-    // A yes/no question for the user (installing usbipd-win).
-    std::function<bool(const std::wstring& question)> ask;
 };
 
-class WslRadio final : public Node::LocalIphone {
+class Radio final : public Node::LocalIphone {
 public:
-    explicit WslRadio(WslRadioConfig config);
-    ~WslRadio() override;
-    WslRadio(const WslRadio&) = delete;
-    WslRadio& operator=(const WslRadio&) = delete;
+    explicit Radio(RadioConfig config);
+    ~Radio() override;
+    Radio(const Radio&) = delete;
+    Radio& operator=(const Radio&) = delete;
 
     // Sets up what is missing and runs the radio, on a thread of its own.
     void start();
-    // Stops the stack, detaches the stick and stops the distro; blocks
-    // until done (up to about a minute).
+    // Stops the agent, which gives the stick back; blocks until done (up to
+    // about 20 s).
     void stop();
 
-    // The user's answer to an ask (howl_ask.py waits for it).
+    // The user's answer to an ask (the agent waits for it).
     void decide(const std::string& id, bool accept);
 
     Status queue(const std::filesystem::path& path, const std::string& to) override;
@@ -78,15 +79,17 @@ public:
 
 private:
     void run();
+    // The agent, beside us or from the release, and the one-time setup
+    // that runs it as administrator without asking.
     bool prepare(std::string& error);
-    bool ensure_distro(std::string& error);
-    bool download_linux(const std::filesystem::path& tar, std::string& error);
-    bool find_stick(wsl::UsbDevice& stick, std::string& error);
-    // Runs the stack until it ends; why it ended, or nothing when stopped.
-    std::string run_stack(const wsl::UsbDevice& stick);
-    void handle_line(const std::string& line, const std::string& busid);
-    void attach(const std::string& busid);
-    void give_back(const std::string& busid);
+    bool fetch_agent(std::string& error);
+    // A release file to dest, checked against sha256; what names it for the user.
+    bool download(const std::string& address, const std::string& sha256, const std::string& what,
+                  const std::filesystem::path& dest, std::string& error);
+    // Runs the agent until it ends; why it ended, or nothing when stopped.
+    std::string run_agent();
+    static bool task_running();
+    void handle_line(const std::string& line);
     void state(const std::string& text, RadioLevel level = RadioLevel::Working);
     void log(const std::string& line);
     bool stopping() const { return stop_.load(); }
@@ -97,25 +100,22 @@ private:
     void hold_wake(int seconds);
     void done_waking();
 
-    WslRadioConfig config_;
+    RadioConfig config_;
     std::filesystem::path outbox_;
     std::filesystem::path scan_request_;
-    std::filesystem::path asks_;  // the answers to asks, one file each
-    std::filesystem::path usbipd_;
+    std::filesystem::path asks_;   // the answers to asks, one file each
+    std::filesystem::path agent_;  // howldrop-agent.exe
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> up_{false};
-    std::shared_ptr<ChildProcess> stack_;
+    std::shared_ptr<ChildProcess> agent_process_;
     std::mutex process_mu_;
     mutable std::mutex nearby_mu_;
     bool scanning_ = false;
     std::vector<std::string> devices_;
     std::mutex log_mu_;
-    // Why the stack ended, from its events (stopped, stick failed), and
-    // whether the stick itself failed: that says enough on its own.
-    std::string stop_reason_;
-    bool stick_failed_ = false;
-    std::string stick_note_;  // ", RTL8852BU, untested" for an untested stick
+    std::string stop_reason_;   // why the agent ended, from its events
+    bool needs_setup_ = false;  // the agent said the stick isn't on WinUSB
     std::thread wake_thread_;
     std::mutex wake_mu_;
     std::condition_variable wake_cv_;

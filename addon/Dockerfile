@@ -39,45 +39,21 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # iw and iproute2 for the radio (owly-radio runs ip), hostapd for cards with
 # no ad-hoc mode, network-manager for nmcli (the host's NetworkManager lets
-# go of the card), openssl for Contacts Only, kmod and wireless-regdb for
-# WSL, Python for delivery and the panel, tcpdump for debug_capture,
-# util-linux for nsenter.
+# go of the card), Python for delivery and the panel, tcpdump for
+# debug_capture, util-linux for nsenter.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
         hostapd \
         iproute2 \
         iw \
-        kmod \
         network-manager \
-        openssl \
         procps \
         python3 \
         python3-pip \
         tcpdump \
         util-linux \
-        wireless-regdb \
     && rm -rf /var/lib/apt/lists/*
-
-# For howldrop.exe's WSL distro only (wsl-run.sh): there WSL's kernel drives
-# the stick and finds no firmware of its own. The add-on never loads these;
-# Home Assistant OS has its own. One file per stick in howldrop.exe's table
-# (wsl_text.hpp kSticks), laid out as its driver asks for it: the MT7612U's
-# (mt76x2u) and the RTL8852BU's (rtw89_8852bu). From one linux-firmware
-# commit, and checked by hash.
-ARG LINUX_FIRMWARE=https://gitlab.com/kernel-firmware/linux-firmware/-/raw/fed51005f935bab093a4377d0f23f5c7ede81870
-RUN mkdir -p /usr/lib/howldrop/firmware/rtw89 && cd /usr/lib/howldrop/firmware \
-    && python3 -c "import sys, urllib.request; [urllib.request.urlretrieve(sys.argv[1] + '/' + src, dst) for src, dst in zip(sys.argv[2::2], sys.argv[3::2])]" \
-        "$LINUX_FIRMWARE" \
-        mediatek/mt7662.bin mt7662.bin \
-        mediatek/mt7662_rom_patch.bin mt7662_rom_patch.bin \
-        rtw89/rtw8852b_fw-1.bin rtw89/rtw8852b_fw-1.bin \
-    && printf '%s\n' \
-        'f7e52492f58088cae50e51a54cca68e4abc5b74f7d0b6b731dbb4c04465a94b6  mt7662.bin' \
-        '6f0e871268f6e4d99196d90d89bcc09fe493d010366260a2cfcaa5dd66095f8c  mt7662_rom_patch.bin' \
-        '5b68415e3bfe72715d63a70703d4471b04b5475b8ff69cfdc8cdf48233cd5d3a  rtw89/rtw8852b_fw-1.bin' \
-        | sha256sum -c - \
-    && test -f /lib/firmware/regulatory.db-upstream && test -f /lib/firmware/regulatory.db.p7s-upstream
 
 COPY --from=agent /usr/local/bin/howldrop-agent /usr/local/bin/howldrop-agent
 COPY --from=bridge /usr/local/bin/howldrop-bridge /usr/local/bin/howldrop-bridge
@@ -97,7 +73,6 @@ assert Image.open('/tmp/t.heic').convert('RGB').getpixel((5, 5))[0] > 150" \
     && rm /tmp/t.heic
 COPY icon.png /panel/icon.png
 COPY run.sh /run.sh
-COPY wsl-run.sh /wsl-run.sh
-RUN chmod 755 /run.sh /wsl-run.sh
+RUN chmod 755 /run.sh
 
 ENTRYPOINT ["/bin/bash", "/run.sh"]

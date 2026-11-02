@@ -1,7 +1,7 @@
 # Hardware and iPhone notes
 
 What this add-on's development measured, on Home Assistant OS (Linux 6.12,
-generic x86-64) with one iPhone, and since 0.17.0 on Windows' WSL. The
+generic x86-64) with one iPhone, and from 0.17.0 to 0.19.2 on Windows' WSL. The
 per-driver table the add-on runs from is Owly's
 `crates/owly-radio/drivers.toml` (until 0.18.0, omdrop-owl's
 `userspace/owl-profiles`); these are the observations behind the add-on's

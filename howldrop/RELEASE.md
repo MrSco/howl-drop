@@ -1,30 +1,35 @@
 `howldrop.exe` puts your Windows PC on the iPhone's AirDrop share sheet, two ways:
 
-- **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed. Needs WSL 2 (`wsl --install`) and usbipd-win, which HowlDrop offers to install. The first time, it downloads `howldrop-linux.tar.gz` below (the radio, in a WSL distro of its own; checked against the SHA-256 built into the exe).
+- **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed, and nothing else to install. The first time, it downloads `howldrop-native.zip` below (the radio, about 8 MB; checked against the SHA-256 built into the exe) and Windows asks once to let it set up.
 - **Through Home Assistant**: the HowlDrop add-on forwards what arrives there.
 
+**New in 0.20.0**
+- **Native on Windows: no WSL.** HowlDrop now drives the stick itself, from Windows, instead of handing it to a Linux running in WSL: no `wsl --install`, no usbipd-win, no 250 MB Linux part. The first time it's turned on, Windows asks once to let it set up (into Program Files, with the stick on Windows' own WinUSB driver and a scheduled task that starts it from then on without asking); after that it starts in under a second. A 14.7 MB video from the iPhone still arrives in about 4 s.
+- The stick restarts itself when Windows or a sleep leaves it unanswering, as if you'd unplugged it.
+- Only MT7612U sticks: the Realtek RTL8852BU, which ran (untested) in WSL, isn't supported on Windows any more. It still works with the Home Assistant add-on.
+- The PC keeps its entry on the share sheet across restarts, so a share sheet left open still reaches it.
+
 **New in 0.19.2**
-- **Comes back by itself** after the PC sleeps (when Windows takes the stick back from WSL) or WSL shuts down: the dot goes amber and the PC is back on the share sheet in seconds, instead of staying red until you turned it off and on. When it does go red, it says why.
+- **Comes back by itself** after the PC sleeps: the dot goes amber and the PC is back on the share sheet in seconds, instead of staying red until you turned it off and on. When it does go red, it says why.
 
 **New in 0.19.1**
 - A transfer that takes under a second reads "621 KB in under a second" instead of an impossible speed, and times count from the upload's start.
 
 **New in 0.19.0**
-- **Faster both ways.** The Linux part is rebuilt on [Owly](https://github.com/t4t5/owly), and the stick now listens 40 MHz wide: a 14.7 MB video from the iPhone arrives in about 3 s. Sending to the iPhone runs at 36 Mbit/s instead of 24: the same video goes in about 16 s instead of 25.
+- **Faster both ways.** The radio is rebuilt on [Owly](https://github.com/t4t5/owly), and the stick now listens 40 MHz wide: a 14.7 MB video from the iPhone arrives in about 3 s. Sending to the iPhone runs at 36 Mbit/s instead of 24: the same video goes in about 16 s instead of 25.
 - **Contacts work again**: Apple's certificate authority behind many iPhones' AirDrop identities expired on 21 Oct 2026, and HowlDrop had been asking about (or turning away) your own contacts since.
-- **More sticks**: every MT7612U the WSL driver takes (Netgear A6210, ASUS USB-AC55 and others, not only Alfa's `0e8d:7612`), and the Realtek **RTL8852BU**, untested. See [Which Wi-Fi adapter?](https://github.com/MrSco/howl-drop/blob/main/docs/adapters.md).
 - A picture you send shows its **preview** on the iPhone once accepted.
 - When the iPhone is nearby but its AirDrop isn't taking files (Everyone for 10 Minutes ran out, or it has just finished a transfer), the card **says so** instead of just waiting; the send keeps trying.
-- Each finished transfer shows **how long it took** (and the log keeps it). The version is in the tray menu and the window's settings, and HowlDrop is in the **Start menu**, so it's easy to start again after Quit. WSL no longer adds a Start menu entry of its own for HowlDrop's Linux part.
+- Each finished transfer shows **how long it took** (and the log keeps it). The version is in the tray menu and the window's settings, and HowlDrop is in the **Start menu**, so it's easy to start again after Quit.
 
 Either way: files in `Downloads\HowlDrop` (deleted after 30 days unless you turn that off), text on the clipboard, links (or photos and documents, if you choose) opened as they arrive, and **Send to iPhone** from the window, the tray or Explorer's Send to. The dot on the tray icon shows the PC's radio: amber starting, green on the share sheet, red when it needs you.
 
 **Install**
 
-1. Download `howldrop.exe` below and put it somewhere it can stay, e.g. `%LOCALAPPDATA%\Programs\HowlDrop`. Nothing to install. (`howldrop-linux.tar.gz` is fetched by the exe when needed; you don't need to download it.)
+1. Download `howldrop.exe` below and put it somewhere it can stay, e.g. `%LOCALAPPDATA%\Programs\HowlDrop`. Nothing to install. (`howldrop-native.zip` is fetched by the exe when needed; you don't need to download it.)
 2. Double-click it. Windows SmartScreen may say it doesn't recognize the app, since it is not code-signed: **More info**, then **Run anyway**. Allow it through the firewall on private networks.
 3. Either turn on **AirDrop on this PC** (click the HowlDrop icon by the clock, then the gear), or, for Home Assistant: right-click the icon, **Copy pairing key**, paste it into the add-on's `pc_key`, turn on `forward_to_pc`, and restart the add-on.
 
 **Send to iPhone**: set the iPhone's AirDrop to Everyone for 10 Minutes, drop files on the window and pick the phone (or the tray menu's Send to iPhone, or Explorer's Send to, iPhone (HowlDrop)), and accept on the phone. With AirDrop on this PC, the PC's Bluetooth wakes the phone (it stays connected to your other devices); through Home Assistant, the add-on needs `send_to_iphone`.
 
-Use the release that matches your add-on version. The [Windows app's README](https://github.com/MrSco/howl-drop/blob/main/howldrop/README.md) has the menu, the commands and how pairing works.
+It pairs with the Home Assistant add-on 0.19.2 as before. The [Windows app's README](https://github.com/MrSco/howl-drop/blob/main/howldrop/README.md) has the menu, the commands and how pairing works.

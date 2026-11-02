@@ -1,7 +1,8 @@
 //! What the agent prints: log lines, and with `--events` the `@howldrop`
-//! events howldrop.exe reads (wsl_win.cpp, transfers.cpp): `@howldrop`,
+//! events howldrop.exe reads (radio_win.cpp, transfers.cpp): `@howldrop`,
 //! then tab-separated fields, none holding a tab or a line break.
 
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -12,15 +13,16 @@ pub fn enable() {
     ON.store(true, Ordering::Relaxed);
 }
 
-/// A log line, at once (stdout is line-buffered).
+/// A log line, at once (stdout is line-buffered). Lost, not a panic, once
+/// no one reads them: howldrop.exe's pipe is gone as the agent stops.
 pub fn say(line: impl AsRef<str>) {
-    println!("{}", line.as_ref());
+    let _ = writeln!(io::stdout(), "{}", line.as_ref());
 }
 
 /// An event, when they're on.
 pub fn emit<S: AsRef<str>>(fields: &[S]) {
     if ON.load(Ordering::Relaxed) {
-        println!("{}", line(fields));
+        let _ = writeln!(io::stdout(), "{}", line(fields));
     }
 }
 

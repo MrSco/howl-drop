@@ -1,7 +1,7 @@
 //! The AirDrop BLE advertisement over BlueZ's LE advertising API
 //! (BLE-1–3, BLE-5), while sending from Home Assistant or Linux: owly-cli's
-//! `bluez` module, as it is there. Under howldrop.exe in WSL there's no
-//! Bluetooth; Windows' sends the wake.
+//! `bluez` module, as it is there. On Windows the agent has none; howldrop.exe
+//! sends the wake with Windows' Bluetooth.
 
 use std::collections::HashMap;
 use std::io;

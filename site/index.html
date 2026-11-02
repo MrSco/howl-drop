@@ -304,16 +304,15 @@
 <section id="setup">
   <div class="how">
     <h2>Set it up in a few minutes</h2>
-    <p class="sub">Your PC's built-in Wi-Fi can't speak AirDrop's Wi-Fi on Windows, so HowlDrop brings its own: a USB stick, run by a small Linux that HowlDrop sets up and looks after for you. You just see a tray icon.</p>
+    <p class="sub">Your PC's built-in Wi-Fi can't speak AirDrop's Wi-Fi on Windows, so HowlDrop brings its own: a USB stick it drives itself, natively on Windows. You just see a tray icon.</p>
     <div class="need">
-      <div><b>Windows 11 or 10</b><span>with WSL 2</span></div>
+      <div><b>Windows 11 or 10</b><span>nothing else to install</span></div>
       <div><b>A USB Wi-Fi stick</b><span>MediaTek MT7612U: Alfa AWUS036ACM, Netgear A6210 and others. <a href="https://github.com/MrSco/howl-drop/blob/main/docs/adapters.md">The list</a></span></div>
       <div><b>Bluetooth on the PC</b><span>to wake the iPhone when sending to it</span></div>
     </div>
     <ol class="steps">
-      <li><div><b>Turn on WSL</b><span>In a terminal opened as administrator: <code>wsl --install</code>, then restart.</span></div></li>
       <li><div><b>Get HowlDrop</b><span><a href="https://github.com/MrSco/howl-drop/releases/latest">Download howldrop.exe</a>, put it somewhere it can stay (like <code>%LOCALAPPDATA%\Programs\HowlDrop</code>) and run it. Nothing to install. If SmartScreen stops it: More info, Run anyway.</span></div></li>
-      <li><div><b>Plug in the stick and switch it on</b><span>Click the owl by the clock, then the gear, and turn on <b style="display:inline">AirDrop on this PC</b>. The first time, HowlDrop fetches what it needs and Windows asks once to share the stick. When the dot turns green, you're on the share sheet.</span></div></li>
+      <li><div><b>Plug in the stick and switch it on</b><span>Click the owl by the clock, then the gear, and turn on <b style="display:inline">AirDrop on this PC</b>. The first time, HowlDrop fetches what it needs and Windows asks once to let it set up. When the dot turns green, you're on the share sheet.</span></div></li>
       <li><div><b>AirDrop something</b><span>On the iPhone: Share, AirDrop, your PC. To send to the phone, set its AirDrop to Everyone for 10 Minutes and drop files on the HowlDrop window.</span></div></li>
     </ol>
   </div>

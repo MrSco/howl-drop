@@ -2,20 +2,32 @@
 //! options rather than /etc/owly/radio.toml, held by this process alone (no
 //! owlyd). It picks the card and its mode from the quirks table, writes
 //! each change to its recovery journal, and takes it all back on the way
-//! down.
+//! down. Or, with `--usb-radio`, an MT7612U driven from user space
+//! ([`crate::usb`]): the only radio on Windows.
 
+use std::path::PathBuf;
+#[cfg(target_os = "linux")]
 use std::sync::Arc;
 
+#[cfg(target_os = "linux")]
 use owly_radio::config::Config;
+#[cfg(target_os = "linux")]
 use owly_radio::injection::{AWDL_IFACE, Injection};
-use owly_radio::radio::{Backend, Capabilities, Link};
+#[cfg(target_os = "linux")]
+use owly_radio::radio::{Backend, Capabilities};
+#[cfg(target_os = "linux")]
 use owly_radio::rundir::RunDir;
+#[cfg(target_os = "linux")]
 use owly_radio::sys::{Ops, System};
 
+#[cfg(target_os = "linux")]
 use crate::events::{emit, say};
+use crate::link::Link;
 
-/// The radio options, as the add-on and wsl-run.sh give them.
+/// The radio options, as the add-on gives them. Most are the kernel
+/// driver's; Windows has only the stick.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub struct Options {
     /// The Wi-Fi interface; else the best one the probe finds.
     pub station: Option<String>,
@@ -29,16 +41,94 @@ pub struct Options {
     pub tx_rate: Option<String>,
     pub tx_amsdu: bool,
     pub run_dir: String,
+    /// Drive an MT7612U from user space, with its firmware from here,
+    /// instead of the kernel's driver.
+    pub usb_firmware: Option<PathBuf>,
 }
 
-/// The backend, with its journal of what a crashed run left undone.
-pub struct Radio {
-    backend: Injection,
-    probe: Capabilities,
+/// The kernel's driver through owly-radio, or the user-space one.
+pub enum Radio {
+    #[cfg(target_os = "linux")]
+    Kernel(Box<Kernel>),
+    Usb(crate::usb::UsbRadio),
 }
 
 impl Radio {
     pub fn new(opts: &Options) -> Result<Radio, String> {
+        Ok(match &opts.usb_firmware {
+            Some(dir) => Radio::Usb(crate::usb::UsbRadio::new(
+                dir.clone(),
+                opts.tx_rate.as_deref(),
+                opts.aggregation,
+            )?),
+            #[cfg(target_os = "linux")]
+            None => Radio::Kernel(Box::new(Kernel::new(opts)?)),
+            #[cfg(not(target_os = "linux"))]
+            None => return Err("The radio here is a USB stick: --usb-radio FIRMWARE_DIR".into()),
+        })
+    }
+
+    pub fn report(&self) {
+        match self {
+            #[cfg(target_os = "linux")]
+            Radio::Kernel(k) => k.report(),
+            Radio::Usb(u) => u.report(),
+        }
+    }
+
+    pub fn unusable(&self) -> Option<String> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Radio::Kernel(k) => k.unusable(),
+            Radio::Usb(u) => u.unusable(),
+        }
+    }
+
+    pub fn station(&self) -> String {
+        match self {
+            #[cfg(target_os = "linux")]
+            Radio::Kernel(k) => k.station(),
+            Radio::Usb(u) => u.station(),
+        }
+    }
+
+    pub async fn recover(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let Radio::Kernel(k) = self {
+            k.recover().await;
+        }
+    }
+
+    pub async fn up(&mut self) -> Result<Link, String> {
+        let link = match self {
+            #[cfg(target_os = "linux")]
+            Radio::Kernel(k) => k.backend.up().await.map_err(|e| e.message)?,
+            Radio::Usb(u) => u.up().await?,
+        };
+        #[cfg(target_os = "linux")]
+        tune_tcp().await;
+        Ok(link)
+    }
+
+    pub async fn down(&mut self) {
+        match self {
+            #[cfg(target_os = "linux")]
+            Radio::Kernel(k) => k.down().await,
+            Radio::Usb(u) => u.down().await,
+        }
+    }
+}
+
+/// The backend, with its journal of what a crashed run left undone.
+#[cfg(target_os = "linux")]
+pub struct Kernel {
+    backend: Injection,
+    probe: Capabilities,
+}
+
+#[cfg(target_os = "linux")]
+impl Kernel {
+    pub fn new(opts: &Options) -> Result<Kernel, String> {
         let ops = Arc::new(System);
         let country = opts.country.clone().or_else(|| {
             // An unset domain (00, or 99 for a driver's own) leaves 5 GHz
@@ -74,7 +164,7 @@ impl Radio {
                 .issues
                 .retain(|i| !i.starts_with("AirDrop runs on channel"));
         }
-        Ok(Radio { backend, probe })
+        Ok(Kernel { backend, probe })
     }
 
     /// What the probe found, for the log and the PC.
@@ -137,12 +227,6 @@ impl Radio {
         }
     }
 
-    pub async fn up(&mut self) -> Result<Link, String> {
-        let link = self.backend.up().await.map_err(|e| e.message)?;
-        tune_tcp().await;
-        Ok(link)
-    }
-
     pub async fn down(&mut self) {
         if let Err(e) = self.backend.down().await {
             say(format!("Giving the card back: {e}"));
@@ -153,6 +237,7 @@ impl Radio {
 /// TCP on awdl0 resends after 20 ms rather than 200: a frame the radio
 /// missed costs a slot, not a fifth of a second. No quickack: an ACK per
 /// segment takes the air the phone sends on.
+#[cfg(target_os = "linux")]
 async fn tune_tcp() {
     let out = tokio::process::Command::new("ip")
         .args([
