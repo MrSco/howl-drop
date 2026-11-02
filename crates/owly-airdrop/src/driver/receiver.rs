@@ -12,7 +12,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 use tokio::time::{Instant, sleep_until, timeout};
@@ -20,6 +19,7 @@ use tokio_rustls::TlsAcceptor;
 
 use super::staging::Staging;
 use super::tls::{self, Identity};
+use super::transport::{BoxStream, Listen, Os};
 use crate::proto::messages::{AskRequest, DiscoverRequest, Offer};
 use crate::proto::receiver::{Answer, Config, Connection, Event};
 
@@ -112,7 +112,7 @@ pub enum ReceiverEvent {
 }
 
 pub struct Receiver {
-    listener: TcpListener,
+    listener: Box<dyn Listen>,
     acceptor: TlsAcceptor,
     options: Arc<Options>,
     config: Arc<Config>,
@@ -201,7 +201,17 @@ impl Receiver {
         identity: &Identity,
         options: Options,
     ) -> io::Result<(Self, mpsc::Receiver<ReceiverEvent>)> {
-        let listener = TcpListener::bind(addr).await?;
+        Self::with_listener(Os::listen(addr).await?, identity, options)
+    }
+
+    /// Fork: serves the connections `listener` takes in, from a network
+    /// stack other than the host's (transport).
+    pub fn with_listener(
+        listener: impl Listen,
+        identity: &Identity,
+        options: Options,
+    ) -> io::Result<(Self, mpsc::Receiver<ReceiverEvent>)> {
+        let listener: Box<dyn Listen> = Box::new(listener);
         let acceptor = TlsAcceptor::from(tls::server_config(identity)?);
         let (events, rx) = mpsc::channel(64);
         let config = Arc::new(options.config.clone());
@@ -228,7 +238,7 @@ impl Receiver {
 
     /// Serves until the event receiver is dropped. A failed connection never
     /// stops the server (SEC-8).
-    pub async fn run(self) {
+    pub async fn run(mut self) {
         loop {
             let accepted = tokio::select! {
                 accepted = self.listener.accept() => accepted,
@@ -294,8 +304,7 @@ struct Task {
 }
 
 impl Task {
-    async fn run(self, stream: TcpStream, held: &Held) -> io::Result<()> {
-        stream.set_nodelay(true)?;
+    async fn run(self, stream: BoxStream, held: &Held) -> io::Result<()> {
         let mut tls = timeout(HANDSHAKE_TIMEOUT, self.acceptor.accept(stream))
             .await
             .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
