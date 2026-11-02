@@ -12,16 +12,19 @@
 //! 3. one of the record's hashed phone numbers and emails is a contact's.
 //!
 //! The name a sender gives itself is never trusted. Signatures are checked
-//! with the `openssl` command, as contacts.py did. Nothing here logs an
-//! identifier or a hash: the hashes give a phone number back by brute force.
+//! as contacts.py had the `openssl` command check them ([`crate::pki`]).
+//! Nothing here logs an identifier or a hash: the hashes give a phone number
+//! back by brute force.
 
 use std::collections::HashSet;
 use std::io;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use der::{Decode, DecodePem};
 use sha2::{Digest, Sha256};
+use x509_cert::Certificate;
+
+use crate::pki;
 
 /// Apple's public root and the issuing CAs above the certificates senders
 /// present (a sender presents only its own).
@@ -59,11 +62,11 @@ impl Outcome {
     }
 }
 
-/// The contacts, hashed, and the CAs to check senders against, in files
-/// for openssl.
+/// The contacts, hashed, and the CAs to check senders against.
 pub struct Contacts {
     hashes: HashSet<String>,
-    certs: tempfile::TempDir,
+    root: Certificate,
+    issuers: Vec<Certificate>,
 }
 
 /// What a verified record says.
@@ -86,9 +89,12 @@ impl Contacts {
         root: &str,
         issuers: &[&str],
     ) -> io::Result<(Self, Vec<String>)> {
-        let certs = tempfile::tempdir()?;
-        std::fs::write(certs.path().join("root.pem"), root)?;
-        std::fs::write(certs.path().join("issuers.pem"), issuers.concat())?;
+        let pem = |p: &str| {
+            Certificate::from_pem(p.trim().as_bytes())
+                .map_err(|e| io::Error::other(format!("a CA certificate: {e}")))
+        };
+        let root = pem(root)?;
+        let issuers = issuers.iter().map(|p| pem(p)).collect::<io::Result<_>>()?;
         let mut hashes = HashSet::new();
         let mut notes = Vec::new();
         for entry in entries {
@@ -100,7 +106,14 @@ impl Contacts {
                 Err(why) => notes.push(why),
             }
         }
-        Ok((Contacts { hashes, certs }, notes))
+        Ok((
+            Contacts {
+                hashes,
+                root,
+                issuers,
+            },
+            notes,
+        ))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -111,18 +124,14 @@ impl Contacts {
         self.hashes.len()
     }
 
-    fn root(&self) -> PathBuf {
-        self.certs.path().join("root.pem")
-    }
-
     /// Whether to take a transfer from this sender. Blocking.
     #[cfg(test)]
     pub fn decide(&self, record: Option<&[u8]>, certificate: Option<&[u8]>) -> Outcome {
         self.explain(record, certificate).0
     }
 
-    /// [`decide`](Self::decide), and what failed, for the log: openssl's
-    /// reason, never an identifier. Blocking.
+    /// [`decide`](Self::decide), and what failed, for the log: the reason,
+    /// never an identifier. Blocking.
     pub fn explain(&self, record: Option<&[u8]>, certificate: Option<&[u8]>) -> (Outcome, String) {
         let Some(record) = record.filter(|r| !r.is_empty()) else {
             return (Outcome::NoRecord, String::new());
@@ -174,33 +183,13 @@ impl Contacts {
     }
 
     /// Apple's signature over the record, and what it says; why not when
-    /// it doesn't verify. `-purpose any`: the signer is a record-signing
-    /// certificate, which openssl's S/MIME purpose check refuses.
+    /// it doesn't verify. The signer is a record-signing certificate, of no
+    /// particular purpose. No dates: the record's own ValidAsOf and
+    /// SuggestValidDuration say whether it's current (parse_record), so an
+    /// Apple CA past its date doesn't refuse it, as one did the
+    /// certificates.
     fn verify_record(&self, record: &[u8]) -> Result<Record, String> {
-        let out = self.certs.path().join(format!("record-{}.bin", unique()));
-        let verified = openssl(
-            &[
-                "cms",
-                "-verify",
-                // The record's own ValidAsOf and SuggestValidDuration say
-                // whether it's current (parse_record), so an Apple CA past
-                // its date doesn't refuse it, as one did the certificates.
-                "-no_check_time",
-                "-inform",
-                "DER",
-                "-CAfile",
-                path(&self.root())?,
-                "-purpose",
-                "any",
-                "-out",
-                path(&out)?,
-            ],
-            record,
-        );
-        let payload = std::fs::read(&out);
-        let _ = std::fs::remove_file(&out);
-        verified?;
-        let payload = payload.map_err(|e| e.to_string())?;
+        let payload = pki::verify_signed_data(record, &self.root, &self.issuers)?;
         parse_record(&payload, SystemTime::now()).ok_or_else(|| "not a record plist".into())
     }
 
@@ -208,140 +197,33 @@ impl Contacts {
     /// an Apple-issued one: it must verify to Apple's root. Everyone-mode
     /// senders present a self-signed certificate (CN=airdrop).
     fn certificate_account(&self, der: &[u8]) -> Result<String, String> {
-        let leaf = self.certs.path().join(format!("leaf-{}.pem", unique()));
-        let account = (|| {
-            let leaf_path = path(&leaf)?;
-            openssl(&["x509", "-inform", "DER", "-out", leaf_path], der)?;
-            let issuers = self.certs.path().join("issuers.pem");
-            // One attribute per line: OpenSSL 3.0 prints "CN = value" in
-            // the default form, older ones "CN=value".
-            let name = |which: &str| {
-                openssl(
-                    &[
-                        "x509",
-                        "-in",
-                        leaf_path,
-                        "-noout",
-                        which,
-                        "-nameopt",
-                        "multiline",
-                    ],
-                    b"",
-                )
-            };
-            // The chain to Apple's root, its CAs' dates aside: Apple
-            // Application Integration CA expired on 21 Oct 2026 with
-            // iPhones still presenting current certificates it issued. The
-            // sender's own certificate must be current.
-            let verified = openssl(
-                &[
-                    "verify",
-                    "-no_check_time",
-                    "-CAfile",
-                    path(&self.root())?,
-                    "-untrusted",
-                    path(&issuers)?,
-                    "-purpose",
-                    "any",
-                    leaf_path,
-                ],
-                b"",
-            )
-            .and_then(|_| {
-                openssl(&["x509", "-in", leaf_path, "-noout", "-checkend", "0"], b"")
-                    .map_err(|_| "the certificate has expired".to_string())
-            });
-            if let Err(why) = verified {
-                // The issuer is one of Apple's CAs, or the sender itself.
-                let issuer = name("-issuer").ok();
-                let issuer = issuer.as_deref().and_then(common_name).unwrap_or("?");
-                let issuer = if issuer.starts_with(CN_PREFIX) || issuer == "airdrop" {
-                    "itself"
-                } else {
-                    issuer
-                };
-                return Err(format!("{why} (issued by {issuer})"));
+        let leaf = Certificate::from_der(der).map_err(|_| "not a certificate".to_string())?;
+        // The chain to Apple's root, its CAs' dates aside: Apple
+        // Application Integration CA expired on 21 Oct 2026 with iPhones
+        // still presenting current certificates it issued. The sender's own
+        // certificate must be current.
+        let verified = pki::verify_chain(&leaf, &self.issuers, &self.root).and_then(|()| {
+            let expires = leaf.tbs_certificate.validity.not_after.to_system_time();
+            if expires < SystemTime::now() {
+                Err("the certificate has expired".to_string())
+            } else {
+                Ok(())
             }
-            let subject = name("-subject")?;
-            common_name(&subject)
-                .and_then(|cn| cn.strip_prefix(CN_PREFIX))
-                .map(str::to_string)
-                .ok_or_else(|| "not an Apple ID certificate".to_string())
-        })();
-        let _ = std::fs::remove_file(&leaf);
-        account
+        });
+        if let Err(why) = verified {
+            // The issuer is one of Apple's CAs, or the sender itself.
+            let issuer = pki::common_name(&leaf.tbs_certificate.issuer);
+            let issuer = match issuer.as_deref() {
+                Some(cn) if cn.starts_with(CN_PREFIX) || cn == "airdrop" => "itself",
+                Some(cn) => cn,
+                None => "?",
+            };
+            return Err(format!("{why} (issued by {issuer})"));
+        }
+        pki::common_name(&leaf.tbs_certificate.subject)
+            .and_then(|cn| cn.strip_prefix(CN_PREFIX).map(str::to_string))
+            .ok_or_else(|| "not an Apple ID certificate".to_string())
     }
-}
-
-fn path(p: &Path) -> Result<&str, String> {
-    p.to_str()
-        .ok_or_else(|| "a temporary path isn't UTF-8".into())
-}
-
-fn unique() -> String {
-    let mut bytes = [0u8; 6];
-    let _ = getrandom::fill(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// openssl with `args`, `input` on stdin; its stdout when it succeeds,
-/// else its reason.
-fn openssl(args: &[&str], input: &[u8]) -> Result<String, String> {
-    use std::io::Write;
-    let mut child = Command::new("openssl")
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("openssl: {e}"))?;
-    let mut stdin = child.stdin.take().ok_or("openssl: no stdin")?;
-    let input = input.to_vec();
-    let writer = std::thread::spawn(move || stdin.write_all(&input));
-    let out = child
-        .wait_with_output()
-        .map_err(|e| format!("openssl: {e}"))?;
-    let _ = writer.join();
-    if out.status.success() {
-        return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
-    }
-    Err(openssl_reason(&String::from_utf8_lossy(&out.stderr)))
-}
-
-/// What openssl's errors say, without the names it prints with them (a
-/// certificate's subject is an Apple ID).
-fn openssl_reason(stderr: &str) -> String {
-    // verify: "error 10 at 1 depth lookup: certificate has expired"
-    if let Some(line) = stderr.lines().find(|l| l.contains(" depth lookup: ")) {
-        let (head, why) = line.split_once(" lookup: ").unwrap_or((line, ""));
-        let depth = head.split(" at ").nth(1).unwrap_or(head);
-        return format!("{why} (at {depth})");
-    }
-    // cms: "...:Verify error: certificate has expired", or the last
-    // routine's message.
-    if let Some((_, why)) = stderr.rsplit_once("Verify error:") {
-        return why.lines().next().unwrap_or("").trim().to_string();
-    }
-    // "pid:error:code:library routines:function:reason:file:line:"
-    let line = stderr
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("failed");
-    match line.split(':').collect::<Vec<_>>().as_slice() {
-        [_, "error", _, _, _, reason, ..] => reason,
-        _ => line,
-    }
-    .trim()
-    .to_string()
-}
-
-/// `commonName = value` from `-nameopt multiline`.
-fn common_name(subject: &str) -> Option<&str> {
-    subject.lines().find_map(|line| {
-        let (key, value) = line.split_once('=')?;
-        (key.trim() == "commonName").then(|| value.trim())
-    })
 }
 
 /// The record's payload: a plist with `altDsID`, `ValidatedEmailHashes`,
@@ -436,6 +318,9 @@ pub fn entries(option: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+
     use super::*;
 
     #[test]
@@ -462,7 +347,7 @@ mod tests {
     }
 
     /// A CA, an issuer under it, a record signer and a sender certificate
-    /// for `account`, made with openssl, as Apple's are shaped.
+    /// for `account`, made with the openssl command, as Apple's are shaped.
     struct Pki {
         dir: tempfile::TempDir,
     }
@@ -603,30 +488,34 @@ mod tests {
         /// A validation record: `payload` signed as CMS by a signer under
         /// the issuer, carrying the signer and the issuer.
         fn record(&self, payload: &[u8]) -> Vec<u8> {
+            self.record_with(payload, &[])
+        }
+
+        /// As [`record`](Self::record), with more of openssl's options.
+        fn record_with(&self, payload: &[u8], more: &[&str]) -> Vec<u8> {
             let d = self.dir.path();
             self.leaf("signer", "Test Record Signer", Some("issuer"));
             std::fs::write(d.join("payload.plist"), payload).unwrap();
-            run(
-                d,
-                &[
-                    "cms",
-                    "-sign",
-                    "-binary",
-                    "-nodetach",
-                    "-in",
-                    "payload.plist",
-                    "-signer",
-                    "signer.pem",
-                    "-inkey",
-                    "signer.key",
-                    "-certfile",
-                    "issuer.pem",
-                    "-outform",
-                    "DER",
-                    "-out",
-                    "record.der",
-                ],
-            );
+            let mut args = vec![
+                "cms",
+                "-sign",
+                "-binary",
+                "-nodetach",
+                "-in",
+                "payload.plist",
+                "-signer",
+                "signer.pem",
+                "-inkey",
+                "signer.key",
+                "-certfile",
+                "issuer.pem",
+                "-outform",
+                "DER",
+                "-out",
+                "record.der",
+            ];
+            args.extend_from_slice(more);
+            run(d, &args);
             std::fs::read(self.path("record.der")).unwrap()
         }
 
@@ -732,23 +621,53 @@ mod tests {
     }
 
     #[test]
-    fn openssls_reasons_come_without_names() {
-        let verify = "CN = com.apple.idms.appleid.prd.001234\nerror 10 at 1 depth lookup: certificate has expired\nerror leaf.pem: verification failed\n";
-        assert_eq!(
-            openssl_reason(verify),
-            "certificate has expired (at 1 depth)"
+    fn a_record_in_ber_reads_as_in_der() {
+        let pki = Pki::new();
+        let contacts = pki.contacts(&["me@example.com"]);
+        let mut p = plist::Dictionary::new();
+        p.insert("altDsID".into(), "001234.abcd".into());
+        p.insert(
+            "ValidatedEmailHashes".into(),
+            plist::Value::Array(vec![hash("me@example.com").into()]),
         );
-        let cms = "40A7:error:10800065:CMS routines:CMS_signerinfo_verify_cert:certificate verify error:../crypto/cms/cms_smime.c:286:Verify error:unable to get local issuer certificate\n";
+        let mut payload = Vec::new();
+        plist::Value::Dictionary(p)
+            .to_writer_xml(&mut payload)
+            .unwrap();
+        // Streamed: indefinite lengths, the content in pieces.
+        let record = pki.record_with(&payload, &["-stream"]);
+        assert_eq!(record[..2], [0x30, 0x80]);
+        let cert = pki.leaf("sender", &format!("{CN_PREFIX}001234.abcd"), Some("issuer"));
+        assert_eq!(contacts.decide(Some(&record), Some(&cert)), Outcome::Accept);
+        // DER stays as it was.
+        let der = pki.record(&payload);
+        assert_eq!(pki::ber_to_der(&der).unwrap(), der);
+        assert_eq!(pki::ber_to_der(&record[..record.len() - 1]), None);
+    }
+
+    #[test]
+    fn reasons_name_no_one() {
+        let pki = Pki::new();
+        let contacts = pki.contacts(&["+1 555 123 4567"]);
+        let record = pki.record(&payload(
+            "001234.abcd",
+            &["15551234567"],
+            SystemTime::now(),
+            86400,
+        ));
+        let forged = pki.leaf("forged", &format!("{CN_PREFIX}001234.abcd"), None);
+        let (outcome, why) = contacts.explain(Some(&record), Some(&forged));
+        assert_eq!(outcome, Outcome::Unbound);
         assert_eq!(
-            openssl_reason(cms),
-            "unable to get local issuer certificate"
+            why,
+            "certificate: self-signed certificate (issued by itself)"
         );
-        assert_eq!(
-            openssl_reason(
-                "40A7:error:068000A8:asn1 encoding routines:asn1_check_tlen:wrong tag:../crypto/asn1/tasn_dec.c:1188:\n"
-            ),
-            "wrong tag"
-        );
+        // Signed under a root of the same name, but not the trusted one.
+        let elsewhere = Pki::new().record(&payload("001234.abcd", &[], SystemTime::now(), 86400));
+        let (_, why) = contacts.explain(Some(&elsewhere), Some(&forged));
+        assert_eq!(why, "record: certificate signature failure");
+        let (_, why) = contacts.explain(Some(b"junk"), Some(&forged));
+        assert_eq!(why, "record: not a CMS message (bad encoding)");
     }
 
     #[test]
@@ -756,6 +675,12 @@ mod tests {
         let (contacts, notes) = Contacts::new(&["+15551234567".into()]).unwrap();
         assert_eq!(contacts.len(), 1);
         assert!(notes.is_empty());
-        assert!(contacts.certs.path().join("issuers.pem").exists());
+        assert_eq!(contacts.issuers.len(), 2);
+        for issuer in &contacts.issuers {
+            assert_eq!(
+                issuer.tbs_certificate.issuer,
+                contacts.root.tbs_certificate.subject
+            );
+        }
     }
 }

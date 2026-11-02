@@ -54,6 +54,8 @@ pub struct Options {
     pub outbox: PathBuf,
     pub discard: bool,
     pub name: String,
+    /// The Mac model it says it is, as the receiver does.
+    pub model: String,
     pub to: Option<String>,
     /// How long one file is tried for.
     pub window: Duration,
@@ -79,7 +81,7 @@ struct Listed {
 }
 
 pub async fn run(air: Air, opts: Options) {
-    let sender = match new_sender(&opts.name) {
+    let sender = match new_sender(&opts.name, &opts.model) {
         Ok(s) => s,
         Err(e) => {
             say(format!("Send: sending isn't available: {e}"));
@@ -128,8 +130,11 @@ pub async fn run(air: Air, opts: Options) {
     }
 }
 
-fn new_sender(name: &str) -> io::Result<Sender> {
+/// The sender, as a Mac: with Owly's "Linux" for a model, an iPhone left
+/// the preview out of its prompt (it shows a Mac's, as it did 0.18.0's).
+fn new_sender(name: &str, model: &str) -> io::Result<Sender> {
     let mut config = Config::new(name, crate::receive::random_id()?);
+    config.model_name = model.to_string();
     config.ask_timeout = ASK_TIMEOUT;
     Sender::new(config)
 }
@@ -208,6 +213,19 @@ async fn send_one(
 /// about 44 KB): Pillow's default 5/3 coding left the prompt blank. None
 /// for what Pillow can't open (videos, documents, HEIC) or past a few
 /// seconds.
+///
+/// On Windows, with no Pillow: the same, made here ([`crate::preview`]).
+#[cfg(not(target_os = "linux"))]
+async fn file_icon(path: &Path) -> Option<Vec<u8>> {
+    let path = path.to_path_buf();
+    let make = tokio::task::spawn_blocking(move || crate::preview::file_icon(&path));
+    tokio::time::timeout(Duration::from_secs(5), make)
+        .await
+        .ok()?
+        .ok()?
+}
+
+#[cfg(target_os = "linux")]
 async fn file_icon(path: &Path) -> Option<Vec<u8>> {
     const SCRIPT: &str = "import io, sys\n\
         from PIL import Image\n\
@@ -662,7 +680,18 @@ fn free_path(dir: &Path, name: &str) -> PathBuf {
     path
 }
 
+/// BLE-1: the advert that wakes an iPhone's AirDrop, while it's held. On
+/// Windows howldrop.exe advertises with Windows' Bluetooth.
+#[cfg(not(target_os = "linux"))]
+async fn advertise(on: bool) -> Option<()> {
+    if on {
+        say("Bluetooth: not advertising: there's no BlueZ here");
+    }
+    None
+}
+
 /// BLE-1: the advert that wakes an iPhone's AirDrop, while it's held.
+#[cfg(target_os = "linux")]
 async fn advertise(on: bool) -> Option<crate::bluez::Registration> {
     if !on {
         return None;

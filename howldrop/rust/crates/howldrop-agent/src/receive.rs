@@ -40,12 +40,13 @@ use owly_airdrop::driver::tls::Identity;
 use owly_airdrop::proto::mdns::{self, RECEIVER_FLAGS, Service};
 use owly_airdrop::proto::messages::{AskRequest, Offer};
 use owly_airdrop::proto::receiver::{Config, DiscoverGate};
-use owly_radio::radio::Link;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::contacts::{Contacts, Outcome};
+use crate::deliver::deliver;
 use crate::events::{emit, say, took};
+use crate::link::Link;
 
 /// Where we receive: the port omdrop's firewall rule opens on `awdl0`.
 pub const PORT: u16 = 8771;
@@ -77,11 +78,16 @@ pub struct Options {
     pub model: String,
     pub staging: PathBuf,
     pub identity: Identity,
+    /// The mDNS instance name ([`service_id`]).
+    pub service_id: String,
     pub policy: Policy,
     pub ask_dir: Option<PathBuf>,
     /// How long the PC's user has to answer.
     pub ask_timeout: Duration,
     pub contacts: Arc<Contacts>,
+    /// Where finished items go ([`crate::deliver`]); else they stay in
+    /// staging for deliver.py.
+    pub deliver: Option<PathBuf>,
     pub verbose: bool,
 }
 
@@ -138,7 +144,7 @@ pub async fn start(link: &Link, opts: Options) -> io::Result<Running> {
     let (receiver, mut events) = Receiver::bind(addr, &opts.identity, options).await?;
     let serve = tokio::spawn(receiver.run());
 
-    let service_id = random_id()?;
+    let service_id = opts.service_id.clone();
     let burst = link.announce.map(|a| mdns::Burst {
         count: a.count,
         interval: a.interval,
@@ -253,7 +259,23 @@ fn on_event(event: ReceiverEvent, opts: &Arc<Options>, transfers: &Transfers) {
                 .unwrap_or_default();
             for url in urls {
                 match store_link(&opts.staging, &url, &sender) {
-                    Ok(name) => say(format!("Receive: link stored as {name}")),
+                    Ok(name) => {
+                        say(format!("Receive: link stored as {name}"));
+                        if let Some(dest) = &opts.deliver {
+                            let _ = std::fs::remove_file(
+                                opts.staging
+                                    .join(".howldrop-meta")
+                                    .join(format!("{name}.json")),
+                            );
+                            deliver(
+                                &opts.staging,
+                                dest,
+                                &opts.staging.join(&name),
+                                &sender,
+                                Some(&url),
+                            );
+                        }
+                    }
                     Err(e) => say(format!("Receive: couldn't store a link: {e}")),
                 }
             }
@@ -267,7 +289,9 @@ fn on_event(event: ReceiverEvent, opts: &Arc<Options>, transfers: &Transfers) {
             let (tag, sender) = t.map(|t| (t.tag, t.sender)).unwrap_or_default();
             let mut names = Vec::new();
             for p in &paths {
-                note_tree(&opts.staging, p, &sender);
+                if opts.deliver.is_none() {
+                    note_tree(&opts.staging, p, &sender);
+                }
                 names.push(file_name(p));
             }
             say(format!(
@@ -278,6 +302,11 @@ fn on_event(event: ReceiverEvent, opts: &Arc<Options>, transfers: &Transfers) {
             let mut fields = vec!["stored".to_string(), tag];
             fields.extend(names);
             emit(&fields);
+            if let Some(dest) = &opts.deliver {
+                for p in &paths {
+                    deliver(&opts.staging, dest, p, &sender, None);
+                }
+            }
         }
         ReceiverEvent::Failed { id, reason } => {
             say(format!("Receive: the transfer failed: {reason}"));
@@ -518,6 +547,23 @@ fn free_name(dir: &Path, stem: &str, ext: &str) -> String {
         n += 1;
     }
     name
+}
+
+/// The receiver's mDNS instance name, twelve hex digits kept in `dir` (the
+/// identity's): a share sheet still showing the last run's entry reaches
+/// this one.
+pub fn service_id(dir: &Path) -> io::Result<String> {
+    let path = dir.join("service-id");
+    if let Ok(id) = std::fs::read_to_string(&path)
+        && id.len() == 12
+        && id.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Ok(id);
+    }
+    let id = random_id()?;
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(&path, &id)?;
+    Ok(id)
 }
 
 /// Twelve hex digits.

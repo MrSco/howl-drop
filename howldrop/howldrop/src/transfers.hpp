@@ -1,8 +1,8 @@
 #pragma once
 
 // What the transfer cards show (cards_win.hpp): each AirDrop coming in or
-// going out, from the radio's events in WSL (howl_ask.py, outbox.py,
-// deliver.py; wsl_text.hpp parses them) and from the Home Assistant route's
+// going out, from the radio's events (howldrop-agent's; radio_text.hpp
+// parses them) and from the Home Assistant route's
 // callbacks (Node::Config on_file, on_text, on_sent). Kept apart from the
 // drawing so the tests run anywhere.
 
@@ -64,7 +64,7 @@ public:
     // A radio event (the fields after @howldrop). Returns the id of the
     // transfer it touched, or empty when it was about none.
     std::string apply(const std::vector<std::string>& event, Clock::time_point now);
-    // A file delivered into the inbox (`received` from WSL, or the add-on's
+    // A file delivered into the inbox (`received` from the radio, or the add-on's
     // forwarder): kind as deliver.py names it, or empty to guess.
     std::string received(const std::filesystem::path& saved, const std::string& from, const std::string& kind,
                          bool home_assistant, Clock::time_point now);
