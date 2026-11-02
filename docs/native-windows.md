@@ -90,13 +90,21 @@ Windows.
   signed INF of our own needs a code-signing certificate. During development,
   Zadig on the developer's machine is enough, and uninstalling the device's
   driver undoes it.
-- **Wintun needs an administrator** to create its adapter: once at setup, or
-  a small service.
+- **Wintun needs an administrator** to make its adapter and open its
+  session. For now howldrop.exe starts the agent as administrator, so
+  Windows asks each time it starts; milestone 7 is a small service.
 - **Timing**: AWDL's availability windows are 16 TU; the node runs its timers
   in software (`timer late avg` about 1.1 ms on Linux). Windows wakes them on
   its 15.6 ms tick (6.5 ms late on average, 16 ms at worst) unless the
   process asks for 1 ms (`timeBeginPeriod`) and opts out of Windows 11's
-  timer throttling; `howldrop-native` does both and gets 1.2 ms.
+  timer throttling; the agent does both and gets 1.2 ms.
+- **The preview on the iPhone's Accept prompt.** A JPEG 2000 FileIcon shows
+  on the "AirDrop Complete" banner, and a plain JPEG doesn't show at all,
+  but the prompt shows none, even for one like an iPhone's own in size,
+  coding and header. 0.18.0's sender got a 240-pixel JPEG onto the prompt
+  (iOS of October 2026); the Linux sender (Pillow) is no better today.
+  Perhaps the prompt shows previews only from a sender with an Apple ID
+  record.
 
 ## Where it is
 
@@ -113,23 +121,37 @@ Windows.
    with the iPhone within a second and kept it as a peer; data frames went
    both ways. Broadcast frames must not ask for an ACK (the chip retries
    them to its limit otherwise).
-5. **Network, on Linux first**: `howldrop-agent --usb-radio FW` runs the
-   receiver on the stick, `awdl0` the TAP owly-radio makes (`Native::start_air`).
-   The iPhone found "HowlDrop Native", asked and sent a 1.1 MB photo in
-   1.1 s. With Block Ack in hardware (the peer in the WCID table, its
-   TID's bit set as the node accepts the session) its 14.7 MB video took
-   3.8 s, against 3.2 s on the kernel's driver.
-6. **Network, on Windows**: `howldrop-native` (the stick on WinUSB, a Wintun
-   adapter as the link, run as administrator). The radio is up in 0.7 s; the
-   iPhone sent a 2 MB photo in 0.6 s and the 14.7 MB video in 4.2 s.
+5. **Network**: on Linux first, `howldrop-agent --usb-radio FW` with `awdl0`
+   the TAP owly-radio makes (`Native::start_air`): the iPhone sent a 1.1 MB
+   photo in 1.1 s, and with Block Ack in hardware (the peer in the WCID
+   table, its TID's bit set as the node accepts the session) the 14.7 MB
+   video in 3.8 s, against 3.2 s on the kernel's driver. Then on Windows,
+   with a Wintun adapter as the link: the radio up in 0.7 s, a 2 MB photo in
+   0.6 s.
    - Windows gives the Wintun link a random link-local address of its own
      once the session starts, and sends from it; no MAC maps to it, so the
      link deletes every address but the AWDL one, and keeps doing so.
    - Nothing resets the stick on Windows (Linux resets it on probe), so a
      run after another finds the chip still receiving and its IN endpoints
      full; `start_mcu` first stops the MAC and drains them.
-   - The service name is kept beside the receiver's identity: a share sheet
-     left open across a restart still reaches it.
+6. **The agent on Windows**: `howldrop-agent.exe` builds for Windows (owly-radio
+   and BlueZ are Linux's only), and howldrop.exe runs it with "Without WSL"
+   ticked. On the user's PC, from the tray:
+   - receiving: Accept on the PC, a contact accepted without asking (its
+     Apple ID record and certificate checked in Rust, `pki.rs`: Apple's
+     records are BER, which the check reads as openssl did), progress, and
+     the 14.7 MB video in 3.8 s, delivered into the inbox (`--deliver`, as
+     deliver.py did); the service name kept beside the identity, so a share
+     sheet left open across a restart still reaches it;
+   - sending: Look for devices found the iPhone, and a photo went to it with
+     the tray's Bluetooth wake; Decline on the iPhone came back as declined;
+   - the preview (JPEG 2000, OpenJPEG) shows on the iPhone's banner, not its
+     prompt (open questions);
+   - howldrop.exe stops the agent by disconnecting its pipe, and the agent
+     gives the stick back (exit 0).
+
+   Not yet measured: the video to the iPhone (about 16 s on WSL). Not done:
+   fetching what a link points at (a link stays a `.url` shortcut).
 
 Not ported yet: the EEPROM's receive gain corrections and per-rate transmit
 power, 2.4 GHz transmit power, and the periodic recalibration. Startup in WSL
@@ -151,10 +173,8 @@ cargo run -p mt7612u --example awdl -- FW 60
 
 `listen` and `awdl` want an iPhone nearby with its share sheet open.
 
-On Windows, with the stick on WinUSB (Zadig) and WireGuard's `wintun.dll`
-beside the program, as administrator:
-
-```
-cargo build --release -p howldrop-native
-howldrop-native FW STAGING_DIR "HowlDrop Native" 600
-```
+On Windows, with the stick on WinUSB (Zadig): put `howldrop-agent.exe`
+(`cargo build --release -p howldrop-agent`), WireGuard's `wintun.dll` and a
+`firmware` folder with the two files beside howldrop.exe, tick "Without WSL"
+under "AirDrop on this PC" in its menu, then turn AirDrop on this PC on and
+let Windows run the agent as administrator.

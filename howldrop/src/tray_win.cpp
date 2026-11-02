@@ -60,6 +60,7 @@ const wchar_t* const kRunValue = L"HowlDrop";
 enum : UINT {
     kMenuOpenFolder = 100,
     kMenuRadio,
+    kMenuRadioNative,
     kMenuCleanup,
     kMenuReceiveEveryone,
     kMenuReceiveAsk,
@@ -86,6 +87,7 @@ struct Settings {
     bool share_clipboard = false;  // send what is copied here to other HowlDrop PCs
     bool send_to_menu = true;      // "iPhone (HowlDrop)" in Explorer's Send to
     bool radio = false;            // AirDrop on this PC: the USB stick, in WSL (wsl_win.hpp)
+    bool radio_native = false;     // ...or without WSL, howldrop-agent.exe on it (experimental)
     bool cleanup = true;           // delete files from the inbox after kKeepDays
     // Who may send to AirDrop on this PC (WslRadioConfig::receive): everyone,
     // ask (contacts at once, anyone else after Accept), contacts.
@@ -193,6 +195,7 @@ void load_settings(App& app) {
         else if (key == "share_clipboard") app.settings.share_clipboard = on;
         else if (key == "send_to_menu") app.settings.send_to_menu = on;
         else if (key == "radio") app.settings.radio = on;
+        else if (key == "radio_native") app.settings.radio_native = on;
         else if (key == "cleanup") app.settings.cleanup = on;
     }
 }
@@ -206,6 +209,7 @@ void save_settings(const App& app) {
         << "share_clipboard=" << app.settings.share_clipboard << '\n'
         << "send_to_menu=" << app.settings.send_to_menu << '\n'
         << "radio=" << app.settings.radio << '\n'
+        << "radio_native=" << app.settings.radio_native << '\n'
         << "cleanup=" << app.settings.cleanup << '\n'
         << "receive=" << app.settings.receive << '\n'
         << "senders=" << app.settings.senders << '\n';
@@ -402,6 +406,8 @@ void show_menu(App& app) {
     if (app.settings.radio && !app.radio_state.empty()) {
         AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, (L"      " + app.radio_state).c_str());
     }
+    AppendMenuW(menu, check(app.settings.radio_native), kMenuRadioNative,
+                L"      Without WSL (experimental, runs as administrator)");
     HMENU who = CreatePopupMenu();
     const std::string& receive = app.settings.receive;
     AppendMenuW(who, check(receive == "everyone"), kMenuReceiveEveryone, L"Everyone, without asking");
@@ -723,7 +729,8 @@ void start_radio(App& app) {
     config.name = app.name;
     config.receive = app.settings.receive;
     config.senders = app.settings.senders;
-    config.on_event = [](const std::vector<std::string>& event) {
+    config.native = app.settings.radio_native;
+    config.on_event =[](const std::vector<std::string>& event) {
         auto* copy = new std::vector<std::string>(event);
         if (!g_app || !g_app->window || !PostMessageW(g_app->window, kTransferMessage, 0, reinterpret_cast<LPARAM>(copy)))
             delete copy;
@@ -966,6 +973,12 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                     app->settings.radio = !app->settings.radio;
                     if (app->settings.radio) start_radio(*app);
                     else stop_radio(*app, false);
+                    break;
+                case kMenuRadioNative:
+                    // The WSL stick and this one are the same stick: it
+                    // starts again the other way.
+                    app->settings.radio_native = !app->settings.radio_native;
+                    restart_radio(*app);
                     break;
                 case kMenuCleanup:
                     app->settings.cleanup = !app->settings.cleanup;

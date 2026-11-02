@@ -1,8 +1,9 @@
-//! The link on Windows: a Wintun adapter, as awdl0 is on Linux (owly-radio's
-//! Native). Up with MTU 1450, no DAD or router discovery, and only the AWDL
-//! address's link-local address (NET-1): Windows' own one goes, since a
-//! packet from it has no MAC the node can send it from. Wintun carries IP
-//! packets, which owly-awdl takes as they are ([`Ipv6Packet::from_ip`]).
+//! The link on Windows: a Wintun adapter, as `awdl0` is on Linux. Up with
+//! MTU 1450, no DAD or router discovery, and only the AWDL address's
+//! link-local address (NET-1): Windows' own goes, since a packet from it has
+//! no MAC the node can send it from. Wintun carries IP packets, which
+//! owly-awdl takes as they are ([`Ipv6Packet::from_ip`]). Making the adapter
+//! and its session takes an administrator.
 
 use std::io;
 use std::net::{IpAddr, Ipv6Addr};
@@ -23,17 +24,16 @@ const MTU: u32 = 1450;
 /// Wintun's ring: 4 MiB each way.
 const RING: u32 = 0x40_0000;
 
-pub struct Link {
+pub struct Wintun {
     pub index: u32,
-    pub addr: Ipv6Addr,
     _adapter: Arc<Adapter>,
     session: Arc<Session>,
     rx: Option<mpsc::Receiver<Vec<u8>>>,
 }
 
-impl Link {
+impl Wintun {
     /// Wintun's adapter with `wintun.dll` from `dll`, set up for `mac`.
-    pub fn create(dll: &Path, mac: MacAddr) -> Result<Link, String> {
+    pub fn create(dll: &Path, mac: MacAddr) -> Result<Wintun, String> {
         // SAFETY: wintun.dll is WireGuard's, loaded once for the process.
         #[allow(unsafe_code)]
         let wintun = unsafe { wintun::load_from_path(dll) }
@@ -82,9 +82,8 @@ impl Link {
                 }
             })
             .map_err(|e| e.to_string())?;
-        Ok(Link {
+        Ok(Wintun {
             index,
-            addr,
             _adapter: adapter,
             session,
             rx: Some(rx),
@@ -165,8 +164,12 @@ fn prune(adapter: &Adapter, index: u32, keep: Ipv6Addr) {
 }
 
 fn netsh(args: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    /// No console window flashing up from a program without one.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let out = Command::new("netsh")
         .args(args.split(' '))
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("netsh: {e}"))?;
     if out.status.success() {
@@ -176,5 +179,36 @@ fn netsh(args: &str) -> Result<(), String> {
             "netsh {args}: {}",
             String::from_utf8_lossy(&out.stdout).trim()
         ))
+    }
+}
+
+/// Timers to the millisecond for this process. Windows wakes them on its
+/// 15.6 ms tick otherwise, most of an AWDL slot (16 TU) late, and the node's
+/// frames, the peer's TCP ACKs among them, with them. Windows 11 also lets
+/// a program without a window in sight fall back to the coarse tick unless
+/// it asks not to.
+#[allow(unsafe_code)]
+pub fn fine_timers() {
+    use windows_sys::Win32::Media::timeBeginPeriod;
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION, PROCESS_POWER_THROTTLING_STATE,
+        ProcessPowerThrottling, SetProcessInformation,
+    };
+    let state = PROCESS_POWER_THROTTLING_STATE {
+        Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        ControlMask: PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION,
+        StateMask: 0,
+    };
+    // SAFETY: plain Win32 calls on this process; `state` outlives the call
+    // and its size is given. The period lasts until the process ends.
+    unsafe {
+        SetProcessInformation(
+            GetCurrentProcess(),
+            ProcessPowerThrottling,
+            (&raw const state).cast(),
+            size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        );
+        timeBeginPeriod(1);
     }
 }

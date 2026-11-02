@@ -1,28 +1,43 @@
-//! howldrop-agent: HowlDrop's Linux side in one process, on Owly's crates.
-//! The Home Assistant add-on (run.sh) and the Windows app's WSL part
-//! (wsl-run.sh) both run it:
+//! howldrop-agent: HowlDrop's radio, receiver and sender in one process, on
+//! Owly's crates. The Home Assistant add-on (run.sh) and the Windows app's
+//! WSL part (wsl-run.sh) run it on Linux; howldrop.exe runs it on Windows
+//! itself, on a USB stick driven from user space (docs/native-windows.md):
 //!
 //! - the radio ([`radio`]): owly-radio's injection backend on the best Wi-Fi
-//!   card here, in the mode its driver needs, given back on the way out;
-//! - receiving ([`receive`]): owly-airdrop's receiver on `awdl0`, with who
+//!   card here, in the mode its driver needs, given back on the way out; or
+//!   an MT7612U stick from user space ([`usb`]), the only radio on Windows;
+//! - receiving ([`receive`]): owly-airdrop's receiver on the link, with who
 //!   may send (everyone, ask the PC, contacts only), into a staging folder
-//!   deliver.py takes from;
+//!   deliver.py takes from, or with `--deliver` straight into the PC's inbox
+//!   ([`deliver`]);
 //! - sending ([`send`]): what's put in the outbox folder, AirDropped to the
 //!   iPhone nearby, and the nearby devices when asked.
 //!
 //! It prints log lines, and with `--events` the `@howldrop` events
 //! howldrop.exe reads (`up STATION` on the share sheet, `stopped WHY` when
 //! it ends on an error, and [`receive`]'s and [`send`]'s). SIGTERM or SIGINT
-//! takes the radio down.
+//! takes the radio down, as on Windows do Ctrl+C, the console closing and,
+//! with `--until-stdin-closes`, howldrop.exe closing its input.
 
+#[cfg(target_os = "linux")]
 mod bluez;
 mod contacts;
+mod deliver;
 mod events;
+mod link;
+#[cfg(windows)]
+mod pipe;
+mod pki;
+#[cfg(windows)]
+mod preview;
 mod radio;
 mod receive;
 mod send;
 mod usb;
+#[cfg(windows)]
+mod wintun;
 
+use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -30,11 +45,17 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use owly_airdrop::driver::tls::Identity;
-use owly_radio::radio::LinkState;
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::watch;
 
 use crate::events::{emit, say};
+use crate::link::LinkState;
 use crate::receive::Policy;
+
+/// The radio's recovery journal (owly-radio's); none on Windows.
+#[cfg(target_os = "linux")]
+const RUN_DIR: &str = owly_radio::rundir::RUN_DIR;
+#[cfg(not(target_os = "linux"))]
+const RUN_DIR: &str = "";
 
 #[derive(Parser)]
 #[command(name = "howldrop-agent", version, about)]
@@ -48,6 +69,10 @@ struct Args {
     /// Where received files go, for deliver.py.
     #[arg(long)]
     staging: PathBuf,
+    /// Move each finished item from staging into this folder, as deliver.py
+    /// would, and say so (`received`).
+    #[arg(long)]
+    deliver: Option<PathBuf>,
     /// Where the receiver's TLS identity is kept.
     #[arg(long, default_value = "/data/owly")]
     identity: PathBuf,
@@ -114,13 +139,22 @@ struct Args {
     /// Send to a phone as A-MSDUs, several packets a frame.
     #[arg(long)]
     tx_amsdu: bool,
-    /// Experimental: drive an MT7612U from user space instead of with the
-    /// kernel's driver, its firmware (mt7662_rom_patch.bin, mt7662.bin) from
-    /// this folder (docs/native-windows.md).
+    /// Drive an MT7612U from user space instead of with the kernel's driver,
+    /// its firmware (mt7662_rom_patch.bin, mt7662.bin) from this folder
+    /// (docs/native-windows.md). Experimental on Linux; on Windows the
+    /// radio, with `firmware` beside this program by default.
     #[arg(long)]
     usb_radio: Option<PathBuf>,
+    /// Stop when standard input ends.
+    #[arg(long)]
+    until_stdin_closes: bool,
+    /// Windows: print to this named pipe, and stop when it goes; how
+    /// howldrop.exe runs the agent as administrator ([`pipe`]).
+    #[arg(long)]
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pipe: Option<String>,
     /// The radio's recovery journal.
-    #[arg(long, default_value = owly_radio::rundir::RUN_DIR)]
+    #[arg(long, default_value = RUN_DIR)]
     run_dir: String,
     #[arg(long)]
     verbose: bool,
@@ -133,6 +167,13 @@ const STEADY: Duration = Duration::from_secs(600);
 
 fn main() -> ExitCode {
     let args = Args::parse();
+    #[cfg(windows)]
+    if let Some(name) = &args.pipe
+        && let Err(e) = pipe::attach(name)
+    {
+        eprintln!("the pipe {name}: {e}");
+        return ExitCode::from(1);
+    }
     let filter = if args.verbose {
         "info,owly_radio=debug,owly_awdl=debug"
     } else {
@@ -149,6 +190,8 @@ fn main() -> ExitCode {
         .init();
     // rustls needs its crypto provider chosen.
     let _ = rustls::crypto::ring::default_provider().install_default();
+    #[cfg(windows)]
+    wintun::fine_timers();
     if args.events {
         events::enable();
     }
@@ -180,7 +223,7 @@ async fn run(args: Args) -> Result<(), String> {
         tx_rate: args.tx_rate.clone().filter(|r| !r.is_empty()),
         tx_amsdu: args.tx_amsdu,
         run_dir: args.run_dir.clone(),
-        usb_firmware: args.usb_radio.clone(),
+        usb_firmware: args.usb_radio.clone().or_else(beside_us),
     };
     let (contacts, notes) = contacts::Contacts::new(&contacts::entries(&args.senders))
         .map_err(|e| format!("contacts: {e}"))?;
@@ -220,16 +263,16 @@ async fn run(args: Args) -> Result<(), String> {
     }
     radio.recover().await;
     let station = radio.station();
+    let service_id = receive::service_id(&args.identity)
+        .map_err(|e| format!("the receiver's name in {}: {e}", args.identity.display()))?;
 
-    let mut term = signal(SignalKind::terminate()).map_err(|e| e.to_string())?;
-    let mut int = signal(SignalKind::interrupt()).map_err(|e| e.to_string())?;
+    let mut stop = stop_signals(args.until_stdin_closes).map_err(|e| e.to_string())?;
     let mut restarts = 0;
     let result = loop {
         say(format!("Starting the AirDrop window on {station}."));
         let up = tokio::select! {
             up = radio.up() => up,
-            _ = term.recv() => break Ok(()),
-            _ = int.recv() => break Ok(()),
+            _ = stop.wait_for(|s| *s) => break Ok(()),
         };
         let mut link = match up {
             Ok(link) => link,
@@ -247,10 +290,12 @@ async fn run(args: Args) -> Result<(), String> {
                 model: args.model.clone(),
                 staging: args.staging.clone(),
                 identity: identity.clone(),
+                service_id: service_id.clone(),
                 policy,
                 ask_dir: args.ask_dir.clone(),
                 ask_timeout: Duration::from_secs(args.ask_timeout),
                 contacts: contacts.clone(),
+                deliver: args.deliver.clone(),
                 verbose: args.verbose,
             },
         )
@@ -272,6 +317,7 @@ async fn run(args: Args) -> Result<(), String> {
                     outbox,
                     discard: args.discard,
                     name: args.name.clone(),
+                    model: args.model.clone(),
                     to: args.to.clone().filter(|t| !t.trim().is_empty()),
                     window: Duration::from_secs(args.window),
                     status: args.send_status.clone(),
@@ -290,8 +336,7 @@ async fn run(args: Args) -> Result<(), String> {
 
         let lost = loop {
             tokio::select! {
-                _ = term.recv() => break None,
-                _ = int.recv() => break None,
+                _ = stop.wait_for(|s| *s) => break None,
                 changed = link.state.changed() => {
                     if changed.is_err() {
                         break Some("the radio stopped".to_string());
@@ -324,4 +369,69 @@ async fn run(args: Args) -> Result<(), String> {
         say(format!("{station} is given back."));
     }
     result
+}
+
+/// Turns true when the agent is to stop: SIGTERM or SIGINT; on Windows
+/// Ctrl+C, Ctrl+Break, the console closing or howldrop.exe's pipe going;
+/// and with `stdin` the end of standard input.
+fn stop_signals(stdin: bool) -> io::Result<watch::Receiver<bool>> {
+    let (tx, rx) = watch::channel(false);
+    let tx = Arc::new(tx);
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut term = signal(SignalKind::terminate())?;
+        let mut int = signal(SignalKind::interrupt())?;
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = term.recv() => {}
+                _ = int.recv() => {}
+            }
+            tx.send_replace(true);
+        });
+    }
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close};
+        let (mut c, mut b, mut close) = (ctrl_c()?, ctrl_break()?, ctrl_close()?);
+        {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = c.recv() => {}
+                    _ = b.recv() => {}
+                    _ = close.recv() => {}
+                }
+                tx.send_replace(true);
+            });
+        }
+        if let Some(file) = pipe::attached() {
+            let tx = tx.clone();
+            pipe::watch(file, move || {
+                tx.send_replace(true);
+            })?;
+        }
+    }
+    if stdin {
+        std::thread::Builder::new()
+            .name("stdin".into())
+            .spawn(move || {
+                use std::io::Read;
+                let mut buf = [0u8; 256];
+                while matches!(io::stdin().read(&mut buf), Ok(n) if n > 0) {}
+                tx.send_replace(true);
+            })?;
+    }
+    Ok(rx)
+}
+
+/// `firmware` beside this program, where the Windows build ships it.
+fn beside_us() -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.join("firmware")))
 }

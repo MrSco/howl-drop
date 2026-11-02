@@ -119,10 +119,12 @@ std::vector<std::wstring> stack_args(const wsl::UsbDevice& stick, std::vector<st
 }  // namespace
 
 // A child process with its output (stdout and stderr) on a pipe, or in a
-// file, or in a console window of its own.
+// file, or in a console window of its own; or, run as administrator, on a
+// named pipe it connects to (start_elevated).
 struct ChildProcess {
     PROCESS_INFORMATION pi{};
     HANDLE out = nullptr;
+    HANDLE event = nullptr;  // for overlapped reads of a named pipe
     std::string pending;
 
     ChildProcess() = default;
@@ -130,8 +132,72 @@ struct ChildProcess {
     ChildProcess& operator=(const ChildProcess&) = delete;
     ~ChildProcess() {
         if (out) CloseHandle(out);
+        if (event) CloseHandle(event);
         if (pi.hThread) CloseHandle(pi.hThread);
         if (pi.hProcess) CloseHandle(pi.hProcess);
+    }
+
+    // exe as administrator (Windows asks the user), with "--pipe NAME"
+    // after args: a named pipe of ours it connects to and prints to, since
+    // Windows starts it without our handles. Disconnecting the pipe tells it
+    // to stop (disconnect). False, with why, when the user said no or it
+    // ended before connecting.
+    bool start_elevated(const fs::path& exe, const std::vector<std::wstring>& args, std::string& error) {
+        const std::wstring name = L"\\\\.\\pipe\\howldrop-agent-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+                                  std::to_wstring(GetTickCount64());
+        out = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                               PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 65536,
+                               65536, 0, nullptr);
+        event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (out == INVALID_HANDLE_VALUE || !event) {
+            out = nullptr;
+            error = "could not make a pipe";
+            return false;
+        }
+        std::wstring params;
+        for (const auto& a : args) params += quote(a) + L" ";
+        params += L"--pipe " + quote(name);
+        SHELLEXECUTEINFOW info{};
+        info.cbSize = sizeof(info);
+        info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+        info.lpVerb = L"runas";
+        const std::wstring file = exe.wstring();
+        info.lpFile = file.c_str();
+        info.lpParameters = params.c_str();
+        info.nShow = SW_HIDE;
+        if (!ShellExecuteExW(&info) || !info.hProcess) {
+            const DWORD code = GetLastError();
+            error = code == ERROR_CANCELLED ? "Windows' permission to run it as administrator wasn't given"
+                                            : "could not run " + path_to_utf8(exe.filename()) + " (error " +
+                                                  std::to_string(code) + ")";
+            return false;
+        }
+        pi.hProcess = info.hProcess;
+        OVERLAPPED ov{};
+        ov.hEvent = event;
+        if (!ConnectNamedPipe(out, &ov)) {
+            const DWORD code = GetLastError();
+            if (code == ERROR_IO_PENDING) {
+                const HANDLE both[] = {event, pi.hProcess};
+                if (WaitForMultipleObjects(2, both, FALSE, 60000) != WAIT_OBJECT_0) {
+                    CancelIoEx(out, &ov);
+                    DWORD n = 0;
+                    GetOverlappedResult(out, &ov, &n, TRUE);
+                    error = wait(0) ? "it ended as it started (exit " + std::to_string(exit_code()) + ")"
+                                    : "it didn't connect";
+                    return false;
+                }
+            } else if (code != ERROR_PIPE_CONNECTED) {
+                error = "the pipe (error " + std::to_string(code) + ")";
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Disconnects start_elevated's pipe: the child sees it go and stops.
+    void disconnect() {
+        if (out && event) DisconnectNamedPipe(out);
     }
 
     // log_file empty: output on the pipe (read_line). visible: a console of
@@ -199,7 +265,7 @@ struct ChildProcess {
             }
             char buf[4096];
             DWORD n = 0;
-            if (!out || !ReadFile(out, buf, sizeof(buf), &n, nullptr) || n == 0) {
+            if (!out || !read_some(buf, sizeof(buf), n) || n == 0) {
                 if (pending.empty()) return false;
                 line.swap(pending);
                 pending.clear();
@@ -207,6 +273,17 @@ struct ChildProcess {
             }
             pending.append(buf, n);
         }
+    }
+
+    // One read of the output; overlapped on start_elevated's pipe, so that
+    // disconnect() can end it from another thread.
+    bool read_some(char* buf, DWORD size, DWORD& n) {
+        if (!event) return ReadFile(out, buf, size, &n, nullptr);
+        OVERLAPPED ov{};
+        ov.hEvent = event;
+        ResetEvent(event);
+        if (!ReadFile(out, buf, size, nullptr, &ov) && GetLastError() != ERROR_IO_PENDING) return false;
+        return GetOverlappedResult(out, &ov, &n, TRUE);
     }
 
     // Everything it prints until it ends, or false after timeout_ms.
@@ -367,10 +444,16 @@ void WslRadio::stop() {
         stack = stack_;
     }
     if (stack && !stack->wait(0)) {
-        // run.sh's own stop: OWL goes, the card goes back to managed mode.
-        std::string out;
-        run_command(wsl_exe(), in_distro({L"/wsl-run.sh", L"--stop"}), out, 40000);
-        if (!stack->wait(10000)) stack->kill();
+        if (config_.native) {
+            // The agent sees its pipe go, and gives the stick back.
+            stack->disconnect();
+            if (!stack->wait(20000)) stack->kill();
+        } else {
+            // run.sh's own stop: OWL goes, the card goes back to managed mode.
+            std::string out;
+            run_command(wsl_exe(), in_distro({L"/wsl-run.sh", L"--stop"}), out, 40000);
+            if (!stack->wait(10000)) stack->kill();
+        }
     }
     if (thread_.joinable()) thread_.join();
     {
@@ -408,7 +491,8 @@ void WslRadio::run() {
     }
     std::string error;
     wsl::UsbDevice stick;
-    if (!prepare(error) || !find_stick(stick, error)) {
+    const bool native = config_.native;
+    if (native ? !prepare_native(error) : (!prepare(error) || !find_stick(stick, error))) {
         state(stopping() ? "Off" : error, stopping() ? RadioLevel::Off : RadioLevel::Problem);
         return;
     }
@@ -417,12 +501,14 @@ void WslRadio::run() {
     // the stick found again, since a wake can bring it back at another bus ID.
     bool was_up = false;
     for (int failed = 0;;) {
-        std::string why = run_stack(stick);
-        give_back(stick.busid);
+        std::string why = native ? run_agent() : run_stack(stick);
+        if (!native) give_back(stick.busid);
         const bool came_up = up_.exchange(false);
         if (config_.on_up) config_.on_up(false);
-        std::string out;
-        run_command(wsl_exe(), {L"--terminate", wide(wsl::kDistro)}, out, 30000);
+        if (!native) {
+            std::string out;
+            run_command(wsl_exe(), {L"--terminate", wide(wsl::kDistro)}, out, 30000);
+        }
         if (stopping()) break;
         was_up = was_up || came_up;
         failed = came_up ? 0 : failed + 1;
@@ -435,7 +521,7 @@ void WslRadio::run() {
             log("starting again in " + std::to_string(delay / 1000) + " s: " + why);
             state("Starting again: " + why);
             pause(delay);
-            if (stopping() || find_stick(stick, why)) break;
+            if (stopping() || native || find_stick(stick, why)) break;
             stick_failed_ = true;  // find_stick's why says it all
             ++failed;
         }
@@ -696,6 +782,60 @@ std::string WslRadio::run_stack(const wsl::UsbDevice& stick) {
     // 0x40010004: Windows ended wsl.exe, as when WSL shuts its VM down.
     if (code == 0x40010004) return "WSL shut down";
     return "the Linux part ended (exit " + std::to_string(code) + ")";
+}
+
+bool WslRadio::prepare_native(std::string& error) {
+    std::error_code ec;
+    fs::create_directories(config_.home, ec);
+    fs::create_directories(outbox_, ec);
+    fs::create_directories(config_.inbox, ec);
+    wchar_t self[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
+    agent_ = (n > 0 && n < MAX_PATH ? fs::path(self).parent_path() : fs::path()) / L"howldrop-agent.exe";
+    if (!fs::exists(agent_, ec)) {
+        error = "AirDrop without WSL needs howldrop-agent.exe beside howldrop.exe (not in this build).";
+        return false;
+    }
+    return true;
+}
+
+std::string WslRadio::run_agent() {
+    stop_reason_.clear();
+    stick_failed_ = false;
+    std::error_code ec;
+    fs::remove(scan_request_, ec);
+    fs::create_directories(asks_, ec);
+    if (stopping()) return {};
+    state("Starting (Windows asks to let it run as administrator)");
+    const fs::path data = config_.home / L"native";
+    auto agent = std::make_shared<ChildProcess>();
+    std::string error;
+    if (!agent->start_elevated(agent_,
+                               {L"--name", wide(config_.name), L"--staging", (data / L"staging").wstring(),
+                                L"--deliver", config_.inbox.wstring(), L"--identity", (data / L"identity").wstring(),
+                                L"--receive", wide(config_.receive), L"--senders", wide(config_.senders), L"--ask-dir",
+                                asks_.wstring(), L"--outbox", outbox_.wstring(), L"--discard", L"--scan-request",
+                                scan_request_.wstring(), L"--events"},
+                               error)) {
+        log("howldrop-agent: " + error);
+        return error;
+    }
+    {
+        std::lock_guard<std::mutex> hold(process_mu_);
+        stack_ = agent;
+    }
+    if (stopping()) agent->disconnect();  // stop() came while it started
+    std::string line;
+    while (agent->read_line(line)) handle_line(line, {});
+    agent->wait(30000);
+    const auto code = agent->exit_code();
+    log("howldrop-agent ended (exit " + std::to_string(code) + ")");
+    {
+        std::lock_guard<std::mutex> hold(process_mu_);
+        stack_.reset();
+    }
+    if (!stop_reason_.empty()) return stop_reason_;
+    return "howldrop-agent ended (exit " + std::to_string(code) + ")";
 }
 
 void WslRadio::handle_line(const std::string& line, const std::string& busid) {

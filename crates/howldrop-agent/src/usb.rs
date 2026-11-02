@@ -1,25 +1,30 @@
 //! The radio as a user-space driver: an MT7612U stick over USB
 //! (crates/mt7612u), its firmware loaded and channel 149 tuned by this
-//! process, with owly-awdl on it and `awdl0` made as owly-radio makes it.
-//! No kernel driver, monitor interface or nl80211: the way to running
-//! without WSL (docs/native-windows.md). Experimental: `--usb-radio`.
+//! process, with owly-awdl on it. No kernel driver, monitor interface or
+//! nl80211 (docs/native-windows.md). The link is `awdl0` made as owly-radio
+//! makes it on Linux (`--usb-radio`, experimental there), and a Wintun
+//! adapter on Windows ([`crate::wintun`]), where this is the only radio.
 
 use std::path::PathBuf;
 
 use mt7612u::Mt7612u;
 use mt7612u::awdl::Radio as UsbAir;
 use mt7612u::channel::{Channel, Width};
-use owly_awdl::{Presence, RadioConstraints, TxRate};
-use owly_radio::injection::AWDL_IFACE;
-use owly_radio::native::Native;
-use owly_radio::radio::{Announce, Link, LinkState, MacAddr};
+use owly_awdl::{MacAddr, Presence, RadioConstraints, TxRate};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::events::{emit, say};
+use crate::link::{Announce, Link, LinkState};
 
 /// AirDrop's channel the stick stays on (Presence::Fixed), at 40 MHz.
 const CHANNEL: u8 = 149;
+
+/// The node, and the link it runs between.
+#[cfg(target_os = "linux")]
+type Live = owly_radio::native::Native;
+#[cfg(windows)]
+type Live = (owly_awdl::driver::Running, crate::wintun::Wintun);
 
 pub struct UsbRadio {
     /// Holds mt7662_rom_patch.bin and mt7662.bin.
@@ -28,7 +33,7 @@ pub struct UsbRadio {
     /// Accept the phone's Block Ack sessions: the chip answers them
     /// (mt7612u's rx_block_ack). On unless --aggregation off.
     aggregation: bool,
-    live: Option<(Native, JoinHandle<()>)>,
+    live: Option<(Live, JoinHandle<()>)>,
 }
 
 impl UsbRadio {
@@ -68,9 +73,11 @@ impl UsbRadio {
     pub fn unusable(&self) -> Option<String> {
         match mt7612u::sticks() {
             Ok(s) if !s.is_empty() => None,
-            Ok(_) => {
-                Some("No MT7612U stick is connected (or this process may not open it).".into())
-            }
+            Ok(_) => Some(if cfg!(windows) {
+                "No MT7612U stick on WinUSB is connected.".into()
+            } else {
+                "No MT7612U stick is connected (or this process may not open it).".into()
+            }),
             Err(e) => Some(format!("Couldn't list USB devices: {e}")),
         }
     }
@@ -102,31 +109,20 @@ impl UsbRadio {
         .await
         .map_err(|e| e.to_string())??;
 
-        let name = std::fs::read_to_string("/proc/sys/kernel/hostname")
-            .map(|h| h.trim().to_string())
-            .ok()
-            .filter(|h| !h.is_empty())
-            .unwrap_or_else(|| "howldrop".into());
         let radio = RadioConstraints {
             channel: owly_awdl::Channel(CHANNEL),
             presence: Presence::Fixed,
         };
-        let mut cfg = owly_awdl::Config::new(mac, &name, radio);
+        let mut cfg = owly_awdl::Config::new(mac, &host_name(), radio);
         if let Some(rate) = self.tx_rate {
             cfg.rate = rate;
         }
         cfg.accept_addba = self.aggregation;
         let (peers_tx, peers) = watch::channel(Vec::new());
-        let native = tokio::task::spawn_blocking(move || {
-            Native::start_air(AWDL_IFACE, cfg, peers_tx, move || Ok(UsbAir::new(stick)))
-        })
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| format!("AWDL on the stick: {e}"))?;
+        let (live, name, index, mut failed) = start_node(stick, cfg, peers_tx).await?;
 
         // The link is lost when the node stops by itself.
         let (state_tx, state) = watch::channel(LinkState::Up);
-        let mut failed = native.failed();
         let supervisor = tokio::spawn(async move {
             while failed.changed().await.is_ok() {
                 if let Some(why) = failed.borrow_and_update().clone() {
@@ -136,22 +132,94 @@ impl UsbRadio {
             }
         });
         let link = Link {
-            name: AWDL_IFACE.into(),
-            index: native.index,
+            name,
+            index,
             mac,
             addr: mac.link_local(),
             announce: Some(Announce::FIXED),
             peers,
             state,
         };
-        self.live = Some((native, supervisor));
+        self.live = Some((live, supervisor));
         Ok(link)
     }
 
     pub async fn down(&mut self) {
-        if let Some((native, supervisor)) = self.live.take() {
+        if let Some((live, supervisor)) = self.live.take() {
             supervisor.abort();
-            let _ = tokio::task::spawn_blocking(move || native.stop()).await;
+            let _ = tokio::task::spawn_blocking(move || stop_node(live)).await;
         }
+    }
+}
+
+/// The node on the stick, with `awdl0` as owly-radio's Native makes it:
+/// the node, the link's name and index, and why the node stopped.
+#[cfg(target_os = "linux")]
+async fn start_node(
+    stick: Mt7612u,
+    cfg: owly_awdl::Config,
+    peers: watch::Sender<Vec<owly_awdl::PeerInfo>>,
+) -> Result<(Live, String, u32, watch::Receiver<Option<String>>), String> {
+    use owly_radio::injection::AWDL_IFACE;
+    use owly_radio::native::Native;
+    let native = tokio::task::spawn_blocking(move || {
+        Native::start_air(AWDL_IFACE, cfg, peers, move || Ok(UsbAir::new(stick)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| format!("AWDL on the stick: {e}"))?;
+    let (index, failed) = (native.index, native.failed());
+    Ok((native, AWDL_IFACE.into(), index, failed))
+}
+
+#[cfg(target_os = "linux")]
+fn stop_node(native: Live) {
+    native.stop();
+}
+
+/// The node on the stick, with a Wintun adapter as its link; wintun.dll
+/// beside this program.
+#[cfg(windows)]
+async fn start_node(
+    stick: Mt7612u,
+    cfg: owly_awdl::Config,
+    peers: watch::Sender<Vec<owly_awdl::PeerInfo>>,
+) -> Result<(Live, String, u32, watch::Receiver<Option<String>>), String> {
+    let dll = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.join("wintun.dll")))
+        .ok_or("where this program is")?;
+    let mac = cfg.addr;
+    let (link, running) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let mut link = crate::wintun::Wintun::create(&dll, mac)?;
+        let netif = link.netif().ok_or("the link's end is taken")?;
+        let running = owly_awdl::driver::spawn(cfg, move || Ok((UsbAir::new(stick), netif)), peers)
+            .map_err(|e| format!("AWDL on the stick: {e}"))?;
+        Ok((link, running))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let (index, failed) = (link.index, running.failed());
+    Ok(((running, link), "HowlDrop AWDL".into(), index, failed))
+}
+
+#[cfg(windows)]
+fn stop_node((running, link): Live) {
+    running.stop();
+    link.close();
+}
+
+/// The name the node gives itself in its AWDL frames.
+fn host_name() -> String {
+    let name = if cfg!(windows) {
+        std::env::var("COMPUTERNAME").unwrap_or_default()
+    } else {
+        std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default()
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        "howldrop".into()
+    } else {
+        name.to_string()
     }
 }

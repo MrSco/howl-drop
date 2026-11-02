@@ -12,6 +12,12 @@
 // inbox (the same folder, as /mnt/c/...), says what arrived in event lines
 // on its output (wsl_text.hpp), and AirDrops what the tray drops into an
 // outbox folder. Turning it off gives the stick back to Windows.
+//
+// Or, native (experimental, docs/native-windows.md), no WSL: the same
+// agent as howldrop-agent.exe beside howldrop.exe, driving an MT7612U on
+// WinUSB itself, with the same events and folders. It runs as administrator
+// (its Wintun adapter needs it), so Windows asks each time it starts, and
+// it prints to a named pipe of ours instead of an inherited one.
 
 #include "node.hpp"
 #include "wsl_text.hpp"
@@ -43,6 +49,7 @@ struct WslRadioConfig {
     // numbers and emails (wsl-run.sh --receive, --senders).
     std::string receive = "ask";
     std::string senders;
+    bool native = false;  // howldrop-agent.exe on the stick itself, not WSL
     // All called on the radio's own thread.
     std::function<void(const std::string& state, RadioLevel level)> on_state;  // a line for the menu
     std::function<void(bool up)> on_up;                      // on the share sheet, or not any more
@@ -84,6 +91,10 @@ private:
     bool find_stick(wsl::UsbDevice& stick, std::string& error);
     // Runs the stack until it ends; why it ended, or nothing when stopped.
     std::string run_stack(const wsl::UsbDevice& stick);
+    // Native: howldrop-agent.exe, and what it needs, beside us.
+    bool prepare_native(std::string& error);
+    // Native: runs the agent until it ends, as run_stack does the stack.
+    std::string run_agent();
     void handle_line(const std::string& line, const std::string& busid);
     void attach(const std::string& busid);
     void give_back(const std::string& busid);
@@ -101,6 +112,7 @@ private:
     std::filesystem::path outbox_;
     std::filesystem::path scan_request_;
     std::filesystem::path asks_;  // the answers to asks, one file each
+    std::filesystem::path agent_;  // native: howldrop-agent.exe
     std::filesystem::path usbipd_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
