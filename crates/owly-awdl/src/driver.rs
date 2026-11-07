@@ -12,7 +12,8 @@
 //! tokio runtime, so nothing else in the process delays its timers. It logs
 //! how late they fire.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::format;
 use std::future::Future;
 use std::io;
 use std::string::{String, ToString};
@@ -21,6 +22,7 @@ use std::vec::Vec;
 
 use tokio::sync::watch;
 
+use crate::channel::SLOTS;
 use crate::frame::Frame;
 use crate::{Action, Config, Input, Ipv6Packet, MacAddr, Node, PeerInfo, Time, UNICAST_QUEUE};
 
@@ -36,6 +38,28 @@ const RETRY_US: u64 = 100_000;
 /// How soon to try again once the radio's queue was full.
 const RETRY_PAUSE: Duration = Duration::from_micros(500);
 const STATS_EVERY: Duration = Duration::from_secs(10);
+
+/// A peer's slots, then how many each channel has, most first:
+/// "149 149 0 6 ... (149 x8, 6 x4, off x4)".
+fn schedule_text(slots: &[u8; SLOTS]) -> String {
+    let mut counts: Vec<(u8, usize)> = Vec::new();
+    for &c in slots {
+        match counts.iter_mut().find(|(ch, _)| *ch == c) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((c, 1)),
+        }
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let each: Vec<String> = slots.iter().map(|c| c.to_string()).collect();
+    let totals: Vec<String> = counts
+        .iter()
+        .map(|&(c, n)| match c {
+            0 => format!("off x{n}"),
+            c => format!("{c} x{n}"),
+        })
+        .collect();
+    format!("{} ({})", each.join(" "), totals.join(", "))
+}
 
 /// A frame heard on the air.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +164,7 @@ where
                 multicast: VecDeque::new(),
                 full: false,
                 overlap: None,
+                schedules: HashMap::new(),
                 tx: TxStats::default(),
                 timer: Time(1),
                 lateness: Lateness::default(),
@@ -216,6 +241,8 @@ struct Driver<A, N> {
     full: bool,
     /// The no-overlap last logged.
     overlap: Option<(MacAddr, u8)>,
+    /// Each peer's channel per slot and network channel, as last logged.
+    schedules: HashMap<MacAddr, ([u8; SLOTS], Option<u8>)>,
     tx: TxStats,
     timer: Time,
     lateness: Lateness,
@@ -250,6 +277,35 @@ impl<A: Air, N: Netif> Driver<A, N> {
             }
         }
         self.log_overlap();
+        self.log_schedules();
+    }
+
+    /// Says where each peer spends its slots, whenever that changes: a
+    /// radio that stays on one channel reaches a peer only in the slots it
+    /// gives that channel, and a peer on a network elsewhere gives it few.
+    fn log_schedules(&mut self) {
+        let ours = self.node.config().radio.channel.0;
+        for p in self.node.peers() {
+            let Some(seq) = p.sequence.filter(|_| p.valid) else {
+                continue;
+            };
+            let now = (seq.channels(), p.infra_channel);
+            if self.schedules.get(&p.mac) == Some(&now) {
+                continue;
+            }
+            // AWDL addresses change now and then: keep the table small.
+            if self.schedules.len() >= 64 {
+                self.schedules.clear();
+            }
+            self.schedules.insert(p.mac, now);
+            tracing::info!(
+                "schedule {}: {}; network {}; ch {ours} in {} of {SLOTS} slots",
+                p.mac,
+                schedule_text(&now.0),
+                now.1.map_or("none".to_string(), |c| format!("on ch {c}")),
+                seq.count(ours),
+            );
+        }
     }
 
     /// Says when a shared radio's channel stops or starts overlapping the
@@ -470,5 +526,16 @@ mod tests {
         let epoch = Instant::now();
         let at = epoch + Duration::from_micros(t.0 - 1);
         assert_eq!(at.duration_since(epoch), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn schedules_read_as_slots_then_totals() {
+        let mut slots = [149u8; SLOTS];
+        slots[4..10].fill(36);
+        slots[12..14].fill(0);
+        assert_eq!(
+            schedule_text(&slots),
+            "149 149 149 149 36 36 36 36 36 36 149 149 0 0 149 149 (149 x8, 36 x6, off x2)"
+        );
     }
 }

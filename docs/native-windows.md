@@ -26,15 +26,15 @@ device, on top of the kernel's driver. On Windows we have our own:
 |---|---|---|
 | AirDrop, AWDL | `owly-airdrop`, `owly-awdl` | the same |
 | `Air` | `owly-radio` + the kernel's `mt76x2u` | a user-space MT7612U driver over USB (`nusb`, WinUSB) |
-| `Netif` | TAP | Wintun |
+| `Netif` | TAP | the agent's own TCP/IP stack (smoltcp) |
 | BLE wake | BlueZ | the tray, Windows Bluetooth |
 | Contacts check | Rust (`pki.rs`) | the same |
 | Previews (FileIcon) | Python + Pillow | Rust (`image`, OpenJPEG) |
 | Delivery | `deliver.py` | the agent (`--deliver`) |
 
 The tray reads the agent's `@howldrop` events, as it read them from WSL, so
-the Windows app changed little: it starts `howldrop-agent.exe` through its
-scheduled task instead of `wsl.exe ... /wsl-run.sh`.
+the Windows app changed little: it starts `howldrop-agent.exe` itself, as
+the user, instead of `wsl.exe ... /wsl-run.sh`.
 
 ## The driver
 
@@ -81,14 +81,16 @@ Windows.
    14.7 MB video from the iPhone in about 3 s, to it in about 16 s), Accept and
    Decline, contacts, Look for devices.
 7. **Install**: the stick on WinUSB and Wintun set up without the user
-   needing to know what either is (open questions below). Then WSL goes, and
-   with it the sticks without a Windows driver of ours (the RTL8852BU).
+   needing to know what either is. Then WSL goes, and with it the sticks
+   without a Windows driver of ours (the RTL8852BU).
+8. **No administrator**: the link inside the agent instead of a Wintun
+   adapter, so it runs as the user with nothing installed; Windows asks once,
+   only to put a stick on WinUSB.
 
 ## Open questions
 
-- **Taking it off a PC**: nothing removes the task, Program Files\HowlDrop
-  or the Wintun adapter yet (`schtasks /delete /tn \HowlDrop\AirDrop`, and
-  the folder, by hand).
+- **Taking it off a PC**: nothing gives the stick its old driver back;
+  Device Manager's Update driver, picking the one it had, does, by hand.
 - **Timing**: AWDL's availability windows are 16 TU; the node runs its timers
   in software (`timer late avg` about 1.1 ms on Linux). Windows wakes them on
   its 15.6 ms tick (6.5 ms late on average, 16 ms at worst) unless the
@@ -176,7 +178,30 @@ Windows.
 
    Tested on the user's PC from a stick on `netr28ux`: one prompt, then the
    stick on WinUSB and the agent on the share sheet; off and on without a
-   prompt. Not yet tried: a release's download of the native part.
+   prompt. Released as 0.20.0, which Microsoft Defender's behaviour
+   monitoring took for persistence (`Behavior:Win32/Persistence.A!ml`: an
+   elevated scheduled task, from a program that downloads executables).
+8. **No administrator**: the link moved into the agent (`netstack.rs`), so
+   nothing is installed and nothing runs elevated:
+   - a TCP/IP stack of its own (smoltcp, through tokio-smoltcp) on the
+     node's IPv6 packets, with 1 MB TCP buffers; the receiver listens on it
+     and the sender connects through it (owly-airdrop's `Listen` and
+     `Connect`, a fork patch);
+   - mDNS, UDP to and from port 5353, taken off the node's packets before
+     the stack sees them and written as packets of its own (`Datagrams`);
+   - a connection closes as Windows' do: shutdown sends the FIN without
+     waiting for the peer's (an iPhone closes seconds later, after the
+     sender's 3 s knock is over), and a dropped one finishes closing in the
+     background;
+   - howldrop.exe starts the agent as the user, on a named pipe of its own,
+     with the agent and firmware in `%LOCALAPPDATA%\HowlDrop\native\bin`. Only a
+     stick not yet on WinUSB needs the administrator: the agent says
+     `stick needs-winusb`, and howldrop.exe runs `--setup` elevated, which
+     puts it on WinUSB and cycles its port, as above.
+
+   On the user's PC: on the share sheet with no prompt; the 14.7 MB video
+   from the iPhone in 5.1 s (3.8 s on Wintun); Accept on the PC; Look for
+   devices found the iPhone, and a photo went to it.
 
 Not ported yet: the EEPROM's receive gain corrections and per-rate transmit
 power, 2.4 GHz transmit power, and the periodic recalibration. Startup in WSL
@@ -198,10 +223,9 @@ cargo run -p mt7612u --example awdl -- FW 60
 
 `listen` and `awdl` want an iPhone nearby with its share sheet open.
 
-On Windows, from a local build: put `howldrop-agent.exe` and
-`howldrop-agentw.exe` (`cargo build --release -p howldrop-agent`),
-WireGuard's `wintun.dll` and a `firmware` folder with the two files beside
-howldrop.exe, then turn AirDrop on this PC on and let Windows run the
-setup.
+On Windows, from a local build: put `howldrop-agent.exe` (`cargo build
+--release -p howldrop-agent`) and a `firmware` folder with the two files
+beside howldrop.exe, then turn AirDrop on this PC on; for a stick not yet on
+WinUSB, let Windows run the setup.
 `howldrop-agent --restart-stick`, as administrator, restarts the stick as
 unplugging it would.

@@ -54,7 +54,7 @@ if(WIN32)
     target_link_libraries(howldrop PRIVATE shell32 user32 advapi32 comdlg32 ole32 uuid winhttp runtimeobject
                           d2d1 dwrite dwmapi windowscodecs)
     # AirDrop on this PC downloads the agent this exe goes with:
-    # howldrop-agent.exe, its launcher, wintun.dll and the stick's firmware
+    # howldrop-agent.exe and the stick's firmware
     # (a release sets these; empty in a local build, which uses the agent
     # beside it; radio_win.cpp).
     set(HOWLDROP_NATIVE_URL "" CACHE STRING "https address of howldrop-native.zip")

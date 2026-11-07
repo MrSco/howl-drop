@@ -18,6 +18,7 @@ What [the spec](SPEC.md) states that hasn't been confirmed by a capture of Apple
 14. What `IDSSessionID` and `ReceiverPseudonym` in the `/Discover` response, and `SenderPseudonym` and `SenderPushToken` in `/Upload`, are for (§6.3, §6.5).
 15. Whether macOS receivers require the current `/Ask` form too (ASK-7).
 16. Whether Apple peers need the ICMPv6 echo of OWLY-2 to learn a node's neighbor entry, or something else Owly does already teaches them.
+17. What the last byte of Data Path State's infrastructure network field holds (§3.2): zero in the captures so far.
 
 ## Sources
 

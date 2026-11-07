@@ -74,8 +74,9 @@ it on private networks (UDP 47631, TCP 47632).
 
 Windows' own Wi-Fi drivers cannot do AirDrop's Wi-Fi (AWDL), so HowlDrop
 drives a USB Wi-Fi stick itself: `howldrop-agent.exe` runs the stick from
-user space, AWDL and AirDrop on top of it, with a virtual network adapter
-(WireGuard's Wintun) as the link (`docs/native-windows.md`). You need:
+user space, AWDL and AirDrop on top of it, with a network stack of its own
+as the link (`docs/native-windows.md`). It runs as you, with nothing
+installed. You need:
 
 - Windows 11 (or 10, version 1803 or later).
 - A USB Wi-Fi stick with a MediaTek **MT7612U** (e.g. Alfa AWUS036ACM,
@@ -85,11 +86,10 @@ user space, AWDL and AirDrop on top of it, with a virtual network adapter
   doesn't.
 
 Turn on **AirDrop on this PC** in the menu. The first time, HowlDrop
-downloads its agent (about 8 MB, from its release, checked against the SHA-256
-built into the exe), and Windows asks once to let it set itself up: it goes
-into `Program Files\HowlDrop`, a scheduled task runs it with your full rights
-from then on (its virtual adapter needs them) without asking again, and the
-stick goes on Windows' own WinUSB driver so the agent can drive it. The dot
+downloads its agent (about 3.5 MB, from its release, checked against the SHA-256
+built into the exe). If the stick isn't on Windows' own WinUSB driver yet,
+Windows asks once to let HowlDrop put it there, so the agent can drive it;
+after that it starts without asking. The dot
 on the icon says how it is going: amber while it starts, green when the PC is
 on the share sheet (by its name), red when it needs you (no stick, say), and
 none while it is off. Turning it off, or quitting, gives the stick back. If
@@ -110,6 +110,13 @@ answer in a minute is Decline. Changing it restarts the radio. Sending to the iP
 HowlDrop wakes the phone with a Bluetooth advert while it sends or looks for
 devices, and your Bluetooth devices stay connected. The radio's log is
 `%LOCALAPPDATA%\HowlDrop\radio.log`.
+
+**Slow?** With the MT7612U a photo takes about a second and a 15 MB video
+about five. Much slower is most often the iPhone busy on its own Wi-Fi (an
+iCloud Photos upload, a VPN with an exit node): it then spends less time on
+AirDrop's channel. On the iPhone, open Control Center and tap the Wi-Fi icon
+once; AirDrop keeps working. `radio.log`'s `schedule` lines say how many of
+its 16 time slots each nearby Apple device gives HowlDrop's channel.
 
 ## Sending to your iPhone
 
@@ -182,12 +189,11 @@ To release it: set `kVersion` in `src/config.hpp` and the agent's version in
 `crates/howldrop-agent/Cargo.toml` to the same one, push it, then push a tag
 `windows-vVERSION` (e.g. `windows-v0.20.0`).
 `.github/workflows/release-windows.yml` builds the agent and packs
-`howldrop-native.zip` (the agent, its launcher, `wintun.dll` and the stick's
-firmware, with their licences), builds and tests the exe with its address
-and SHA-256 built in, and publishes a GitHub release with both attached and
-`RELEASE.md` as its notes. A local build has no agent to download; it uses
-the one beside it (`howldrop-agent.exe`, `howldrop-agentw.exe`, `wintun.dll`
-and `firmware\`).
+`howldrop-native.zip` (the agent and the stick's firmware, with its
+licence), builds and tests the exe with its address and SHA-256 built in,
+and publishes a GitHub release with both attached and `RELEASE.md` as its
+notes. A local build has no agent to download; it uses the one beside it
+(`howldrop-agent.exe` and `firmware\`).
 
 The pictures in `docs/screenshots` are drawn by the app itself, from made-up
 data (`src/screenshots_win.cpp`); after changing the window or the cards,

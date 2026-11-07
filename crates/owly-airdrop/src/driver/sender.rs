@@ -12,14 +12,15 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use flate2::Compression;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until, timeout};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
 use super::tls::{self, Identity};
+use super::transport::{BoxStream, Connect, Os};
 use crate::proto::archive::compress::{Compressor, Encoder};
 use crate::proto::archive::cpio::{self, Entry};
 use crate::proto::archive::extract::RelPath;
@@ -59,11 +60,20 @@ pub enum Event {
 pub struct Sender {
     config: Config,
     connector: TlsConnector,
+    transport: Arc<dyn Connect>,
 }
 
 impl Sender {
     pub fn new(config: Config) -> io::Result<Self> {
         Self::with_client_identity(config, None)
+    }
+
+    /// Fork: a sender whose connections `transport` opens, on a network
+    /// stack other than the host's (transport).
+    pub fn with_connector(config: Config, transport: impl Connect) -> io::Result<Self> {
+        let mut sender = Self::new(config)?;
+        sender.transport = Arc::new(transport);
+        Ok(sender)
     }
 
     /// A sender that presents a client certificate, as Apple senders do
@@ -73,14 +83,14 @@ impl Sender {
         Ok(Sender {
             config,
             connector: TlsConnector::from(tls::client_config(identity)?),
+            transport: Arc::new(Os),
         })
     }
 
-    async fn connect(&self, addr: SocketAddrV6) -> io::Result<TlsStream<TcpStream>> {
-        let stream = timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
+    async fn connect(&self, addr: SocketAddrV6) -> io::Result<TlsStream<BoxStream>> {
+        let stream = timeout(CONNECT_TIMEOUT, self.transport.connect(addr))
             .await
             .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
-        stream.set_nodelay(true)?;
         timeout(
             CONNECT_TIMEOUT,
             self.connector.connect(tls::server_name(), stream),

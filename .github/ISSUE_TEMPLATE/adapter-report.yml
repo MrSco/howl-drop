@@ -1,0 +1,43 @@
+name: Wi-Fi adapter report
+description: Tell us how your USB Wi-Fi adapter did, whether it worked or not.
+title: "Adapter: "
+labels: [adapter-report]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Every report helps the next person choose a stick, and tells us which chips to support next.
+
+        **The easy way:** on the Windows PC with the adapter plugged in, open PowerShell (Start, type `powershell`, Enter) and paste:
+
+        ```
+        irm https://raw.githubusercontent.com/MrSco/howl-drop/main/tools/test-adapter.ps1 | iex
+        ```
+
+        It checks the adapter, walks you through a photo each way if HowlDrop can drive it, and opens this page with everything filled in. On Home Assistant or Linux, fill it in by hand: the add-on's log has a `Wi-Fi card:` line near the top.
+  - type: input
+    id: adapter
+    attributes:
+      label: Adapter
+      description: Its name, and its USB ID if you know it.
+      placeholder: Alfa AWUS036ACM (0e8d:7612)
+    validations:
+      required: true
+  - type: input
+    id: result
+    attributes:
+      label: How it went
+      placeholder: works both ways / receives, does not send / does not work / not supported yet
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Report
+      description: The test's report. It holds the adapter's IDs and driver, Windows' version and how each step went; no names, serial numbers or addresses.
+      render: json
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Where you bought it, what you tried, screenshots.

@@ -26,6 +26,8 @@ mod deliver;
 mod events;
 mod link;
 #[cfg(windows)]
+mod netstack;
+#[cfg(windows)]
 mod pipe;
 mod pki;
 #[cfg(windows)]
@@ -35,9 +37,9 @@ mod receive;
 mod send;
 #[cfg(windows)]
 mod setup;
-mod usb;
 #[cfg(windows)]
-mod wintun;
+mod timers;
+mod usb;
 
 use std::io;
 use std::path::PathBuf;
@@ -198,7 +200,7 @@ fn main() -> ExitCode {
     // rustls needs its crypto provider chosen.
     let _ = rustls::crypto::ring::default_provider().install_default();
     #[cfg(windows)]
-    wintun::fine_timers();
+    timers::fine_timers();
     if args.events {
         events::enable();
     }
@@ -319,6 +321,8 @@ async fn run(args: Args) -> Result<(), String> {
                 send::Air {
                     index: link.index,
                     peers: link.peers.clone(),
+                    #[cfg(windows)]
+                    stack: link.stack.clone(),
                 },
                 send::Options {
                     outbox,
@@ -433,10 +437,10 @@ fn stop_signals(stdin: bool) -> io::Result<watch::Receiver<bool>> {
     Ok(rx)
 }
 
-/// Windows' two ways in besides options ([`setup`]): `--setup [LOG]`, run
-/// once as administrator, its output to LOG, which ends here with its exit
-/// code; and `--args-file FILE`, the scheduled task's, whose options come
-/// from the file. None for the usual command line.
+/// Windows' ways in besides options ([`setup`]), each run as
+/// administrator and ending here with its exit code: `--setup [LOG]`, which
+/// puts the stick on WinUSB, its output to LOG; and `--restart-stick`. None
+/// for the usual command line.
 #[cfg(windows)]
 fn windows_entry() -> Result<Option<Args>, ExitCode> {
     let argv: Vec<String> = std::env::args().collect();
@@ -469,31 +473,6 @@ fn windows_entry() -> Result<Option<Args>, ExitCode> {
                 ExitCode::from(1)
             }
         }),
-        [flag, file] if flag == "--args-file" => {
-            let args = setup::read_args(file.as_ref());
-            // The pipe first, so howldrop.exe hears what's wrong with the
-            // rest.
-            if let Ok(args) = &args
-                && let Some(i) = args.iter().position(|a| a == "--pipe")
-                && let Some(name) = args.get(i + 1)
-                && pipe::attach(name).is_err()
-            {
-                return Err(ExitCode::from(1));
-            }
-            let parsed = args.and_then(|args| {
-                Args::try_parse_from(std::iter::once(argv[0].clone()).chain(args))
-                    .map_err(|e| e.to_string())
-            });
-            match parsed {
-                Ok(args) => Ok(Some(args)),
-                Err(e) => {
-                    let why = format!("the task's arguments: {}", e.trim());
-                    say(&why);
-                    say(events::line(&["stopped", &why]));
-                    Err(ExitCode::from(1))
-                }
-            }
-        }
         _ => Ok(None),
     }
 }

@@ -1,5 +1,5 @@
-// AirDrop on this PC (radio_win.hpp): howldrop-agent.exe, set up once and
-// then run by its scheduled task, read through a named pipe.
+// AirDrop on this PC (radio_win.hpp): howldrop-agent.exe, run as the user
+// without a window, read through a named pipe.
 
 #include "radio_win.hpp"
 
@@ -82,7 +82,7 @@ std::wstring quote(const std::wstring& arg) {
 
 // A child process with its output (stdout and stderr) on a pipe, or in a
 // file, or in a console window of its own; or, run as administrator, on a
-// named pipe it connects to (start_task).
+// named pipe it connects to (start_on_pipe).
 struct ChildProcess {
     PROCESS_INFORMATION pi{};
     HANDLE out = nullptr;
@@ -99,7 +99,7 @@ struct ChildProcess {
         if (pi.hProcess) CloseHandle(pi.hProcess);
     }
 
-    // A named pipe of ours that a program run elsewhere (start_task)
+    // A named pipe of ours that a program run elsewhere (start_on_pipe)
     // connects to and prints to: its name.
     bool make_pipe(std::wstring& name, std::string& error) {
         name = L"\\\\.\\pipe\\howldrop-agent-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
@@ -116,29 +116,22 @@ struct ChildProcess {
         return true;
     }
 
-    // The scheduled task (setup.rs), which runs the agent as administrator
-    // without asking: its arguments, with "--pipe NAME", go in args_file
-    // first. No process handle: the pipe says when it has ended.
-    bool start_task(const std::wstring& task, const fs::path& args_file, const std::vector<std::wstring>& args,
-                    std::string& error) {
+    // exe with args and "--pipe NAME", without a window: it connects to our
+    // pipe and prints to it, and stops when we disconnect it (disconnect).
+    bool start_on_pipe(const fs::path& exe, const std::vector<std::wstring>& args, std::string& error) {
         std::wstring name;
         if (!make_pipe(name, error)) return false;
-        std::error_code ec;
-        fs::create_directories(args_file.parent_path(), ec);
-        {
-            std::ofstream file(args_file, std::ios::binary | std::ios::trunc);
-            for (const auto& a : args) file << path_to_utf8(a) << '\n';
-            file << "--pipe\n" << path_to_utf8(name) << '\n';
-            if (!file) {
-                error = "could not write " + path_to_utf8(args_file);
-                return false;
-            }
-        }
-        std::string output;
-        ChildProcess schtasks;
-        if (!schtasks.start(L"schtasks.exe", {L"/run", L"/tn", task}, error) || !schtasks.read_all(output, 30000) ||
-            schtasks.exit_code() != 0) {
-            error = "Task Scheduler didn't start it: " + trim(output.empty() ? error : output);
+        std::wstring line = quote(exe.wstring());
+        for (const auto& a : args) line += L" " + quote(a);
+        line += L" --pipe " + quote(name);
+        std::vector<wchar_t> buffer(line.begin(), line.end());
+        buffer.push_back(L'\0');
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        if (!CreateProcessW(nullptr, buffer.data(), nullptr, nullptr, FALSE,
+                            CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, nullptr, nullptr, &si, &pi)) {
+            error = "could not run " + path_to_utf8(exe.filename()) + " (error " + std::to_string(GetLastError()) +
+                    ")";
             return false;
         }
         return connect(error);
@@ -168,7 +161,7 @@ struct ChildProcess {
         return true;
     }
 
-    // Disconnects start_task's pipe: the child sees it go and stops.
+    // Disconnects start_on_pipe's pipe: the child sees it go and stops.
     void disconnect() {
         if (out && event) DisconnectNamedPipe(out);
     }
@@ -248,7 +241,7 @@ struct ChildProcess {
         }
     }
 
-    // One read of the output; overlapped on start_task's pipe, so that
+    // One read of the output; overlapped on start_on_pipe's pipe, so that
     // disconnect() can end it from another thread.
     bool read_some(char* buf, DWORD size, DWORD& n) {
         if (!event) return ReadFile(out, buf, size, &n, nullptr);
@@ -332,24 +325,6 @@ int run_elevated(const fs::path& exe, const std::wstring& params) {
     return static_cast<int>(code);
 }
 
-// The scheduled task that runs howldrop-agent.exe as administrator (the
-// agent's setup.rs makes it).
-const wchar_t* const kAgentTask = L"\\HowlDrop\\AirDrop";
-
-// Whether two files hold the same bytes; false when either can't be read.
-bool same_contents(const fs::path& a, const fs::path& b) {
-    std::error_code ec;
-    if (fs::file_size(a, ec) != fs::file_size(b, ec) || ec) return false;
-    std::ifstream fa(a, std::ios::binary);
-    std::ifstream fb(b, std::ios::binary);
-    std::vector<char> ba(1 << 16), bb(1 << 16);
-    while (fa && fb) {
-        fa.read(ba.data(), static_cast<std::streamsize>(ba.size()));
-        fb.read(bb.data(), static_cast<std::streamsize>(bb.size()));
-        if (fa.gcount() != fb.gcount() || !std::equal(ba.begin(), ba.begin() + fa.gcount(), bb.begin())) return false;
-    }
-    return fa.eof() && fb.eof();
-}
 
 std::string lower(std::string s) {
     for (char& c : s) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
@@ -436,7 +411,7 @@ void Radio::stop() {
     if (agent) {
         // The agent sees its pipe go, and gives the stick back.
         agent->disconnect();
-        for (int i = 0; i < 40 && task_running(); ++i) Sleep(500);
+        if (!agent->wait(20000)) agent->kill();
     }
     if (thread_.joinable()) thread_.join();
     {
@@ -651,17 +626,11 @@ bool Radio::prepare(std::string& error) {
     const DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
     agent_ = (n > 0 && n < MAX_PATH ? fs::path(self).parent_path() : fs::path()) / L"howldrop-agent.exe";
     if (!fs::exists(agent_, ec) && !fetch_agent(error)) return false;
-    // Set up once (setup.rs): the agent in Program Files, its task, and the
-    // stick on WinUSB; again when this agent isn't the one installed.
-    std::string out;
-    const bool task = run_command(L"schtasks.exe", {L"/query", L"/tn", kAgentTask}, out, 30000) == 0;
-    wchar_t programs[MAX_PATH];
-    const DWORD pn = GetEnvironmentVariableW(L"ProgramFiles", programs, MAX_PATH);
-    const fs::path installed = fs::path(pn > 0 && pn < MAX_PATH ? programs : L"C:\\Program Files") / L"HowlDrop" /
-                               L"howldrop-agent.exe";
-    if (task && same_contents(agent_, installed) && !needs_setup_) return true;
+    // The agent runs as the user. Only a stick not yet on WinUSB needs an
+    // administrator, once (setup.rs), when the agent says so.
+    if (!needs_setup_) return true;
     needs_setup_ = false;
-    state("Setting up AirDrop on this PC (Windows asks for permission, this once)");
+    state("Getting the stick ready (Windows asks for permission, this once)");
     const fs::path setup_log = config_.home / L"native-setup.log";
     const int code = run_elevated(agent_, L"--setup " + quote(setup_log.wstring()));
     std::string said;
@@ -673,9 +642,8 @@ bool Radio::prepare(std::string& error) {
     if (code != 0) {
         const auto last = trim(said).rfind('\n');
         const std::string why = trim(last == std::string::npos ? trim(said) : trim(said).substr(last + 1));
-        error = code == -1 ? "Setting up AirDrop on this PC needs Windows' permission. Turn it on again to retry."
-                           : "Setting up AirDrop on this PC failed: " + (why.empty() ? "exit " + std::to_string(code)
-                                                                                      : why);
+        error = code == -1 ? "Getting the stick ready needs Windows' permission. Turn it on again to retry."
+                           : "Getting the stick ready failed: " + (why.empty() ? "exit " + std::to_string(code) : why);
         return false;
     }
     return true;
@@ -687,19 +655,17 @@ std::string Radio::run_agent() {
     fs::remove(scan_request_, ec);
     fs::create_directories(asks_, ec);
     if (stopping()) return {};
-    // A run still giving the stick back: the task starts no second one.
-    for (int i = 0; i < 40 && task_running() && !stopping(); ++i) Sleep(500);
     state("Starting");
     const fs::path data = config_.home / L"native";
     auto agent = std::make_shared<ChildProcess>();
     std::string error;
-    if (!agent->start_task(kAgentTask, data / L"agent.args",
-                           {L"--name", wide(config_.name), L"--staging", (data / L"staging").wstring(), L"--deliver",
-                            config_.inbox.wstring(), L"--identity", (data / L"identity").wstring(), L"--receive",
-                            wide(config_.receive), L"--senders", wide(config_.senders), L"--ask-dir", asks_.wstring(),
-                            L"--outbox", outbox_.wstring(), L"--discard", L"--scan-request", scan_request_.wstring(),
-                            L"--events"},
-                           error)) {
+    if (!agent->start_on_pipe(agent_,
+                              {L"--name", wide(config_.name), L"--staging", (data / L"staging").wstring(),
+                               L"--deliver", config_.inbox.wstring(), L"--identity", (data / L"identity").wstring(),
+                               L"--receive", wide(config_.receive), L"--senders", wide(config_.senders), L"--ask-dir",
+                               asks_.wstring(), L"--outbox", outbox_.wstring(), L"--discard", L"--scan-request",
+                               scan_request_.wstring(), L"--events"},
+                              error)) {
         log("howldrop-agent: " + error);
         return error;
     }
@@ -717,13 +683,6 @@ std::string Radio::run_agent() {
     }
     if (!stop_reason_.empty()) return stop_reason_;
     return "howldrop-agent ended";
-}
-
-// Whether the task's agent is still running (schtasks' CSV status).
-bool Radio::task_running() {
-    std::string out;
-    run_command(L"schtasks.exe", {L"/query", L"/tn", kAgentTask, L"/fo", L"csv", L"/nh"}, out, 30000);
-    return out.find("\"Running\"") != std::string::npos;
 }
 
 void Radio::handle_line(const std::string& line) {
