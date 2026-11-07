@@ -24,8 +24,6 @@ use crate::proto::messages::{AskRequest, DiscoverRequest, Offer};
 use crate::proto::receiver::{Answer, Config, Connection, Event};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-/// A connection with no traffic for this long, and no prompt up, is closed.
-const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Most connections from one address at a time.
 const MAX_PER_PEER: usize = 4;
 /// How often a receiving upload reports its progress, when asked to.
@@ -43,6 +41,9 @@ pub struct Options {
     pub max_connections: usize,
     /// Report each upload's progress ([`ReceiverEvent::Progress`]).
     pub progress: bool,
+    /// A connection with no traffic for this long, and no prompt up, is
+    /// closed.
+    pub idle_timeout: Duration,
 }
 
 impl Options {
@@ -52,6 +53,7 @@ impl Options {
             destination,
             max_connections: 16,
             progress: false,
+            idle_timeout: Duration::from_secs(60),
         }
     }
 }
@@ -317,7 +319,8 @@ impl Task {
         let mut conn = Connection::new(self.config.clone());
         let mut buf = vec![0; 64 << 10];
         let mut timer: Option<Instant> = None;
-        let mut idle = Instant::now() + IDLE_TIMEOUT;
+        let idle_timeout = self.options.idle_timeout;
+        let mut idle = Instant::now() + idle_timeout;
         let mut answer: Option<oneshot::Receiver<Answer>> = None;
         let mut staging: Option<Staging> = None;
         let mut id = 0;
@@ -475,7 +478,7 @@ impl Task {
                                 tracing::debug!(peer = %self.peer, "<- {}", first_line(&buf[..n]));
                             }
                             let now = Instant::now();
-                            idle = now + IDLE_TIMEOUT;
+                            idle = now + idle_timeout;
                             if staging.is_some() {
                                 window.0 += n as u64;
                                 if now >= window.1 {
@@ -520,6 +523,9 @@ impl Task {
                         held.update(|s| s.busy = false);
                     }
                     conn.answer(reply);
+                    // The prompt's time doesn't count: the sender gets the
+                    // whole idle time for its `/Upload`.
+                    idle = Instant::now() + idle_timeout;
                 }
             }
         }

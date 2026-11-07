@@ -44,6 +44,9 @@ struct FakeOps {
     /// What the AP the station is associated with is on.
     freq: Option<u32>,
     regdom: Mutex<String>,
+    /// The regulatory domain is the AP's, which the kernel forgets, for the
+    /// world's, once the station is down.
+    regdom_from_ap: bool,
     /// The channels on which an ad-hoc cell starts.
     ibss_starts: Vec<u32>,
     /// The card refuses an ad-hoc interface beside its station.
@@ -107,6 +110,7 @@ impl FakeOps {
             wiphy: Mutex::new(wiphy()),
             freq: Some(5220),
             regdom: Mutex::new("DE".into()),
+            regdom_from_ap: false,
             ibss_starts: vec![2437, 5220, 5745],
             ibss_refused: false,
             fail_monitor: false,
@@ -115,6 +119,15 @@ impl FakeOps {
             managed: Mutex::new(BTreeMap::new()),
             ifaces: Mutex::new(ifaces),
             calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn apply_regdom(&self, alpha2: &str) {
+        *self.regdom.lock().unwrap() = alpha2.into();
+        // The world allows no transmitting on 5 GHz; anywhere else does.
+        let world = alpha2 == "00";
+        for c in &mut self.wiphy.lock().unwrap().channels {
+            c.no_ir = world && c.freq > 5000;
         }
     }
 
@@ -210,12 +223,7 @@ impl Ops for FakeOps {
     }
     fn set_regdom(&self, alpha2: &str) -> io::Result<()> {
         self.call(format!("regdom {alpha2}"));
-        *self.regdom.lock().unwrap() = alpha2.into();
-        // The world allows no transmitting on 5 GHz; anywhere else does.
-        let world = alpha2 == "00";
-        for c in &mut self.wiphy.lock().unwrap().channels {
-            c.no_ir = world && c.freq > 5000;
-        }
+        self.apply_regdom(alpha2);
         Ok(())
     }
     fn add_iface(&self, phy: &str, name: &str, kind: Kind) -> io::Result<()> {
@@ -264,6 +272,9 @@ impl Ops for FakeOps {
         self.call(format!("{} {iface}", if up { "up" } else { "down" }));
         if iface == STATION && !up {
             self.ifaces.lock().unwrap().get_mut(STATION).unwrap().freq = None;
+            if self.regdom_from_ap {
+                self.apply_regdom("00");
+            }
         }
         Ok(())
     }
@@ -278,7 +289,14 @@ impl Ops for FakeOps {
     }
     fn join_ibss(&self, iface: &str, freq: u32) -> io::Result<()> {
         self.call(format!("join {iface} {freq}"));
-        if !self.ibss_starts.contains(&freq) {
+        let no_ir = self
+            .wiphy
+            .lock()
+            .unwrap()
+            .channels
+            .iter()
+            .any(|c| c.freq == freq && c.no_ir);
+        if no_ir || !self.ibss_starts.contains(&freq) {
             return Err(io::Error::other("EINVAL"));
         }
         self.ifaces.lock().unwrap().get_mut(iface).unwrap().freq = Some(freq);
@@ -535,10 +553,27 @@ fn probe_explains_what_stands_in_the_way() {
     assert!(!caps.hardware);
     assert_eq!(caps.missing[0].id, "hardware");
     assert!(caps.missing[0].say.contains("brcmfmac"), "{caps:?}");
+    assert!(
+        caps.missing[0].say.contains("hasn't been tested"),
+        "{caps:?}"
+    );
     let mut settings = fx.settings();
     settings.allow_untested = true;
     let caps = fx.backend_with(settings).probe();
     assert!(caps.hardware, "{caps:?}");
+
+    // A card with its own entry has worked somewhere: it's opt-in, not
+    // untried, and its known issue comes with it.
+    let fx = Fx::with(|o| o.driver = "rtl8xxxu".into());
+    let caps = fx.backend().probe();
+    assert!(!caps.hardware);
+    let say = &caps.missing[0].say;
+    assert!(
+        say.contains("isn't on by default")
+            && say.contains("only 2.4 GHz")
+            && say.contains("allow_untested"),
+        "{caps:?}"
+    );
 
     // The MT7927, on the MT7925's driver, is known not to work.
     let fx = Fx::with(|o| o.device = Some("14c3:7927".into()));
@@ -1001,6 +1036,25 @@ async fn exclusive_mode_sets_the_regulatory_domain_and_restores_it() {
     backend.up().await.unwrap();
     // Asked for, then 44, which DE allows, chosen.
     assert!(fx.since(n).contains(&"regdom DE".to_string()));
+    assert_eq!(fx.awdl().radio.channel.0, 44);
+    backend.down().await.unwrap();
+    assert_eq!(fx.ops.regdom().as_deref(), Some("00"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn exclusive_mode_keeps_the_aps_country() {
+    // DE from the AP, which the kernel forgets with the station, and no
+    // country in radio.toml.
+    let fx = Fx::with(|o| {
+        intel(o);
+        o.regdom_from_ap = true;
+    });
+    let mut settings = fx.settings();
+    settings.channels = Some(vec![44, 6]);
+    let mut backend = fx.backend_with(settings);
+    backend.up().await.unwrap();
+    // Asked for again once the station is down, so 44 stays allowed.
+    assert!(fx.ops.calls().contains(&"regdom DE".to_string()));
     assert_eq!(fx.awdl().radio.channel.0, 44);
     backend.down().await.unwrap();
     assert_eq!(fx.ops.regdom().as_deref(), Some("00"));

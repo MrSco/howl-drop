@@ -15,6 +15,7 @@
 //! router's or the card's, no interface name (a USB adapter's `wlx…` name is
 //! its MAC), not the phone's name, and nothing else about the network.
 
+use std::ffi::OsStr;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{ExitCode, Stdio};
@@ -29,6 +30,10 @@ use crate::radio;
 
 /// The interfaces NetworkManager must leave alone.
 const OURS: [&str; 4] = ["awdl0", "owlymon0", "owlyibss0", "owlyap0"];
+
+/// Where distributions put NetworkManager when it isn't on `PATH`: openSUSE
+/// has it in `/usr/sbin`, which a normal user's `PATH` leaves out.
+const NM_DIRS: [&str; 2] = ["/usr/sbin", "/sbin"];
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -427,6 +432,14 @@ fn which(program: &str) -> bool {
         .is_some_and(|path| std::env::split_paths(&path).any(|d| d.join(program).is_file()))
 }
 
+/// The first `program` on `path`, else in `dirs`.
+fn find_program(path: &OsStr, dirs: &[&str], program: &str) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .chain(dirs.iter().map(PathBuf::from))
+        .map(|dir| dir.join(program))
+        .find(|p| p.is_file())
+}
+
 /// The maker and model, from DMI. Lenovo puts the model's name in
 /// `product_version`, and a number in `product_name`.
 fn machine() -> Option<String> {
@@ -489,11 +502,18 @@ fn nm_check(report: &mut Report) -> Result<(), String> {
         return Ok(());
     }
     heading("NetworkManager");
-    let config = std::process::Command::new("NetworkManager")
-        .arg("--print-config")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default();
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let found =
+        find_program(&path, &NM_DIRS, "NetworkManager").and_then(|nm| Some((nm_config(&nm)?, nm)));
+    let Some((config, nm)) = found else {
+        report.step(
+            "NetworkManager",
+            "skipped",
+            "can't read its configuration",
+            None,
+        );
+        return Ok(());
+    };
     let managed = nm_would_manage(&config);
     if managed.is_empty() {
         report.step(
@@ -511,13 +531,26 @@ fn nm_check(report: &mut Report) -> Result<(), String> {
         None,
     );
     println!(
-        "NetworkManager isn't told to leave {} alone, and the test is unlikely to pass while it manages them. The owly package installs /usr/lib/NetworkManager/conf.d/90-owly-unmanaged.conf for this: check `NetworkManager --print-config` for a file that overrides it.",
-        managed.join(", ")
+        "NetworkManager isn't told to leave {} alone, and the test is unlikely to pass while it manages them. The owly package installs /usr/lib/NetworkManager/conf.d/90-owly-unmanaged.conf for this: check `{} --print-config` for a file that overrides it.",
+        managed.join(", "),
+        nm.display()
     );
     if ask("Go on anyway?") != Answer::Yes {
         return Err("stopped".into());
     }
     Ok(())
+}
+
+/// NetworkManager's `--print-config`, or `None` where it can't give it. An
+/// empty configuration would say it manages everything, which isn't known.
+fn nm_config(nm: &Path) -> Option<String> {
+    let out = std::process::Command::new(nm)
+        .arg("--print-config")
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Which of Owly's interfaces NetworkManager's configuration doesn't leave
@@ -846,6 +879,29 @@ no answer yet for icmp_seq=5
             }
         );
         assert_eq!(pings("").sent, 0);
+    }
+
+    #[test]
+    fn a_program_is_found_off_path() {
+        let nowhere = OsStr::new("/nonexistent");
+        let sh = Some(PathBuf::from("/bin/sh"));
+        assert_eq!(find_program(nowhere, &["/bin"], "sh"), sh);
+        assert_eq!(find_program(nowhere, &[], "sh"), None);
+        assert_eq!(
+            find_program(OsStr::new("/bin"), &["/nonexistent"], "sh"),
+            sh
+        );
+    }
+
+    #[test]
+    fn a_config_that_cant_be_read_is_no_config() {
+        assert_eq!(nm_config(Path::new("/nonexistent/NetworkManager")), None);
+        assert_eq!(nm_config(Path::new("/bin/sh")), None);
+        // NixOS has no /bin/echo, only /bin/sh.
+        if Path::new("/bin/echo").exists() {
+            let echoed = nm_config(Path::new("/bin/echo"));
+            assert_eq!(echoed.as_deref(), Some("--print-config\n"));
+        }
     }
 
     #[test]

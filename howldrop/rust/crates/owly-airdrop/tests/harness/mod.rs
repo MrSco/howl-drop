@@ -180,12 +180,16 @@ pub async fn receiver(veth: &Veth, config: Config) -> Running {
     receiver_with(veth, config, |_| {}).await
 }
 
-/// A receiver on `b` with its options as `set` leaves them.
-pub async fn receiver_with(veth: &Veth, config: Config, set: impl FnOnce(&mut Options)) -> Running {
+/// A receiver on `b` with its options changed by `adjust`.
+pub async fn receiver_with(
+    veth: &Veth,
+    config: Config,
+    adjust: impl FnOnce(&mut Options),
+) -> Running {
     let dest = tempfile::tempdir().unwrap();
     let identity = Identity::generate().unwrap();
     let mut options = Options::new(config, dest.path().to_path_buf());
-    set(&mut options);
+    adjust(&mut options);
     let (receiver, events) = Receiver::bind(veth.b.socket(PORT), &identity, options)
         .await
         .unwrap();
