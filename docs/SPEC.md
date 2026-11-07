@@ -88,11 +88,10 @@ A receiver scans for BLE regularly. It activates AWDL and its AirDrop server onl
 | 1 | 3 | tag | rotates with the advertiser's BLE address (BLE-5) |
 | 4 | 4 | reserved | `00 × 4` |
 | 8 | 1 | version | `0x03` |
-| 9 | 2 | Apple ID hash | first 2 bytes of SHA-256(Apple ID) |
-| 11 | 2 | phone hash | first 2 bytes of SHA-256(phone) |
-| 13 | 2 | email hash | first 2 bytes of SHA-256(email) |
-| 15 | 2 | email 2 hash | first 2 bytes of SHA-256(second email) |
+| 9 | 8 | contact hashes | four 2-byte hashes, each the first 2 bytes of SHA-256 of the sender's Apple ID, a phone number or an email address |
 | 17 | 1 | reserved | `0x00` |
+
+The hashes are in no fixed order: a sender rotates them between advertisements with the same tag. A receiver that matches contacts MUST compare against every slot.
 
 Version 1 has the same layout, with offsets 0–7 all zero and `0x01` at offset 8.
 
@@ -370,11 +369,11 @@ Other bits are reserved.
 
 **TLS-1** All AirDrop HTTP runs over TLS 1.2 or 1.3. Endpoints MUST NOT offer TLS 1.0. No ALPN protocol is negotiated, and sessions aren't resumed.
 
-**TLS-2** TLS provides encryption only, not peer authentication. Receivers accept self-signed certificates, don't check host names, and accept any TLS connection in every visibility mode, Contacts Only included. Identity is carried in the record (§7), not the TLS handshake. An implementation MUST present a certificate and MUST NOT reject a peer for being self-signed.
+**TLS-2** TLS provides encryption only, not peer authentication. Receivers accept self-signed certificates, don't check host names, and accept any TLS connection in every visibility mode, Contacts Only included. Identity is carried in the record (§7); for the sender's client certificate, see TLS-3. An implementation MUST present a certificate and MUST NOT reject a peer for being self-signed.
 
-**TLS-3** Senders don't present a TLS client certificate. A sender MUST NOT depend on one. A receiver MUST accept connections without one, and SHOULD accept them with one.
+**TLS-3** Asked for a client certificate, a sender presents one on the connection that carries `/Ask` and `/Upload`, and none on the `/Discover` connection. It's a two-certificate chain: a leaf with subject `CN=com.apple.idms.appleid.prd.<account ID>` and extended key usages client and server authentication, issued by Apple Application Integration Certification Authority, and that intermediate, issued by Apple Root CA. Whether a receiver should check it isn't defined in this version. A sender MUST NOT depend on presenting one. A receiver MUST accept connections without one, and SHOULD accept them with one.
 
-**HTTP-1** (connections) HTTP/1.1. `/Ask` and `/Upload` MUST share one TLS connection: a receiver rejects an `/Upload` on any other (UP-6). A sender sends `/Discover` on its own connection, closes it, and opens a new one for `/Ask` and `/Upload`. A receiver MUST also accept `/Discover` followed by `/Ask` on the same connection.
+**HTTP-1** (connections) HTTP/1.1. `/Ask` and `/Upload` MUST share one TLS connection: a receiver rejects an `/Upload` on any other (UP-6). A sender sends `/Discover` on its own connection and opens a new one for `/Ask` and `/Upload`. It can leave the `/Discover` connection open, idle, and reset it about 30 s later. A receiver MUST also accept `/Discover` followed by `/Ask` on the same connection.
 
 **HTTP-2** All requests are `POST`. A sender SHOULD send `/Ask` with only these headers, and no `Host` or `Accept*`:
 
@@ -438,8 +437,9 @@ An empty dict is a valid request.
 
 | Key | Type | Req | Notes |
 |---|---|---|---|
-| `StatusCode` | int | R | `100` = Everyone mode, `200` = sender matched a contact, `401` = Contacts Only and no match. |
+| `StatusCode` | int | O | `100` = Everyone mode, `200` = sender matched a contact, `401` = Contacts Only and no match. A receiver can leave it out of a response that lists the sender. |
 | `ReceiverComputerName` | string | C | Display name. Present ⇔ the sender may see this receiver. |
+| `IsAirDropable` | bool | O | `true` in a response that lists the sender. Not defined further in this version. |
 | `ReceiverModelName` | string | O | e.g. `MacBookPro18,1`. Senders choose the receiver's icon from it. |
 | `ReceiverMediaCapabilities` | data | O | UTF-8 **JSON** (not a plist), see DISC-3. |
 | `ReceiverRecordData` | data | O | Receiver's record (§7). Lets the sender show it as a contact. |
@@ -500,12 +500,14 @@ An `/Ask` for one photo, in the current form (data shown as `<hex>`):
 | `BundleID` | string | R | Originating app, e.g. `com.apple.finder`. |
 | `ConvertMediaFormats` | bool | R | `false`: don't transcode. |
 | `SenderRecordData` | data | C | As in `/Discover`. |
-| `SenderIdentityAuthTag` | data | O | 3 bytes. Not needed in Everyone mode. Its derivation isn't defined in this version. |
-| `Files` | array\<dict\> | C | Required for a file share, see below. |
+| `SenderIdentityAuthTag` | data | O | 3 bytes, different for each transfer, and not the BLE advertisement's tag (BLE-2). Not needed in Everyone mode. Its derivation isn't defined in this version. |
+| `Files` | array\<dict\> | C | Required for a file share, see below. Empty with a link share. |
 | `Items` | array\<string\> | C | The URLs, for a link share. Empty with a file share. The legacy form omits it. |
 | `FileIcon` | data | O | Preview thumbnail, JPEG 2000, ≤ 540 px on the long side. |
 
 A request MUST carry a non-empty `Files` or a non-empty `Items`, not both.
+
+A link share in the current form carries `TransferType` `{"links": {}}`, the URLs in `Items` and an empty `Files`, with `BundleID` naming the app it was shared from, such as `com.apple.mobilesafari`. It can carry a `FileIcon`.
 
 **`Files[]` entry**
 
@@ -514,7 +516,7 @@ A request MUST carry a non-empty `Files` or a non-empty `Items`, not both.
 | `FileName` | string | R | Base name. |
 | `FileType` | string | R | Uniform Type Identifier, e.g. `public.heic`, `public.jpeg`, `public.data` (fallback). Not a MIME type. |
 | `FileSize` | int | R (current) | Uncompressed size in bytes. |
-| `FileBomPath` | string | R | Path inside the `/Upload` archive. MUST be `./<FileName>`: the `./` prefix is required. |
+| `FileBomPath` | string | R | Path inside the `/Upload` archive: `./<FileName>`, or `./<folder>/<FileName>` for a regular file in a wrapper directory. The `./` prefix is required. |
 | `FileIsDirectory` | bool | R | |
 | `ShouldConvertMediaFormats` | bool | R (current) | `false`. |
 | `ConvertMediaFormats` | int | legacy | `0`. The legacy form's name for the field above. |
@@ -528,15 +530,15 @@ A request MUST carry a non-empty `Files` or a non-empty `Items`, not both.
 
 **ASK-1** `200` means accepted. Any other status, a closed connection, or no response within the sender's timeout means declined or failed, and the sender MUST NOT send `/Upload`.
 
-**ASK-2** (receiver) A receiver that prompts its user MUST hold the `/Ask` request open until the user answers or 15 s pass. On a decline, or its own timeout, a receiver SHOULD respond with `401` and no body, and close the connection, so the sender doesn't wait out its own timeout. That is what an iPhone answers when its user taps Decline (iOS 26, measured with omdrop-awdl's sender). An iPhone sending shows a `401` as "Declined", but a `403`, even with the connection closed, as "Waiting" until its user cancels. Some receivers send no response to a decline. Senders handle either under ASK-1.
+**ASK-2** (receiver) A receiver that prompts its user MUST hold the `/Ask` request open until the user answers or its own timeout passes. That timeout SHOULD be 15 s. Some receivers have none, and keep the prompt up until the sender gives up (ASK-2a). On a decline, or its own timeout, a receiver SHOULD respond with `401` and no body, and close the connection, so the sender doesn't wait out its own timeout. A sender shows a `401` as declined, but may show a `403`, even with the connection closed, as still waiting until its user cancels. Some receivers send no response to a decline. Senders handle either under ASK-1.
 
-**ASK-2a** (sender) A sender MUST time out an unanswered `/Ask` and treat it as declined. The timeout MUST be longer than 15 s, so that a slow user isn't cut off before the receiver gives up.
+**ASK-2a** (sender) A sender MUST time out an unanswered `/Ask` and treat it as declined. The timeout MUST be longer than 15 s, so that a slow user isn't cut off before the receiver gives up. Senders wait about 45 s, then reset the connection and report the transfer as declined.
 
 **ASK-3** (receiver) A receiver MUST NOT accept without prompting unless the user has configured it to.
 
 **ASK-4** (sender) For a link share, the sender MUST NOT send `/Upload`. The share is complete when `/Ask` returns `200`.
 
-**ASK-5** (receiver) A receiver MUST treat every `FileName` and `FileBomPath` as untrusted (SEC-1). It MUST refuse an `/Ask` whose `FileBomPath` isn't `./<FileName>`, so that the file written is the one the prompt names.
+**ASK-5** (receiver) A receiver MUST treat every `FileName` and `FileBomPath` as untrusted (SEC-1). It MUST refuse an `/Ask` whose `FileBomPath` isn't `./<FileName>` or, for a regular file, `./<folder>/<FileName>`. The wrapper MUST be exactly one safe path component. The file written MUST have the name shown by the prompt.
 
 **ASK-6** Receivers accept without prompting when the sender's record verifies as the receiver's own Apple ID (§7). No field of the request can claim this.
 
@@ -556,9 +558,11 @@ Connection: keep-alive
 Content-Length: 76166
 ```
 
+A sender can also send `SenderPseudonym` (`pseud:` and base64) and `SenderPushToken` (64 hex digits). What they're for isn't defined in this version.
+
 **UP-1** `Content-Type` is `application/x-dvzip` (DVZip, §6.6) or `application/x-cpio` (gzip).
 
-**UP-1a** The body is sent either with `Content-Length` or with `Transfer-Encoding: chunked`. A receiver MUST accept both. A sender SHOULD use `Content-Length`.
+**UP-1a** The body is sent either with `Content-Length` or with `Transfer-Encoding: chunked`. A receiver MUST accept both. Senders use both.
 
 **UP-1b** (sender) A sender that doesn't know the receiver's TXT flags, such as one that found the receiver under DISC-5, SHOULD send DVZip.
 
@@ -569,10 +573,12 @@ Content-Length: 76166
 | Entry | Mode | Notes |
 |---|---|---|
 | `.` | `040755` (directory) | Root entry. Earlier senders leave it out. |
-| `./<FileName>` | `0100644` (regular file) | One per `Files[]` entry. The name equals its `FileBomPath`. |
+| `<FileBomPath>` | `0100644` (regular file) | One per `Files[]` entry, not necessarily in the order of `Files`. |
 | `TRAILER!!!` | `0` | Terminator. |
 
 A sender MUST send the `.` root entry. A receiver MUST accept archives with and without it.
+
+For the wrapped regular-file form in ASK-5, the archive MAY include a `./<folder>` directory entry before the file. The receiver MUST save the file as `<FileName>` without retaining the wrapper directory.
 
 **UP-3** (receiver) A receiver MUST answer `Expect: 100-continue` with `100 Continue`. Senders send it when the receiver doesn't advertise SupportsPipelining.
 
@@ -582,7 +588,7 @@ A sender MUST send the `.` root entry. A receiver MUST accept archives with and 
 
 **UP-6** (receiver) A receiver MUST reject an upload that doesn't follow an accepted `/Ask` on the same connection.
 
-**UP-7** (receiver) A receiver MUST reject archive entries that aren't listed in the accepted `/Ask`.
+**UP-7** (receiver) A receiver MUST reject archive entries that aren't listed in the accepted `/Ask`, except for the wrapper directory entries in UP-2a and the metadata in UP-7a.
 
 **UP-7a** (receiver) A sender can add AppleDouble members, named `._<name>`, that hold a file's metadata and aren't listed in the `/Ask`. A receiver SHOULD accept a `._<name>` member next to a listed item, or inside a listed directory, rather than reject the archive under UP-7, and MAY discard it.
 
@@ -590,7 +596,7 @@ A sender MUST send the `.` root entry. A receiver MUST accept archives with and 
 
 **UP-9** The `TransferID` header MUST equal `TransferID.id` from the `/Ask`. A receiver SHOULD reject an upload whose `TransferID` header doesn't match. It MUST accept an upload with no `TransferID` header when the `/Ask` used the legacy form.
 
-**UP-10** A sender SHOULD send `TotalBytes: 0`, not the real size. A receiver MUST NOT rely on `TotalBytes`.
+**UP-10** `TotalBytes` is the sum of the files' `FileSize`, or `0`. A receiver MUST NOT rely on it.
 
 **UP-11** (receiver) An upload is complete when the archive's `TRAILER!!!` entry has been read, whether or not the rest of the body, such as a chunked body's terminating zero-length chunk, has arrived. A receiver MUST then respond as UP-5 says rather than wait for the body to end.
 

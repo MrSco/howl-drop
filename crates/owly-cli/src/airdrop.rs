@@ -8,6 +8,7 @@
 //! tries the radio's AWDL peers beside mDNS (DISC-5), both as owlyd's D-Bus
 //! API says.
 
+use std::collections::BTreeSet;
 use std::io;
 use std::net::{Ipv6Addr, SocketAddrV6};
 use std::path::PathBuf;
@@ -89,7 +90,8 @@ pub struct SendArgs {
     #[command(flatten)]
     on: On,
     /// The receiver: its name, service ID or AWDL address. The first one
-    /// found if left out.
+    /// found if left out. A straight and a curly apostrophe in a name match
+    /// alike.
     #[arg(long)]
     to: Option<String>,
     /// Skip mDNS: try the receiver at this AWDL address on port 8770
@@ -419,10 +421,13 @@ async fn find_receiver(
     let deadline = tokio::time::Instant::now() + limit;
     let by_mdns = async {
         let mut chosen = None;
+        let mut others = BTreeSet::new();
         browse_receivers(iface, sender, limit, |r| {
-            let wanted = to.is_none_or(|t| t == r.name || t == r.instance);
+            let wanted = to.is_none_or(|t| same_name(t, &r.name) || t == r.instance);
             if wanted {
                 chosen = Some(r.clone());
+            } else {
+                say_other(&mut others, to, &r.name);
             }
             wanted
         })
@@ -470,6 +475,7 @@ async fn knock_peers(
     deadline: tokio::time::Instant,
 ) -> io::Result<Listed> {
     let mut tried = std::collections::HashSet::new();
+    let mut others = BTreeSet::new();
     while tokio::time::Instant::now() < deadline {
         for mac in lease.peers().await {
             if tried.insert(mac) {
@@ -486,7 +492,7 @@ async fn knock_peers(
             else {
                 continue;
             };
-            if to.is_none_or(|t| t == receiver.computer_name || t == mac) {
+            if to.is_none_or(|t| same_name(t, &receiver.computer_name) || t == mac) {
                 return Ok(Listed {
                     instance: mac,
                     name: receiver.computer_name,
@@ -495,13 +501,42 @@ async fn knock_peers(
                     flags: RECEIVER_FLAGS | SUPPORTS_DVZIP,
                 });
             }
+            say_other(&mut others, to, &receiver.computer_name);
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     Err(io::Error::new(
         io::ErrorKind::TimedOut,
-        "no AWDL peer answered /Discover; is the receiver unlocked, with AirDrop on?",
+        no_peer(to, &others),
     ))
+}
+
+/// Whether `to` is this name, with a straight and a curly apostrophe alike:
+/// an iPhone's name can have either, and whoever types it may use the other.
+fn same_name(to: &str, name: &str) -> bool {
+    let plain = |c| if matches!(c, '‘' | '’') { '\'' } else { c };
+    to.chars().map(plain).eq(name.chars().map(plain))
+}
+
+/// Says, once for each name, that a receiver answered as someone other than
+/// `to`. A name that's nearly right looks the same as a phone that's asleep.
+fn say_other(others: &mut BTreeSet<String>, to: Option<&str>, name: &str) {
+    if let Some(to) = to
+        && others.insert(name.to_string())
+    {
+        eprintln!("{name:?} answered, not {to:?}");
+    }
+}
+
+/// Why no AWDL peer was chosen, given the names that answered as `others`.
+fn no_peer(to: Option<&str>, others: &BTreeSet<String>) -> String {
+    match to {
+        Some(to) if !others.is_empty() => {
+            let names: Vec<String> = others.iter().map(|n| format!("{n:?}")).collect();
+            format!("no AWDL peer answered as {to:?}; {} did", names.join(", "))
+        }
+        _ => "no AWDL peer answered /Discover; is the receiver unlocked, with AirDrop on?".into(),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -662,5 +697,32 @@ async fn run_receiver(
             }
             ReceiverEvent::Failed { reason, .. } => eprintln!("transfer failed: {reason}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn straight_and_curly_apostrophes_name_the_same_receiver() {
+        assert!(same_name("Jane's iPhone", "Jane's iPhone"));
+        assert!(same_name("Jane's iPhone", "Jane’s iPhone"));
+        assert!(same_name("Jane’s iPhone", "Jane's iPhone"));
+        assert!(same_name("Jane‘s iPhone", "Jane’s iPhone"));
+        assert!(!same_name("Jane's iPhone", "Janes iPhone"));
+        assert!(!same_name("Jane's iPhone", "Jane's iPad"));
+    }
+
+    #[test]
+    fn the_error_says_who_answered() {
+        let silent = "no AWDL peer answered /Discover; is the receiver unlocked, with AirDrop on?";
+        assert_eq!(no_peer(None, &BTreeSet::new()), silent);
+        assert_eq!(no_peer(Some("Jane"), &BTreeSet::new()), silent);
+        let others = BTreeSet::from(["Sam's Mac".to_string(), "Jane's iPhone".to_string()]);
+        assert_eq!(
+            no_peer(Some("Jane"), &others),
+            r#"no AWDL peer answered as "Jane"; "Jane's iPhone", "Sam's Mac" did"#
+        );
     }
 }

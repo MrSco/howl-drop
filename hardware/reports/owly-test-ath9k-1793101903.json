@@ -1,0 +1,79 @@
+{
+  "owly": "0.4.1",
+  "time": 1793101903,
+  "kernel": "7.0.0-38-generic",
+  "os": "Ubuntu 24.04.5 LTS",
+  "machine": "Acer Aspire 4750",
+  "driver": "ath9k",
+  "device": "168c:002e",
+  "status": "untested",
+  "mode": "shared",
+  "channel": 6,
+  "transfers": "owly",
+  "steps": [
+    {
+      "step": "probe",
+      "result": "pass",
+      "detail": "ready"
+    },
+    {
+      "step": "NetworkManager",
+      "result": "pass",
+      "detail": "leaves Owly's interfaces alone"
+    },
+    {
+      "step": "baseline",
+      "result": "pass",
+      "detail": "10/10 replies"
+    },
+    {
+      "step": "start",
+      "result": "pass",
+      "ms": 111
+    },
+    {
+      "step": "phone heard",
+      "result": "pass"
+    },
+    {
+      "step": "shown on the phone",
+      "result": "pass"
+    },
+    {
+      "step": "phone -> computer",
+      "result": "pass"
+    },
+    {
+      "step": "computer -> phone",
+      "result": "pass",
+      "ms": 5028
+    },
+    {
+      "step": "stop",
+      "result": "pass",
+      "ms": 3673
+    },
+    {
+      "step": "Wi-Fi after teardown",
+      "result": "pass",
+      "detail": "300/300 replies, longest gap 0 s"
+    }
+  ],
+  "wifi": {
+    "baseline": {
+      "sent": 10,
+      "received": 10,
+      "longest_gap_s": 0
+    },
+    "window": {
+      "sent": 84,
+      "received": 84,
+      "longest_gap_s": 0
+    },
+    "after": {
+      "sent": 300,
+      "received": 300,
+      "longest_gap_s": 0
+    }
+  }
+}

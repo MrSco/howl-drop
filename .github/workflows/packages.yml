@@ -97,8 +97,13 @@ jobs:
       - name: Check what it installed
         run: |
           owly --version
-          test -x /usr/lib/owly/owlyd
-          grep -qx 'ExecStart=/usr/lib/owly/owlyd' /usr/lib/systemd/system/owlyd.service
+          if command -v apt-get > /dev/null; then
+            owlyd=/usr/lib/owly/owlyd
+          else
+            owlyd=/usr/libexec/owly/owlyd
+          fi
+          test -x "$owlyd"
+          grep -qx "ExecStart=$owlyd" /usr/lib/systemd/system/owlyd.service
 
   nix:
     runs-on: ubuntu-latest
