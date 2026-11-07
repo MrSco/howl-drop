@@ -3,6 +3,12 @@
 - **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed, and nothing else to install. The first time, it downloads `howldrop-native.zip` below (the radio, about 3.5 MB; checked against the SHA-256 built into the exe) and runs it as you. Windows asks once, and only to put a new stick on its own WinUSB driver.
 - **Through Home Assistant**: the HowlDrop add-on forwards what arrives there.
 
+**New in 0.21.1**
+- **Several photos at once from the Photos app** now arrive. Photos wraps each one in a folder of its own, and HowlDrop turned the whole share away.
+- Taking your time on Accept no longer eats into the iPhone's time to start sending: the wait for the upload starts when you answer.
+- Sending to a phone whose details haven't fully arrived yet uses the compression iPhones expect.
+- From [Owly](https://github.com/t4t5/owly) 0.4.2 and after.
+
 **New in 0.21.0**
 - **No administrator.** The radio now runs as you, with nothing installed: no Program Files folder, no scheduled task, no virtual network adapter. It brings its own network stack instead. Windows asks for permission only once, to put a stick on WinUSB, and not at all for one 0.20.0 already set up. 0.20.0's elevated scheduled task is what Microsoft Defender flagged (`Behavior:Win32/Persistence.A!ml`), and it's gone.
 - To clean up after 0.20.0, as administrator: `schtasks /delete /tn "\HowlDrop\AirDrop" /f`, then delete `C:\Program Files\HowlDrop`.
@@ -36,4 +42,4 @@ Either way: files in `Downloads\HowlDrop` (deleted after 30 days unless you turn
 
 **Send to iPhone**: set the iPhone's AirDrop to Everyone for 10 Minutes, drop files on the window and pick the phone (or the tray menu's Send to iPhone, or Explorer's Send to, iPhone (HowlDrop)), and accept on the phone. With AirDrop on this PC, the PC's Bluetooth wakes the phone (it stays connected to your other devices); through Home Assistant, the add-on needs `send_to_iphone`.
 
-It pairs with the Home Assistant add-on 0.19.2 as before. The [Windows app's README](https://github.com/MrSco/howl-drop/blob/main/howldrop/README.md) has the menu, the commands and how pairing works.
+It pairs with the Home Assistant add-on 0.19.2 or 0.20.0. The [Windows app's README](https://github.com/MrSco/howl-drop/blob/main/howldrop/README.md) has the menu, the commands and how pairing works.
