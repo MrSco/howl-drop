@@ -38,7 +38,7 @@ if [ "$FORMAT" = tar ]; then
   WORK=$(mktemp -d)
   trap 'rm -rf "$WORK"' EXIT
   STAGE=$WORK/$NAME
-  unset PREFIX BINDIR LIBDIR DATADIR LICENSEDIR DOCDIR HOOKDIR HELPERDIR
+  unset PREFIX BINDIR LIBDIR LIBEXECDIR DATADIR LICENSEDIR DOCDIR HOOKDIR HELPERDIR
   # Arch keeps a package's licenses under its name.
   export LICENSEDIR=/usr/share/licenses/omdrop-owl-bin
   for pkg in owly omdrop-owl; do
@@ -65,13 +65,16 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 STAGE=$WORK/root
 # install.sh's default paths, whatever the environment sets. Debian keeps a
-# package's license with its docs.
-unset PREFIX BINDIR LIBDIR DATADIR LICENSEDIR DOCDIR HOOKDIR
+# package's license with its docs, and Fedora, with SELinux on, needs owlyd
+# in /usr/libexec (install.sh, LIBEXECDIR).
+unset PREFIX BINDIR LIBDIR LIBEXECDIR DATADIR LICENSEDIR DOCDIR HOOKDIR
 if [ "$FORMAT" = deb ]; then
   export LICENSEDIR=/usr/share/doc/owly
+else
+  export LIBEXECDIR=/usr/libexec
 fi
 DESTDIR=$STAGE TARGET=$TARGET "$ROOT/packaging/install.sh" owly
-strip --strip-unneeded "$STAGE/usr/lib/owly/owlyd" "$STAGE/usr/bin/owly"
+strip --strip-unneeded "$STAGE${LIBEXECDIR:-/usr/lib}/owly/owlyd" "$STAGE/usr/bin/owly"
 
 if [ "$FORMAT" = deb ]; then
   ARCH=$(dpkg --print-architecture)

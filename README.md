@@ -114,10 +114,13 @@ Make sure you set your phone's Airdrop setting to "Everyone for 10 minutes".
 | MediaTek MT7925 | `mt7925e` | ✅ Shared | Framework 13, `14c3:0717`, Omarchy 4.0.4 (kernel 7.2.5) |
 | MediaTek MT7612U (USB) | `mt76x2u` | ✅ Exclusive | `0e8d:7612` (kernel 7.2.9) |
 | Realtek RTL8822BE | `rtw88_8822be` | ✅ Exclusive; shared untested | Crosshair VII Hero, `10ec:b822`, NixOS 26.11 (kernel 7.2.9) |
-| Realtek RTL8852AE | `rtw89_8852ae` | ✅ Shared (opt-in) | ThinkPad P14s Gen 2a, `10ec:8852`, Ubuntu 26.04.1 (kernel 7.0) |
-| Realtek RTL8852BE | `rtw89_8852be` | ✅ Shared (opt-in) | ASUS PRIME B550M-A WIFI II, `10ec:b852`, CachyOS (kernel 7.2.9) |
-| Realtek RTL8852CE | `rtw89_8852ce` | ✅ Shared and exclusive (opt-in) | • Legion Slim 5 16AHP9, `10ec:c852`, Omarchy 4.0.4 (kernel 7.2.5)<br>• ThinkBook 16 G7 IML, `10ec:c852`, Ubuntu 24.04.5 (kernel 7.0) |
+| Realtek RTL8851BE | `rtw89_8851be` | ✅ Shared | ASUSTeK COMPUTER INC. ASUS Vivobook 14 X1404VAPBF_X1404VA, `10ec:b851`, openSUSE Tumbleweed (kernel 7.3.0) |
+| Realtek RTL8852AE | `rtw89_8852ae` | ✅ Shared | • ThinkPad P14s Gen 2a, `10ec:8852`, Ubuntu 26.04.1 (kernel 7.0)<br>• LENOVO ThinkPad T14 Gen 2a, `10ec:8852`, Omarchy (kernel 7.2.8) |
+| Realtek RTL8852BE | `rtw89_8852be` | ✅ Shared | ASUS PRIME B550M-A WIFI II, `10ec:b852`, CachyOS (kernel 7.2.9) |
+| Realtek RTL8852CE | `rtw89_8852ce` | ✅ Shared and exclusive | • Legion Slim 5 16AHP9, `10ec:c852`, Omarchy 4.0.4 (kernel 7.2.5)<br>• ThinkBook 16 G7 IML, `10ec:c852`, Ubuntu 24.04.5 (kernel 7.0) |
+| Realtek RTL8922AE | `rtw89_8922ae` | ✅ Exclusive | ASUS System Version, `10ec:8922`, CachyOS (kernel 7.3.0) |
 | Realtek RTL8852BU (USB) | `rtw89_8852bu` | ✅ Exclusive (opt-in), as a second card | USB adapter, `35bc:0108`, NixOS 26.05 (kernel 7.2.9) |
+| Qualcomm Atheros AR9287 | `ath9k` | ✅ Shared | Acer Aspire 4750, `168c:002e`, Ubuntu 24.04.5 LTS (kernel 7.0.0) |
 | Intel 9260 | `iwlwifi` | ✅ Exclusive | `8086:2526`, Debian 13 (kernel 7.2.12) |
 | Intel 9560 | `iwlwifi` | ✅ Exclusive | Lenovo 81SY, `8086:a370`, Omarchy 4.0.0 (kernel 7.2.8) |
 | Intel AX200 | `iwlwifi` | ✅ Exclusive | • ThinkPad X1 Yoga, `8086:2723`, NixOS 26.05 (kernel 6.19.8)<br>• Micro Computer (HK) Tech Limited MS-A2, `8086:2723`, NixOS 26.05 (kernel 7.2.5) |
@@ -131,6 +134,7 @@ Make sure you set your phone's Airdrop setting to "Everyone for 10 minutes".
 | Realtek RTL8188FTV (USB) | `rtl8xxxu` | ⚠️ Exclusive (opt-in) | INTEL H81, `0bda:f179`, Linux Mint 22.3 (kernel 6.14.0): partly |
 | MediaTek MT7927 | `mt7925e` | ❌ Shared: never heard; active monitor (opt-in) sends, but receiving times out ([#44](https://github.com/t4t5/owly/issues/44)) | TP-Link Archer TBE550E, `14c3:7927`, CachyOS (kernel 7.2.9) |
 | Realtek RTL8821CE | `rtw88_8821ce` | ❌ Shared: OWL syncs but no transfer, Wi-Fi often lost after ([#60](https://github.com/t4t5/owly/issues/60)); exclusive receives nothing | HP laptop, `10ec:c821`, Omarchy (kernel 7.2.5) |
+| Realtek RTL8821AU (USB) | `rtw88_8821au` | ❌ Exclusive: AWDL syncs but no data gets through ([#93](https://github.com/t4t5/owly/issues/93)); shared untested | TP-Link Archer T2U Plus, `2357:0120`, Ubuntu 24.04.5 (kernel 7.0) |
 | Qualcomm WCN6855 (QCNFA765) | `ath11k_pci` | ❌ Can't create the monitor interface both modes need ([#45](https://github.com/t4t5/owly/issues/45)) | ThinkPad, `17cb:1103`, CachyOS (kernel 7.2.9) |
 | Qualcomm WCN7850 (FastConnect 7800) | `ath12k_wifi7_pci` | ❌ Shared: receives nothing from the phone ([#40](https://github.com/t4t5/owly/issues/40)); exclusive untested | `17cb:1107`, Fedora 44 (kernel 7.2.9) |
 | Intel Dual Band Wireless-AC 7265 | `iwlwifi` | ❌ Exclusive: firmware asserts on every ad-hoc start ([#16](https://github.com/t4t5/owly/issues/16)) | Zenbook UX305CA, `8086:095a`, Omarchy 4.0.4 (kernel 7.2.5) |
@@ -180,7 +184,7 @@ A USB adapter can run exclusive mode as a second card while the built-in one sta
 station = "wlan0"        # the Wi-Fi interface to use; else the first station
 allow_untested = false   # run on a card the quirks table doesn't mark tested
 reconnect_after = true   # overrides the driver's reconnect_after_monitor
-country = "DE"           # exclusive modes: the regulatory domain to ask for
+country = "DE"           # exclusive modes: the regulatory domain to ask for, else the AP's
 channels = [6]           # exclusive modes: overrides the driver's channel order
 aggregation = true       # overrides the driver's rx_ampdu: accept the phone's Block Ack session
 tx_rate = "mcs7"         # the data frame rate

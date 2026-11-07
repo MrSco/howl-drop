@@ -41,28 +41,42 @@ status = "✅ Exclusive; shared untested"
 tested_on = ["Crosshair VII Hero, `10ec:b822`, NixOS 26.11 (kernel 7.2.9)"]
 
 [[card]]
+name = "Realtek RTL8851BE"
+driver = "rtw89_8851be"
+ids = ["10ec:b851"]
+status = "✅ Shared"
+tested_on = []
+
+[[card]]
 name = "Realtek RTL8852AE"
 driver = "rtw89_8852ae"
 ids = ["10ec:8852"]
-status = "✅ Shared (opt-in)"
+status = "✅ Shared"
 tested_on = ["ThinkPad P14s Gen 2a, `10ec:8852`, Ubuntu 26.04.1 (kernel 7.0)"]
 
 [[card]]
 name = "Realtek RTL8852BE"
 driver = "rtw89_8852be"
 ids = ["10ec:b852"]
-status = "✅ Shared (opt-in)"
+status = "✅ Shared"
 tested_on = ["ASUS PRIME B550M-A WIFI II, `10ec:b852`, CachyOS (kernel 7.2.9)"]
 
 [[card]]
 name = "Realtek RTL8852CE"
 driver = "rtw89_8852ce"
 ids = ["10ec:c852"]
-status = "✅ Shared and exclusive (opt-in)"
+status = "✅ Shared and exclusive"
 tested_on = [
     "Legion Slim 5 16AHP9, `10ec:c852`, Omarchy 4.0.4 (kernel 7.2.5)",
     "ThinkBook 16 G7 IML, `10ec:c852`, Ubuntu 24.04.5 (kernel 7.0)",
 ]
+
+[[card]]
+name = "Realtek RTL8922AE"
+driver = "rtw89_8922ae"
+ids = ["10ec:8922"]
+status = "✅ Exclusive"
+tested_on = []
 
 [[card]]
 name = "Realtek RTL8188FTV (USB)"
@@ -77,6 +91,13 @@ driver = "rtw89_8852bu"
 ids = ["35bc:0108"]
 status = "✅ Exclusive (opt-in), as a second card"
 tested_on = ["USB adapter, `35bc:0108`, NixOS 26.05 (kernel 7.2.9)"]
+
+[[card]]
+name = "Qualcomm Atheros AR9287"
+driver = "ath9k"
+ids = ["168c:002e"]
+status = "✅ Shared"
+tested_on = []
 
 [[card]]
 name = "Intel 9260"
@@ -165,6 +186,13 @@ driver = "rtw88_8821ce"
 ids = ["10ec:c821"]
 status = "❌ Shared: OWL syncs but no transfer, Wi-Fi often lost after ([#60](https://github.com/t4t5/owly/issues/60)); exclusive receives nothing"
 tested_on = ["HP laptop, `10ec:c821`, Omarchy (kernel 7.2.5)"]
+
+[[card]]
+name = "Realtek RTL8821AU (USB)"
+driver = "rtw88_8821au"
+ids = ["2357:0120"]
+status = "❌ Exclusive: AWDL syncs but no data gets through ([#93](https://github.com/t4t5/owly/issues/93)); shared untested"
+tested_on = ["TP-Link Archer T2U Plus, `2357:0120`, Ubuntu 24.04.5 (kernel 7.0)"]
 
 [[card]]
 name = "Qualcomm WCN6855 (QCNFA765)"

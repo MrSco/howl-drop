@@ -25,8 +25,10 @@
 #   DESTDIR      staging root, as in make (default: none)
 #   PREFIX       /usr
 #   BINDIR       $PREFIX/bin, for the owly CLI
-#   LIBDIR       $PREFIX/lib. owlyd and the hooks go in $LIBDIR/owly and
-#                $LIBDIR/omdrop-owl
+#   LIBDIR       $PREFIX/lib. The hooks go in $LIBDIR/omdrop-owl
+#   LIBEXECDIR   $LIBDIR. owlyd goes in $LIBEXECDIR/owly. With SELinux, use
+#                /usr/libexec: from /usr/lib, systemd leaves owlyd in init_t,
+#                which can't reach nl80211
 #   DATADIR      $PREFIX/share
 #   LICENSEDIR   $DATADIR/licenses/<package>
 #   DOCDIR       $DATADIR/doc/<package>
@@ -59,6 +61,7 @@ DESTDIR=${DESTDIR:-}
 PREFIX=${PREFIX:-/usr}
 BINDIR=${BINDIR:-$PREFIX/bin}
 LIBDIR=${LIBDIR:-$PREFIX/lib}
+LIBEXECDIR=${LIBEXECDIR:-$LIBDIR}
 DATADIR=${DATADIR:-$PREFIX/share}
 LICENSEDIR=${LICENSEDIR:-$DATADIR/licenses/$PKG}
 DOCDIR=${DOCDIR:-$DATADIR/doc/$PKG}
@@ -88,17 +91,17 @@ link() {
   ln -sfn "$1" "$DESTDIR$2"
 }
 
-# owlyd's unit, with ExecStart where LIBDIR put it.
+# owlyd's unit, with ExecStart where LIBEXECDIR put it.
 unit() {
   if [ -n "$LIST" ]; then
     echo "$1"
     return
   fi
   install -d "$DESTDIR$(dirname "$1")"
-  sed "s|^ExecStart=/usr/lib/owly/owlyd$|ExecStart=$LIBDIR/owly/owlyd|" \
+  sed "s|^ExecStart=/usr/lib/owly/owlyd$|ExecStart=$LIBEXECDIR/owly/owlyd|" \
     "$ROOT/packaging/owlyd.service" > "$DESTDIR$1"
   chmod 644 "$DESTDIR$1"
-  grep -q "^ExecStart=$LIBDIR/owly/owlyd$" "$DESTDIR$1" \
+  grep -q "^ExecStart=$LIBEXECDIR/owly/owlyd$" "$DESTDIR$1" \
     || { echo "packaging/install.sh: owlyd.service has no ExecStart=/usr/lib/owly/owlyd to rewrite" >&2; exit 1; }
 }
 
@@ -131,7 +134,7 @@ helper_policy() {
 
 case "$PKG" in
   owly)
-    put 755 "$BUILT/owlyd" "$LIBDIR/owly/owlyd"
+    put 755 "$BUILT/owlyd" "$LIBEXECDIR/owly/owlyd"
     put 755 "$BUILT/owly" "$BINDIR/owly"
     unit "$LIBDIR/systemd/system/owlyd.service"
     put 644 "$ROOT/packaging/io.github.t4t5.Owly.conf" "$DATADIR/dbus-1/system.d/io.github.t4t5.Owly.conf"

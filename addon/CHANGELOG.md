@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.20.0
+
+- **Several photos at once from the Photos app** now arrive. Photos wraps each one in a folder of its own, and HowlDrop turned the whole share away.
+- Contacts Only checks the sender's records in HowlDrop itself instead of with the `openssl` command, as howldrop.exe does; the image no longer carries openssl.
+- The image is smaller: the firmware, kmod and wireless-regdb only howldrop.exe's WSL part used are gone, with the WSL switches in `run.sh`. Nothing changes in the options.
+- With [Owly](https://github.com/t4t5/owly) 0.4.2 and after: exclusive mode keeps the access point's country, so it no longer loses 5 GHz without `country` set; a Qualcomm card's frame checksum is stripped when the radio doesn't flag it; the Realtek RTL8852AE, BE, CE, RTL8922AE and Atheros AR9287 work without `allow_untested`.
+
 ## 0.19.2
 
 - For howldrop.exe: when the agent stops on an error it says why in an event (`stopped`), which the PC shows. Nothing changes for the add-on.

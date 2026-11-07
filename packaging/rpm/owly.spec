@@ -46,9 +46,13 @@ if [ "$1" -eq 1 ]; then
   anything, is in the way.
 MSG
 # A running owlyd keeps the old binary until it next starts. Restart it now
-# only when it has no session, so an upgrade doesn't end a window.
+# only when it has no session, so an upgrade doesn't end a window. systemd's
+# file triggers reload units only after the transaction, so reload first:
+# otherwise the restart runs the old unit's ExecStart, which may name the
+# old package's owlyd (it was in /usr/lib/owly before /usr/libexec).
 elif [ "$(busctl get-property io.github.t4t5.Owly /io/github/t4t5/Owly \
     io.github.t4t5.Owly.Radio1 State 2>/dev/null)" = 's "idle"' ]; then
+  systemctl daemon-reload || :
   systemctl try-restart owlyd.service || :
 fi
 

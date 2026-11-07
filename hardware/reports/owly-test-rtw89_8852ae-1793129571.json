@@ -1,0 +1,75 @@
+{
+  "owly": "0.4.1",
+  "time": 1793129571,
+  "kernel": "7.2.8-9-omarchy",
+  "os": "Omarchy",
+  "machine": "LENOVO ThinkPad T14 Gen 2a",
+  "driver": "rtw89_8852ae",
+  "device": "10ec:8852",
+  "status": "untested",
+  "mode": "shared",
+  "channel": 44,
+  "transfers": "omdrop-core",
+  "steps": [
+    {
+      "step": "probe",
+      "result": "pass",
+      "detail": "ready"
+    },
+    {
+      "step": "NetworkManager",
+      "result": "pass",
+      "detail": "leaves Owly's interfaces alone"
+    },
+    {
+      "step": "baseline",
+      "result": "pass",
+      "detail": "10/10 replies"
+    },
+    {
+      "step": "start",
+      "result": "pass",
+      "ms": 827
+    },
+    {
+      "step": "phone heard",
+      "result": "pass"
+    },
+    {
+      "step": "shown on the phone",
+      "result": "pass"
+    },
+    {
+      "step": "phone -> computer",
+      "result": "pass"
+    },
+    {
+      "step": "computer -> phone",
+      "result": "pass",
+      "ms": 4283
+    },
+    {
+      "step": "stop",
+      "result": "pass",
+      "ms": 2359
+    },
+    {
+      "step": "Wi-Fi after teardown",
+      "result": "skipped",
+      "detail": "--watch 0"
+    }
+  ],
+  "wifi": {
+    "baseline": {
+      "sent": 10,
+      "received": 10,
+      "longest_gap_s": 0
+    },
+    "window": {
+      "sent": 22,
+      "received": 22,
+      "longest_gap_s": 0
+    },
+    "after": null
+  }
+}
