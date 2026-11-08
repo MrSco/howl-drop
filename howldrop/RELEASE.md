@@ -3,6 +3,10 @@
 - **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed, and nothing else to install. The first time, it downloads `howldrop-native.zip` below (the radio, about 3.5 MB; checked against the SHA-256 built into the exe) and runs it as you. Windows asks once, and only to put a new stick on its own WinUSB driver.
 - **Through Home Assistant**: the HowlDrop add-on forwards what arrives there.
 
+**New in 0.21.2**
+- **Several photos at once from the Photos app** now really arrive: Photos can put each one several folders deep, which 0.21.1 still turned away, leaving the iPhone on "Waiting". Edited photos, which all share a name, are kept side by side as `FullSizeRender (1).jpg` and so on.
+- When HowlDrop turns a share away, the log says why.
+
 **New in 0.21.1**
 - **Several photos at once from the Photos app** now arrive. Photos wraps each one in a folder of its own, and HowlDrop turned the whole share away.
 - Taking your time on Accept no longer eats into the iPhone's time to start sending: the wait for the upload starts when you answer.
