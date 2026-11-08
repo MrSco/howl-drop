@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.20.1
+
+- **Several photos at once from the Photos app** now really arrive: Photos can put each one several folders deep, which 0.20.0 still turned away, leaving the iPhone on "Waiting". Edited photos, which all share a name, are kept side by side as `FullSizeRender (1).jpg` and so on.
+- When HowlDrop turns a share away, the log says why.
+
 ## 0.20.0
 
 - **Several photos at once from the Photos app** now arrive. Photos wraps each one in a folder of its own, and HowlDrop turned the whole share away.

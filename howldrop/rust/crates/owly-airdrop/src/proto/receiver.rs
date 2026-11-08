@@ -540,17 +540,22 @@ impl Connection {
     }
 
     fn ask(&mut self, value: &plist::Value) {
-        let Ok(request) = AskRequest::from_plist(value) else {
-            self.fail(400);
-            return;
+        let request = match AskRequest::from_plist(value) {
+            Ok(request) => request,
+            Err(_e) => {
+                #[cfg(feature = "tokio")]
+                tracing::warn!("refused an /Ask: {_e}");
+                self.fail(400);
+                return;
+            }
         };
         // ASK-5: every path is checked before anyone is asked about it, and
         // what's written must be what the prompt names: `FileBomPath` is
-        // `./<FileName>`, or `./<folder>/<FileName>` for a regular file, as
-        // Photos wraps each file of a multi-photo share. Extraction drops the
-        // folder.
+        // `./<FileName>`, or for a regular file `<wrappers>/<FileName>`, as
+        // iOS sends photos under where they sit on the phone. Extraction
+        // drops the wrappers (UP-2a).
         if let Offer::Files(files) = &request.offer
-            && files.iter().any(|f| {
+            && let Some(_f) = files.iter().find(|f| {
                 let (Ok(name), Ok(path)) =
                     (RelPath::file_name(&f.name), RelPath::parse(&f.bom_path))
                 else {
@@ -558,10 +563,16 @@ impl Connection {
                 };
                 name != path
                     && !(!f.is_directory
-                        && path.components().len() == 2
+                        && path.components().len() >= 2
                         && path.last() == name.last())
             })
         {
+            #[cfg(feature = "tokio")]
+            tracing::warn!(
+                "refused an /Ask: FileName {:?} doesn't match FileBomPath {:?} (ASK-5)",
+                _f.name,
+                _f.bom_path
+            );
             self.fail(400);
             return;
         }
@@ -774,6 +785,28 @@ mod tests {
         assert!(matches!(request.offer, Offer::Files(files) if files.len() == 2));
     }
 
+    // spec: ASK-5
+    #[test]
+    fn photos_under_their_paths_on_the_phone_reach_the_prompt() {
+        let mut connection = Connection::new(Arc::new(Config::new("Receiver")));
+        connection.ask(&offered(&[
+            (
+                "IMG_4769.PNG",
+                "./Containers/Data/PluginKitPlugin/99600D29-A9A3-4E0D-AF21-6672ACF9D867/tmp/NSIRD_AirDrop_ZBu5DS/IMG_4769.PNG",
+                false,
+            ),
+            (
+                "FullSizeRender.jpg",
+                "./Media/PhotoData/OutgoingTemp/PHMediaFormatConversionRequest-F75C3A12-E2EA-4413-8000-3C1142AC4512/FullSizeRender.jpg",
+                false,
+            ),
+        ]));
+        let Some(Event::Ask(request)) = connection.poll() else {
+            panic!("missing prompt")
+        };
+        assert!(matches!(request.offer, Offer::Files(files) if files.len() == 2));
+    }
+
     // spec: ASK-5, SEC-1
     #[test]
     fn wrapped_paths_still_require_safe_paths_and_the_displayed_file_name() {
@@ -781,8 +814,10 @@ mod tests {
             ("../photo.jpg", false),
             ("/folder/photo.jpg", false),
             ("./folder/../photo.jpg", false),
-            ("./folder/deeper/photo.jpg", false),
             ("./folder/other.jpg", false),
+            ("./folder/deeper/other.jpg", false),
+            ("./folder/./photo.jpg", false),
+            ("./folder//photo.jpg", false),
             ("./folder/photo.jpg", true),
         ] {
             let mut connection = Connection::new(Arc::new(Config::new("Receiver")));
