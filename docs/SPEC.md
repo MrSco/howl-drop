@@ -516,7 +516,7 @@ A link share in the current form carries `TransferType` `{"links": {}}`, the URL
 | `FileName` | string | R | Base name. |
 | `FileType` | string | R | Uniform Type Identifier, e.g. `public.heic`, `public.jpeg`, `public.data` (fallback). Not a MIME type. |
 | `FileSize` | int | R (current) | Uncompressed size in bytes. |
-| `FileBomPath` | string | R | Path inside the `/Upload` archive: `./<FileName>`, or `./<folder>/<FileName>` for a regular file in a wrapper directory. The `./` prefix is required. |
+| `FileBomPath` | string | R | Path inside the `/Upload` archive: `./<FileName>`, or `./<wrappers>/<FileName>` for a regular file in one or more wrapper directories, such as the directories that hold it on the sender. The `./` prefix is required. |
 | `FileIsDirectory` | bool | R | |
 | `ShouldConvertMediaFormats` | bool | R (current) | `false`. |
 | `ConvertMediaFormats` | int | legacy | `0`. The legacy form's name for the field above. |
@@ -538,7 +538,7 @@ A link share in the current form carries `TransferType` `{"links": {}}`, the URL
 
 **ASK-4** (sender) For a link share, the sender MUST NOT send `/Upload`. The share is complete when `/Ask` returns `200`.
 
-**ASK-5** (receiver) A receiver MUST treat every `FileName` and `FileBomPath` as untrusted (SEC-1). It MUST refuse an `/Ask` whose `FileBomPath` isn't `./<FileName>` or, for a regular file, `./<folder>/<FileName>`. The wrapper MUST be exactly one safe path component. The file written MUST have the name shown by the prompt.
+**ASK-5** (receiver) A receiver MUST treat every `FileName` and `FileBomPath` as untrusted (SEC-1). It MUST refuse an `/Ask` whose `FileBomPath` isn't `./<FileName>` or, for a regular file, `./<wrappers>/<FileName>`. Each wrapper MUST be a safe path component (SEC-1). The file written MUST have the name shown by the prompt, suffixed under SEC-2 if another file took it.
 
 **ASK-6** Receivers accept without prompting when the sender's record verifies as the receiver's own Apple ID (§7). No field of the request can claim this.
 
@@ -578,7 +578,7 @@ A sender can also send `SenderPseudonym` (`pseud:` and base64) and `SenderPushTo
 
 A sender MUST send the `.` root entry. A receiver MUST accept archives with and without it.
 
-For the wrapped regular-file form in ASK-5, the archive MAY include a `./<folder>` directory entry before the file. The receiver MUST save the file as `<FileName>` without retaining the wrapper directory.
+For the wrapped regular-file form in ASK-5, the archive MAY include a directory entry for each wrapper before the file. The receiver MUST save the file as `<FileName>` without retaining the wrapper directories. Wrapped files from one transfer can share a `FileName`; the receiver MUST keep each one, suffixing the name under SEC-2.
 
 **UP-3** (receiver) A receiver MUST answer `Expect: 100-continue` with `100 Continue`. Senders send it when the receiver doesn't advertise SupportsPipelining.
 

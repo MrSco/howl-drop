@@ -231,21 +231,20 @@ impl Rules {
             .allowed
             .iter()
             .any(|a| path == a.path && a.is_directory == entry.is_dir());
-        let wrapped_file = self
-            .allowed
-            .iter()
-            .any(|a| !a.is_directory && a.path.components().len() == 2 && path == a.path);
+        // UP-2a: a regular file the `/Ask` lists under wrapper directories,
+        // any number deep. The wrappers are skipped and the file is written
+        // under its own name.
+        let wrapped_file = self.allowed.iter().any(|a| is_wrapped(a) && path == a.path);
         let wrapper = !listed
             && entry.is_dir()
-            && self.allowed.iter().any(|a| {
-                !a.is_directory
-                    && a.path.components().len() == 2
-                    && a.path.parent().as_ref() == Some(&path)
-            });
+            && self
+                .allowed
+                .iter()
+                .any(|a| is_wrapped(a) && a.path.starts_with(&path) && a.path != path);
         let item = if wrapper || !listed && entry.is_file() && self.is_sidecar(&path) {
             Item::Skip
         } else if wrapped_file && entry.is_file() {
-            Item::File(RelPath::file_name(path.last())?)
+            Item::File(self.unwrapped_name(path.last())?)
         } else if listed || self.is_inside_directory(&path) {
             if entry.is_dir() {
                 Item::Dir(path.clone())
@@ -268,6 +267,21 @@ impl Rules {
             return Err(Error::TooLarge);
         }
         Ok(item)
+    }
+
+    /// Where an unwrapped file goes: its name, or the first free
+    /// `name (n)` when another file already took it (SEC-2). Edited photos
+    /// all arrive as `FullSizeRender.jpg`, each in a wrapper of its own.
+    fn unwrapped_name(&self, name: &str) -> Result<RelPath, Error> {
+        let path = RelPath::file_name(name)?;
+        if !self.destinations.contains(&path) {
+            return Ok(path);
+        }
+        (1..=self.limits.max_entries)
+            .map(|n| RelPath::file_name(&collision_name(name, n)))
+            .find(|p| p.as_ref().is_ok_and(|p| !self.destinations.contains(p)))
+            .unwrap_or_else(|| Err(PathError(name.into())))
+            .map_err(Error::from)
     }
 
     /// Besides the listed items themselves, entries inside a listed directory
@@ -295,6 +309,11 @@ impl Rules {
             .iter()
             .any(|a| target == a.path || a.is_directory && target.starts_with(&a.path))
     }
+}
+
+/// A regular file the `/Ask` lists inside wrapper directories (UP-2a).
+fn is_wrapped(a: &Allowed) -> bool {
+    !a.is_directory && a.path.components().len() >= 2
 }
 
 /// SEC-2: the `n`th alternative to `name` when it's taken, as
@@ -504,13 +523,16 @@ mod tests {
             Err(Error::Duplicate(_))
         ));
 
+        // Two wrapped files of one name: the second is suffixed (SEC-2).
         let mut r = rules(&[("a/photo.jpg", false), ("b/photo.jpg", false)]);
-        r.check(&entry("./a/photo.jpg", MODE_FILE | 0o644, 1))
-            .unwrap();
-        assert!(matches!(
+        assert_eq!(
+            r.check(&entry("./a/photo.jpg", MODE_FILE | 0o644, 1)),
+            Ok(Item::File(RelPath::file_name("photo.jpg").unwrap()))
+        );
+        assert_eq!(
             r.check(&entry("./b/photo.jpg", MODE_FILE | 0o644, 1)),
-            Err(Error::Duplicate(_))
-        ));
+            Ok(Item::File(RelPath::file_name("photo (1).jpg").unwrap()))
+        );
         let mut r = rules(&[("a/photo.jpg", false)]);
         assert_eq!(
             r.check(&entry("./a/photo.jpg", MODE_FILE | 0o644, 1001)),
@@ -520,6 +542,65 @@ mod tests {
             r.check(&entry("./a/photo.jpg", 0o120777, 1)),
             Err(Error::Unsupported(_))
         ));
+    }
+
+    // spec: UP-2a, UP-7, SEC-2
+    #[test]
+    fn photos_under_deep_wrappers_are_flattened() {
+        let one =
+            "Media/PhotoData/OutgoingTemp/PHMediaFormatConversionRequest-1/FullSizeRender.jpg";
+        let two =
+            "Media/PhotoData/OutgoingTemp/PHMediaFormatConversionRequest-2/FullSizeRender.jpg";
+        let three = "Containers/Data/tmp/NSIRD_AirDrop_X/IMG_4769.PNG";
+        let mut r = rules(&[(one, false), (two, false), (three, false)]);
+        for dir in [
+            "./Media",
+            "./Media/PhotoData",
+            "./Media/PhotoData/OutgoingTemp",
+            "./Media/PhotoData/OutgoingTemp/PHMediaFormatConversionRequest-1",
+        ] {
+            assert_eq!(
+                r.check(&entry(dir, MODE_DIR | 0o755, 0)),
+                Ok(Item::Skip),
+                "{dir}"
+            );
+        }
+        assert_eq!(
+            r.check(&entry(&format!("./{one}"), MODE_FILE | 0o644, 3)),
+            Ok(Item::File(
+                RelPath::file_name("FullSizeRender.jpg").unwrap()
+            ))
+        );
+        // A wrapped file listed once is written once.
+        assert!(matches!(
+            r.check(&entry(&format!("./{one}"), MODE_FILE | 0o644, 3)),
+            Err(Error::Duplicate(_))
+        ));
+        assert_eq!(
+            r.check(&entry(&format!("./{two}"), MODE_FILE | 0o644, 3)),
+            Ok(Item::File(
+                RelPath::file_name("FullSizeRender (1).jpg").unwrap()
+            ))
+        );
+        assert_eq!(
+            r.check(&entry(&format!("./{three}"), MODE_FILE | 0o644, 3)),
+            Ok(Item::File(RelPath::file_name("IMG_4769.PNG").unwrap()))
+        );
+        // Nothing else under the wrappers, and no wrapper as a file.
+        let mut r = rules(&[(one, false), (three, false)]);
+        for (name, mode) in [
+            ("./Media/PhotoData/other.jpg", MODE_FILE | 0o644),
+            ("./Media/Other", MODE_DIR | 0o755),
+            (
+                "./Containers/Data/tmp/NSIRD_AirDrop_X/IMG_4769.PNG/x",
+                MODE_FILE | 0o644,
+            ),
+        ] {
+            assert!(
+                matches!(r.check(&entry(name, mode, 0)), Err(Error::NotAsked(_))),
+                "{name}"
+            );
+        }
     }
 
     // spec: SEC-3
