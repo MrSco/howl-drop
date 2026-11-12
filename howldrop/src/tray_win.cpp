@@ -254,7 +254,7 @@ void notify(App& app, const std::wstring& title, const std::wstring& message) {
     // The HowlDrop window is open: it says this itself.
     if (app.howl_window && app.howl_window->showing()) return;
     NOTIFYICONDATAW data = app.icon;
-    data.uFlags = NIF_INFO;
+    data.uFlags = NIF_INFO | NIF_TIP | NIF_SHOWTIP;
     data.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
     copy_into(data.szInfoTitle, ARRAYSIZE(data.szInfoTitle), title);
     copy_into(data.szInfo, ARRAYSIZE(data.szInfo), message);
@@ -885,7 +885,13 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                     if (app->howl_window && cards_on(*app)) app->howl_window->show();
                     else open_folder(*app);
                     return 0;
+                case NIN_BALLOONHIDE:
+                case NIN_BALLOONTIMEOUT:
+                    // Version 4 icons must restore the standard tooltip after a notification.
+                    set_tip(*app);
+                    return 0;
                 case NIN_BALLOONUSERCLICK:
+                    set_tip(*app);
                     if (app->click_target.empty()) open_folder(*app);
                     else if (app->click_selects) show_in_folder(app->click_target);
                     else open_target(app->click_target);
