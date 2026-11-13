@@ -93,6 +93,13 @@ status = "✅ Exclusive (opt-in), as a second card"
 tested_on = ["USB adapter, `35bc:0108`, NixOS 26.05 (kernel 7.2.9)"]
 
 [[card]]
+name = "Realtek RTL8812BU (USB)"
+driver = "rtw88_8822bu"
+ids = ["2357:0138"]
+status = "✅ Exclusive"
+tested_on = []
+
+[[card]]
 name = "Qualcomm Atheros AR9287"
 driver = "ath9k"
 ids = ["168c:002e"]
@@ -214,6 +221,13 @@ driver = "iwlwifi"
 ids = ["8086:095a"]
 status = "❌ Exclusive: firmware asserts on every ad-hoc start ([#16](https://github.com/t4t5/owly/issues/16))"
 tested_on = ["Zenbook UX305CA, `8086:095a`, Omarchy 4.0.4 (kernel 7.2.5)"]
+
+[[card]]
+name = "Intel Dual Band Wireless-AC 3168"
+driver = "iwlwifi"
+ids = ["8086:24fb"]
+status = "❌ Exclusive: firmware asserts on every ad-hoc start, like the 7265 ([#109](https://github.com/t4t5/owly/issues/109))"
+tested_on = ["ASUS S2 Air Series PF4NU1F, `8086:24fb`, EndeavourOS (kernel 6.18.55)"]
 
 [[card]]
 name = "Intel Wireless-AC 8260"
