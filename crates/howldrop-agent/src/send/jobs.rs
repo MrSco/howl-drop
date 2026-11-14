@@ -103,7 +103,7 @@ pub(super) async fn send_ready(air: &Air, sender: &Sender, opts: &Options, statu
                     return Err(io::Error::other("choose regular files or folders"));
                 }
             }
-            let _advert = advertise(opts.ble).await;
+            let _advert = advertise(opts.ble, opts.sender_identity.as_deref()).await;
             let result = try_send_paths(
                 air,
                 sender,
@@ -113,6 +113,7 @@ pub(super) async fn send_ready(air: &Air, sender: &Sender, opts: &Options, statu
                 &progress,
                 cancelled.clone(),
                 Some(id),
+                opts.sender_identity.as_deref(),
             )
             .await;
             Ok::<_, io::Error>(result)
@@ -211,6 +212,7 @@ mod tests {
         std::fs::write(&cancel, b"\n").unwrap();
         let opts = Options {
             outbox: outbox.clone(),
+            sender_identity: None,
             local_jobs: true,
             discard: true,
             name: "test".into(),
@@ -229,7 +231,7 @@ mod tests {
             #[cfg(windows)]
             stack: crate::netstack::Stack::new("fe80::1".parse().unwrap()).0,
         };
-        let sender = new_sender(&opts.name, &opts.model, &air).unwrap();
+        let sender = new_sender(&opts.name, &opts.model, &air, None).unwrap();
         send_ready(&air, &sender, &opts, &Status::new(None)).await;
         assert_eq!(std::fs::read(original).unwrap(), b"unchanged");
         assert!(!job.exists());

@@ -12,9 +12,10 @@
 //!
 //! The phone is found among the radio's AWDL peers, each asked `/Discover`
 //! (an iPhone's mDNS doesn't reach `awdl0`). It only answers while it
-//! listens: unlocked, AirDrop set to Everyone for 10 Minutes, and woken by
-//! the BLE advert (from Windows' Bluetooth under howldrop.exe; here with
-//! `--ble`). So each file gets a window of tries.
+//! listens: awake, AirDrop enabled, and woken by the BLE advert (from
+//! Windows' Bluetooth under howldrop.exe; here with `--ble`). Anonymous
+//! sending needs Everyone for 10 Minutes; an imported identity can carry
+//! verified contact hashes and its signed record. Each file gets a window of tries.
 //!
 //! Events: `sending NAME DETAIL` as the send gets further, then `sent NAME
 //! sent|failed DETAIL`; a scan (the scan-request file appearing) gives
@@ -53,6 +54,7 @@ const ASK_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct Options {
     pub outbox: PathBuf,
+    pub sender_identity: Option<std::sync::Arc<crate::sender_identity::SenderIdentity>>,
     pub local_jobs: bool,
     pub discard: bool,
     pub name: String,
@@ -86,7 +88,12 @@ struct Listed {
 }
 
 pub async fn run(air: Air, opts: Options) {
-    let sender = match new_sender(&opts.name, &opts.model, &air) {
+    let sender = match new_sender(
+        &opts.name,
+        &opts.model,
+        &air,
+        opts.sender_identity.as_deref(),
+    ) {
         Ok(s) => s,
         Err(e) => {
             say(format!("Send: sending isn't available: {e}"));
@@ -98,8 +105,13 @@ pub async fn run(air: Air, opts: Options) {
     let mut devices: Vec<(MacAddr, String)> = Vec::new();
     write_nearby(opts.nearby.as_deref(), &devices, false);
     say(format!(
-        "Send: files put in {} are AirDropped to a nearby iPhone set to Everyone for 10 Minutes.",
-        opts.outbox.display()
+        "Send: files put in {} are AirDropped to a nearby iPhone ({}).",
+        opts.outbox.display(),
+        if opts.sender_identity.is_some() {
+            "using the imported trusted-contact identity"
+        } else {
+            "set AirDrop to Everyone for 10 Minutes"
+        }
     ));
     let mut sizes: HashMap<PathBuf, (u64, u32)> = HashMap::new();
     let mut jobs: HashMap<PathBuf, usize> = HashMap::new();
@@ -146,16 +158,30 @@ pub async fn run(air: Air, opts: Options) {
 
 /// The sender, as a Mac: with Owly's "Linux" for a model, an iPhone left
 /// the preview out of its prompt (it shows a Mac's, as it did 0.18.0's).
-fn new_sender(name: &str, model: &str, air: &Air) -> io::Result<Sender> {
+fn new_sender(
+    name: &str,
+    model: &str,
+    air: &Air,
+    identity: Option<&crate::sender_identity::SenderIdentity>,
+) -> io::Result<Sender> {
     let mut config = Config::new(name, crate::receive::random_id()?);
     config.model_name = model.to_string();
     config.ask_timeout = ASK_TIMEOUT;
+    if let Some(identity) = identity {
+        identity.current()?;
+        config.sender_record = Some(identity.record.clone());
+    }
+    let tls = identity.map(|i| &i.tls);
     #[cfg(windows)]
-    return Sender::with_connector(config, crate::netstack::Connector(air.stack.clone()));
+    return Sender::with_identity_and_connector(
+        config,
+        tls,
+        crate::netstack::Connector(air.stack.clone()),
+    );
     #[cfg(not(windows))]
     {
         let _ = air;
-        Sender::new(config)
+        Sender::with_client_identity(config, tls)
     }
 }
 
@@ -186,9 +212,17 @@ async fn send_one(
         status.update(job, None, detail);
         emit(&["sending", &name, detail]);
     };
-    let _advert = advertise(opts.ble).await;
-    let (ok, detail, upload) =
-        try_send(air, sender, path, to.as_deref(), opts.window, &progress).await;
+    let _advert = advertise(opts.ble, opts.sender_identity.as_deref()).await;
+    let (ok, detail, upload) = try_send(
+        air,
+        sender,
+        path,
+        to.as_deref(),
+        opts.window,
+        &progress,
+        opts.sender_identity.as_deref(),
+    )
+    .await;
     let detail = match (&to, ok) {
         (Some(t), true) => format!("on {t}"),
         _ => detail,
@@ -276,6 +310,7 @@ async fn try_send(
     to: Option<&str>,
     window: Duration,
     progress: &impl Fn(&str),
+    identity: Option<&crate::sender_identity::SenderIdentity>,
 ) -> (bool, String, Option<Duration>) {
     try_send_paths(
         air,
@@ -286,6 +321,7 @@ async fn try_send(
         progress,
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         None,
+        identity,
     )
     .await
 }
@@ -300,7 +336,13 @@ async fn try_send_paths(
     progress: &impl Fn(&str),
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     id: Option<&str>,
+    identity: Option<&crate::sender_identity::SenderIdentity>,
 ) -> (bool, String, Option<Duration>) {
+    if let Some(identity) = identity
+        && let Err(e) = identity.current()
+    {
+        return (false, e.to_string(), None);
+    }
     // Keep legacy single-file retry behaviour, with one offer for a selection.
     let icon = file_icon(&paths[0]).await;
     if let Some(icon) = &icon {
@@ -310,6 +352,11 @@ async fn try_send_paths(
     // What the PC was last told about the wait: whether the phone refused.
     let mut waited: Option<bool> = None;
     while Instant::now() < deadline {
+        if let Some(identity) = identity
+            && let Err(e) = identity.current()
+        {
+            return (false, e.to_string(), None);
+        }
         let target = match find(air, sender, to, deadline).await {
             Found::One(t) => t,
             Found::Many(why) => return (false, why, None),
@@ -322,7 +369,11 @@ async fn try_send_paths(
                     // server shut. Contacts Only (Everyone for 10 Minutes ran
                     // out) keeps it shut; for a while after a transfer an
                     // iPhone opens it only now and then, and the knocks go on.
-                    let say_ = if shut {
+                    let say_ = if identity.is_some() {
+                        format!(
+                            "waiting for {who} with the trusted-contact identity: keep AirDrop enabled and check the sender is a known contact"
+                        )
+                    } else if shut {
                         format!(
                             "{who} is here but not taking files yet: is its AirDrop still on Everyone for 10 Minutes?"
                         )
@@ -427,8 +478,13 @@ async fn try_send_paths(
     (
         false,
         format!(
-            "the iPhone did not answer within {} minutes: is AirDrop set to Everyone?",
-            window.as_secs() / 60
+            "the iPhone did not answer within {} minutes: {}",
+            window.as_secs() / 60,
+            if identity.is_some() {
+                "check the sender identity and contacts"
+            } else {
+                "is AirDrop set to Everyone?"
+            }
         ),
         None,
     )
@@ -536,10 +592,18 @@ async fn scan(
     opts: &Options,
     previous: &[(MacAddr, String)],
 ) -> Vec<(MacAddr, String)> {
+    if let Some(identity) = opts.sender_identity.as_ref()
+        && let Err(e) = identity.current()
+    {
+        say(format!("Send: {e}"));
+        write_nearby(opts.nearby.as_deref(), &[], false);
+        tell_nearby(&[], false);
+        return Vec::new();
+    }
     say("Send: looking for nearby devices");
     write_nearby(opts.nearby.as_deref(), previous, true);
     tell_nearby(previous, true);
-    let _advert = advertise(opts.ble).await;
+    let _advert = advertise(opts.ble, opts.sender_identity.as_deref()).await;
     let mut devices: Vec<(MacAddr, String)> = Vec::new();
     for attempt in 0..SCAN_ATTEMPTS {
         if attempt > 0 {
@@ -564,7 +628,11 @@ async fn scan(
     say(format!(
         "Send: nearby: {}",
         if names.is_empty() {
-            "nothing answered (is AirDrop set to Everyone?)".to_string()
+            if opts.sender_identity.is_some() {
+                "no trusted receiver answered; check the sender identity and contacts".to_string()
+            } else {
+                "nothing answered (is AirDrop set to Everyone?)".to_string()
+            }
         } else {
             names.join(", ")
         }
@@ -751,7 +819,10 @@ fn free_path(dir: &Path, name: &str) -> PathBuf {
 /// BLE-1: the advert that wakes an iPhone's AirDrop, while it's held. On
 /// Windows howldrop.exe advertises with Windows' Bluetooth.
 #[cfg(not(target_os = "linux"))]
-async fn advertise(on: bool) -> Option<()> {
+async fn advertise(
+    on: bool,
+    _identity: Option<&crate::sender_identity::SenderIdentity>,
+) -> Option<()> {
     if on {
         say("Bluetooth: not advertising: there's no BlueZ here");
     }
@@ -760,16 +831,26 @@ async fn advertise(on: bool) -> Option<()> {
 
 /// BLE-1: the advert that wakes an iPhone's AirDrop, while it's held.
 #[cfg(target_os = "linux")]
-async fn advertise(on: bool) -> Option<crate::bluez::Registration> {
+async fn advertise(
+    on: bool,
+    identity: Option<&crate::sender_identity::SenderIdentity>,
+) -> Option<crate::bluez::Registration> {
     if !on {
         return None;
     }
     let result = async {
         let mut tag = [0u8; 3];
         getrandom::fill(&mut tag).map_err(|e| io::Error::other(e.to_string()))?;
+        let mut advert = owly_airdrop::proto::ble::Advert::anonymous(tag);
+        if let Some(identity) = identity {
+            identity.current()?;
+            for (slot, prefix) in advert.hashes.iter_mut().zip(&identity.profile.prefixes) {
+                *slot = *prefix;
+            }
+        }
         crate::bluez::BluezAdvertiser::new()
             .await?
-            .advertise(owly_airdrop::proto::ble::Advert::anonymous(tag))
+            .advertise(advert)
             .await
     }
     .await;

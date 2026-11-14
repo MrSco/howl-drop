@@ -13,6 +13,7 @@
 // to it drops. Windows only.
 
 #include <string>
+#include <array>
 
 namespace howldrop {
 
@@ -25,7 +26,7 @@ public:
 
     // On the thread that calls them, which must have called RoInitialize.
     // start: empty, or why it could not (Bluetooth off, say).
-    std::string start();
+    std::string start(const std::array<unsigned char, 8>& contact_hashes = {});
     void stop();
     bool on() const { return publisher_ != nullptr; }
 

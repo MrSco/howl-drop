@@ -83,6 +83,12 @@ it on private networks (UDP 47631, TCP 47632).
 
 ## AirDrop on this PC
 
+Sending normally requires **Everyone for 10 Minutes** on the iPhone.
+Source builds also support [validated identity import](../docs/sender-identity.md)
+for Contacts Only sending. This needs an existing Apple-issued certificate,
+key and signed record; obtaining them from current macOS remains unresolved,
+and real-identity sending still needs hardware verification.
+
 Windows' own Wi-Fi drivers cannot do AirDrop's Wi-Fi (AWDL), so HowlDrop
 drives a USB Wi-Fi stick itself: `howldrop-agent.exe` runs the stick from
 user space, AWDL and AirDrop on top of it, with a network stack of its own

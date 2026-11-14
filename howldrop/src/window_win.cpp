@@ -488,7 +488,8 @@ struct HowlWindow::Impl {
                 y += kDeviceRow;
             }
             if (around.devices.empty() && !around.scanning) {
-                g.text(L"Set the iPhone's AirDrop to Everyone for 10 Minutes, then Look for devices.",
+                g.text(around.trusted ? L"For Contacts Only, add your Apple email or phone to the iPhone's contacts."
+                                     : L"Set the iPhone's AirDrop to Everyone for 10 Minutes, then Look for devices.",
                        D2D1::RectF(kSide + 4, y - 2, right, y + 16), ui::Font::Small, ui::theme::dim);
                 y += 18;
             }

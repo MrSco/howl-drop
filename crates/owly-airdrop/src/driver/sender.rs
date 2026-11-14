@@ -75,15 +75,28 @@ impl Sender {
     /// Fork: a sender whose connections `transport` opens, on a network
     /// stack other than the host's (transport).
     pub fn with_connector(config: Config, transport: impl Connect) -> io::Result<Self> {
-        let mut sender = Self::new(config)?;
+        Self::with_identity_and_connector(config, None, transport)
+    }
+
+    /// A client identity and an application-provided transport together.
+    pub fn with_identity_and_connector(
+        config: Config,
+        identity: Option<&Identity>,
+        transport: impl Connect,
+    ) -> io::Result<Self> {
+        let mut sender = Self::with_client_identity(config, identity)?;
         sender.transport = Arc::new(transport);
         Ok(sender)
     }
 
     /// A sender that presents a client certificate, as Apple senders do
-    /// (TLS-3). For tests.
-    #[doc(hidden)]
+    /// (TLS-3). A configured sender record requires its matching identity.
     pub fn with_client_identity(config: Config, identity: Option<&Identity>) -> io::Result<Self> {
+        if config.sender_record.is_some() && identity.is_none() {
+            return Err(io::Error::other(
+                "a sender record requires its TLS client identity",
+            ));
+        }
         Ok(Sender {
             config,
             connector: TlsConnector::from(tls::client_config(identity)?),
@@ -108,7 +121,10 @@ impl Sender {
     pub async fn discover(&self, addr: SocketAddrV6) -> io::Result<Option<Receiver>> {
         let mut tls = self.connect(addr).await?;
         let response = timeout(DISCOVER_TIMEOUT, async {
-            tls.write_all(&sender::discover_request()).await?;
+            tls.write_all(&sender::discover_request_with_record(
+                self.config.sender_record.as_deref(),
+            ))
+            .await?;
             tls.flush().await?;
             read_response(&mut tls).await
         })

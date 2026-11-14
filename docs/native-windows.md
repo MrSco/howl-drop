@@ -256,6 +256,17 @@ Pi and protocol-tuning PRs are not enabled by this Windows change.
 
 ## Trying it
 
+### Optional Contacts Only sending identity
+
+[Validated identity import](sender-identity.md) accepts an existing
+Apple-issued certificate/key and signed record. Check/import commands run
+without the radio; Windows protects the installed bundle with user-scoped
+DPAPI. The tray loads `%LOCALAPPDATA%\HowlDrop\sender-identity.bin`, rotates
+its verified BLE prefixes while waking receivers, and the sender uses the
+matching client certificate and record. Anonymous sending remains the
+default. A current macOS export route and real-identity hardware validation
+are still outstanding.
+
 ### Optional send-speed experiments
 
 Three experiments are available for hardware comparisons, all off by

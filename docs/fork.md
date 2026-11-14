@@ -30,6 +30,7 @@ accepted), which change it for everyone.
 | owly-airdrop | `Request.peer_certificate`: the sender's TLS client certificate | Contacts Only: the agent ties the Apple-signed record to the sender's account. |
 | owly-airdrop | `Config.discover_gate`: refuse a `/Discover` with 401 | Contacts Only: strangers don't see the PC. |
 | owly-airdrop | sender `Config.file_icon` and `Sender::send_with_icon` | The preview an iPhone shows for a picture sent to it. |
+| owly-airdrop | `Identity::from_pem`, sender `Config.sender_record`, `Sender::with_identity_and_connector` | Validated identity import: matching client key/certificate chain and the same signed record on discovery and Ask, including the Windows transport. See [sender-identity.md](sender-identity.md); real Contacts Only interoperability is unverified. |
 | owly-airdrop | `driver/transport.rs`: `Receiver::with_listener`, `Sender::with_connector`, `Mdns::with_datagrams` | On Windows the agent's own TCP/IP stack is the link, not one of the host's interfaces, so nothing needs an administrator. |
 | owly-awdl | `driver.rs`: a `schedule` log line whenever a peer's slots or its network's channel change (`tlv.rs`, `peer.rs`: `infra_channel`) | Why AirDrop is slow when it is: an iPhone busy on its own network gives the stick's channel few slots. |
 | owly-awdl | `reorder.rs`: a Block Ack session's frames put back in order | Out-of-order segments make TCP resend. (It was not what made uploads slow: the next one was.) |
