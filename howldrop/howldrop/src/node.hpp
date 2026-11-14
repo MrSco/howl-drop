@@ -96,6 +96,7 @@ public:
     // To the add-on's iPhone relay (role "iphone"), which AirDrops it on: to
     // the device named to, or with to empty the add-on's default.
     Status send_to_iphone(const std::filesystem::path& path, const std::string& to = {});
+    Status send_selection_to_iphone(const std::vector<std::filesystem::path>& paths, const std::string& to = {});
     // What the relay's latest scan heard, from its hello.
     struct Nearby {
         bool relay = false;     // the relay is on the network, or this PC's radio runs
@@ -114,8 +115,16 @@ public:
     public:
         virtual ~LocalIphone() = default;
         virtual Status queue(const std::filesystem::path& path, const std::string& to) = 0;
+        virtual Status queue_selection(const std::vector<std::filesystem::path>& paths, const std::string& to) {
+            for (const auto& path : paths) {
+                const auto result = queue(path, to);
+                if (!result.ok) return result;
+            }
+            return Status::success("queued");
+        }
         virtual Nearby nearby() const = 0;
         virtual Status scan() = 0;
+        virtual Status control_send(const std::string&, bool) { return Status::failure("transfer controls need AirDrop on this PC"); }
     };
     void set_local_iphone(std::shared_ptr<LocalIphone> local);
     Status push_clipboard();

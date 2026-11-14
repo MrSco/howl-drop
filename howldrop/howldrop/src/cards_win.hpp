@@ -38,6 +38,7 @@ bool render_card(const Transfers::Transfer& t, const std::wstring& inbox_label, 
 class Cards {
 public:
     struct Actions {
+        std::function<void(const std::string& id, bool retry)> control_send;
         std::function<void(const std::string& id, bool accept)> decide;  // an ask's answer
         std::function<void(const std::filesystem::path& file)> open;     // a file, or a link's .url
         std::function<void(const std::filesystem::path& file)> show;     // in its folder

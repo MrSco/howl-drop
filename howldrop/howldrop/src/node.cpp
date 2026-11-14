@@ -1,5 +1,6 @@
 #include "node.hpp"
 
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <iostream>
@@ -677,6 +678,20 @@ Status Node::send_to_iphone(const std::filesystem::path& path, const std::string
     return status;
 }
 
+Status Node::send_selection_to_iphone(const std::vector<std::filesystem::path>& paths, const std::string& to) {
+    if (paths.empty()) return Status::failure("choose files or folders to send");
+    if (const auto local = local_iphone()) return local->queue_selection(paths, one_line(to).substr(0, 64));
+    for (const auto& path : paths) {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path, ec)) return Status::failure("folder sending needs AirDrop on this PC");
+    }
+    for (const auto& path : paths) {
+        const auto result = send_to_iphone(path, to);
+        if (!result.ok) return result;
+    }
+    return Status::success("sent");
+}
+
 Status Node::send_file_to(const Peer& peer, const std::filesystem::path& path, const std::string& to) {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec)) return Status::failure("that path is not a file");
@@ -929,6 +944,39 @@ void Node::handle_control(Socket socket) {
     } else if (line == "scan") {
         const Status status = request_iphone_scan();
         response = (status.ok ? "ok " : "error ") + one_line(status.message);
+    } else if (line.rfind("cancel ", 0) == 0 || line.rfind("retry ", 0) == 0) {
+        const auto local = local_iphone();
+        const auto result = local ? local->control_send(line.substr(line.find(' ') + 1), line.rfind("retry ", 0) == 0)
+                                  : Status::failure("turn on AirDrop on this PC first");
+        response = (result.ok ? "ok " : "error ") + one_line(result.message);
+    } else if (line.rfind("iphone-selection ", 0) == 0) {
+        std::vector<std::string> fields;
+        std::size_t start = 17;
+        while (start <= line.size()) {
+            const auto end = line.find('\t', start);
+            fields.push_back(line.substr(start, end == std::string::npos ? end : end - start));
+            if (end == std::string::npos) break;
+            start = end + 1;
+        }
+        if (fields.size() < 2 || fields.size() > 257) response = "error choose 1 to 256 files or folders";
+        else {
+            std::vector<std::filesystem::path> paths;
+            for (std::size_t i = 1; i < fields.size(); ++i) paths.push_back(path_from_utf8(fields[i]));
+            if (local_iphone()) {
+                const auto result = send_selection_to_iphone(paths, fields[0]);
+                response = (result.ok ? "ok " : "error ") + one_line(result.message);
+            } else if (!relay_peer()) {
+                response = "error turn on AirDrop on this PC or Home Assistant's iPhone relay";
+            } else if (std::any_of(paths.begin(), paths.end(), [](const auto& path) {
+                std::error_code ec;
+                return !std::filesystem::is_regular_file(path, ec);
+            })) {
+                response = "error choose existing files; folder sending needs AirDrop on this PC";
+            } else {
+                spawn([this, paths, to = fields[0]]() { send_selection_to_iphone(paths, to); });
+                response = "ok sending";
+            }
+        }
     } else if (line.rfind("iphone ", 0) == 0) {
         // Sent in the background: a big file outlasts the control reply's
         // timeout. on_sent (the tray's notification) says how it went.

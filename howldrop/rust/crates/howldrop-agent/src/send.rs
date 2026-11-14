@@ -35,6 +35,7 @@ use owly_awdl::{MacAddr, PeerInfo};
 use tokio::sync::watch;
 
 use crate::events::{emit, say, took};
+mod jobs;
 
 const TARGET_SUFFIX: &str = ".howldrop-to";
 /// Apple's receivers listen here, an AWDL peer without mDNS too (DISC-5).
@@ -52,6 +53,7 @@ const ASK_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct Options {
     pub outbox: PathBuf,
+    pub local_jobs: bool,
     pub discard: bool,
     pub name: String,
     /// The Mac model it says it is, as the receiver does.
@@ -104,6 +106,9 @@ pub async fn run(air: Air, opts: Options) {
     loop {
         // The daily purge removes empty folders.
         let _ = std::fs::create_dir_all(&opts.outbox);
+        if opts.local_jobs {
+            jobs::send_ready(&air, &sender, &opts, &status).await;
+        }
         if let Some(req) = &opts.scan_request
             && req.exists()
         {
@@ -111,6 +116,12 @@ pub async fn run(air: Air, opts: Options) {
             devices = scan(&air, &sender, &opts, &devices).await;
         }
         for path in waiting(&opts.outbox) {
+            if opts.local_jobs
+                && (path.to_string_lossy().ends_with(".howldrop-job")
+                    || path.to_string_lossy().ends_with(".howldrop-cancel"))
+            {
+                continue;
+            }
             let Ok(size) = std::fs::metadata(&path).map(|m| m.len()) else {
                 continue;
             };
@@ -266,7 +277,32 @@ async fn try_send(
     window: Duration,
     progress: &impl Fn(&str),
 ) -> (bool, String, Option<Duration>) {
-    let icon = file_icon(path).await;
+    try_send_paths(
+        air,
+        sender,
+        &[path.to_path_buf()],
+        to,
+        window,
+        progress,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn try_send_paths(
+    air: &Air,
+    sender: &Sender,
+    paths: &[PathBuf],
+    to: Option<&str>,
+    window: Duration,
+    progress: &impl Fn(&str),
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    id: Option<&str>,
+) -> (bool, String, Option<Duration>) {
+    // Keep legacy single-file retry behaviour, with one offer for a selection.
+    let icon = file_icon(&paths[0]).await;
     if let Some(icon) = &icon {
         say(format!("Send: with a preview ({} bytes)", icon.len()));
     }
@@ -309,11 +345,15 @@ async fn try_send(
             "Send: sending to {:?} at {}",
             target.name, target.mac
         ));
+        if let Some(id) = id {
+            emit(&["outgoing-peer", id, &target.name]);
+        }
         progress("asking: accept it on the iPhone");
         let (events, mut updates) = tokio::sync::mpsc::unbounded_channel();
         let report = async {
             let mut accepted = None;
             let mut shown = (Instant::now(), u64::MAX);
+            let mut measured = Instant::now();
             while let Some(e) = updates.recv().await {
                 match e {
                     Event::Accepted => {
@@ -321,6 +361,18 @@ async fn try_send(
                         progress("accepted; uploading");
                     }
                     Event::Progress(p) if p.total > 0 => {
+                        if let Some(id) = id
+                            && (measured.elapsed() >= Duration::from_millis(200)
+                                || p.sent == p.total)
+                        {
+                            measured = Instant::now();
+                            emit(&[
+                                "outgoing-progress",
+                                id,
+                                &p.sent.to_string(),
+                                &p.total.to_string(),
+                            ]);
+                        }
                         let percent = p.sent * 100 / p.total;
                         if percent != shown.1 && shown.0.elapsed() >= Duration::from_secs(1) {
                             shown = (Instant::now(), percent);
@@ -333,10 +385,17 @@ async fn try_send(
             accepted
         };
         let asked = Instant::now();
-        let payload = Payload::Files(vec![path.to_path_buf()]);
+        let payload = Payload::Files(paths.to_vec());
         let flags = RECEIVER_FLAGS | SUPPORTS_DVZIP;
         let (outcome, accepted_at) = tokio::join!(
-            sender.send_with_icon(target.addr, &payload, flags, Some(events), icon.clone()),
+            sender.send_with_icon_cancellable(
+                target.addr,
+                &payload,
+                flags,
+                Some(events),
+                icon.clone(),
+                cancelled.clone()
+            ),
             report
         );
         let accepted = accepted_at.is_some();

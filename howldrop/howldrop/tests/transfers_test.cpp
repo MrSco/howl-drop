@@ -30,6 +30,23 @@ Transfers::Clock::time_point at(int ms) { return Transfers::Clock::time_point(st
 
 int main() {
     {
+        Transfers t;
+        const std::string id = "0123456789abcdef0123456789abcdef";
+        t.apply({"outgoing", id, "Jane's iPhone", "2", "0", "photo.jpg", "Album"}, at(0));
+        expect(t.all().size() == 1 && t.find(id)->count == 2 && t.find(id)->controllable, "a selection is one controllable transfer");
+        t.apply({"outgoing-stage", id, "accepted; uploading"}, at(100));
+        t.apply({"outgoing-progress", id, "500", "1000"}, at(600));
+        expect(t.find(id)->fraction() == 0.5 && t.find(id)->rate == 1000, "outgoing progress has a fraction and rate");
+        t.apply({"outgoing-done", id, "cancelled", "cancelled"}, at(700));
+        expect(t.find(id)->stage == Stage::Cancelled && t.find(id)->finished(), "cancellation is terminal");
+        t.apply({"outgoing", id, "Jane's iPhone", "2", "0", "photo.jpg", "Album"}, at(1000));
+        expect(t.all().size() == 1 && !t.find(id)->finished() && t.find(id)->bytes == 0, "retry resets the same transfer");
+        t.apply({"outgoing-heartbeat", id}, at(240000));
+        expect(t.expire(at(241000)).empty(), "preparing a large selection does not falsely stall");
+        t.apply({"outgoing-done", id, "sent", "on the iPhone"}, at(242000));
+        expect(t.find(id)->stage == Stage::Done, "the selection finishes together");
+    }
+    {
         // Everyone, ask me: asked, accepted, the upload, stored, delivered.
         Transfers t;
         expect(t.apply({"ask", "a1", "Rocco’s iPhone", "2", "31500000", "IMG_1.HEIC", "IMG_2.MOV"}, at(0)) == "a1",

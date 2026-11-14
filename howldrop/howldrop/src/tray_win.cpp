@@ -91,6 +91,8 @@ struct Settings {
     // ask (contacts at once, anyone else after Accept), contacts.
     std::string receive = "ask";
     std::string senders;  // the contacts: phone numbers and emails, comma-separated
+    std::string download_dir;
+    std::string tx_rate = "auto";
 };
 
 // A send to the iPhone relay finished, posted from its worker thread.
@@ -185,6 +187,11 @@ void load_settings(App& app) {
             app.settings.receive = value;
         } else if (key == "senders") {
             app.settings.senders = value;
+        } else if (key == "download_dir") {
+            const auto path = path_from_utf8(value);
+            if (path.is_absolute() && path.filename() == L"HowlDrop") app.settings.download_dir = value;
+        } else if (key == "tx_rate" && (value == "auto" || value == "12" || value == "54" || value == "mcs7")) {
+            app.settings.tx_rate = value;
         }
         if (key == "notify") app.settings.notify = on;
         else if (key == "open_links") app.settings.open_links = on;
@@ -208,7 +215,9 @@ void save_settings(const App& app) {
         << "radio=" << app.settings.radio << '\n'
         << "cleanup=" << app.settings.cleanup << '\n'
         << "receive=" << app.settings.receive << '\n'
-        << "senders=" << app.settings.senders << '\n';
+        << "senders=" << app.settings.senders << '\n'
+        << "download_dir=" << app.settings.download_dir << '\n'
+        << "tx_rate=" << app.settings.tx_rate << '\n';
 }
 
 bool starts_with_windows() {
@@ -550,6 +559,11 @@ void send_files(App& app, const std::vector<std::filesystem::path>& files, const
     if (!node || files.empty()) return;
     // A card for each at once, before the phone is even found.
     const bool local = node->iphone_nearby().local;
+    if (local && app.radio) {
+        const auto result = app.radio->queue_selection(files, to);
+        if (!result.ok) MessageBoxW(app.window, wide(result.message).c_str(), L"HowlDrop", MB_OK | MB_ICONWARNING);
+        return;
+    }
     for (const auto& file : files) {
         app.transfers.sending(filename_utf8(file), to, !local, Transfers::Clock::now());
     }
@@ -723,6 +737,7 @@ void start_radio(App& app) {
     config.name = app.name;
     config.receive = app.settings.receive;
     config.senders = app.settings.senders;
+    config.tx_rate = app.settings.tx_rate;
     config.on_event =[](const std::vector<std::string>& event) {
         auto* copy = new std::vector<std::string>(event);
         if (!g_app || !g_app->window || !PostMessageW(g_app->window, kTransferMessage, 0, reinterpret_cast<LPARAM>(copy)))
@@ -809,6 +824,8 @@ WindowSettings window_settings(const App& app) {
     s.start_with_windows = starts_with_windows();
     s.receive = app.settings.receive;
     s.senders = app.settings.senders;
+    s.download_dir = app.settings.download_dir.empty() ? path_to_utf8(app.inbox) : app.settings.download_dir;
+    s.tx_rate = app.settings.tx_rate;
     return s;
 }
 
@@ -817,7 +834,7 @@ void purge_inbox(App& app);
 // The window's settings page changed something: as the menu would.
 void apply_window_settings(App& app, const WindowSettings& s) {
     const bool radio_changed = s.radio != app.settings.radio;
-    const bool who_changed = s.receive != app.settings.receive || s.senders != app.settings.senders;
+    const bool who_changed = s.receive != app.settings.receive || s.senders != app.settings.senders || s.tx_rate != app.settings.tx_rate;
     const bool cleanup_on = s.cleanup && !app.settings.cleanup;
     app.settings.radio = s.radio;
     app.settings.cleanup = s.cleanup;
@@ -827,6 +844,8 @@ void apply_window_settings(App& app, const WindowSettings& s) {
     app.settings.open_documents = s.open_documents;
     app.settings.receive = s.receive;
     app.settings.senders = s.senders;
+    app.settings.download_dir = s.download_dir;
+    app.settings.tx_rate = s.tx_rate;
     if (s.start_with_windows != starts_with_windows()) set_start_with_windows(s.start_with_windows);
     save_settings(app);
     if (radio_changed) {
@@ -1088,6 +1107,10 @@ int run_tray(Node::Config config) {
     const bool first_run = !std::filesystem::exists(app.settings_file, ec);
     if (first_run) save_settings(app);
     else load_settings(app);
+    if (!app.settings.download_dir.empty()) {
+        app.inbox = path_from_utf8(app.settings.download_dir);
+        config.inbox = app.inbox;
+    }
     app.pair_key = config.pair_key;
     config.share_clipboard = app.settings.share_clipboard;
     if (std::filesystem::file_size(app.log_file, ec) > (1u << 20)) std::filesystem::remove(app.log_file, ec);
@@ -1159,6 +1182,12 @@ int run_tray(Node::Config config) {
         const std::wstring label = (downloads.empty() ? std::wstring() : downloads + L"\\") +
                                    app.inbox.filename().wstring();
         Cards::Actions actions;
+        actions.control_send = [](const std::string& id, bool retry) {
+            if (g_app && g_app->radio) {
+                const auto result = g_app->radio->control_send(id, retry);
+                if (!result.ok) MessageBoxW(g_app->window, wide(result.message).c_str(), L"HowlDrop", MB_OK | MB_ICONWARNING);
+            }
+        };
         actions.decide = [](const std::string& id, bool accept) {
             if (g_app && g_app->radio) g_app->radio->decide(id, accept);
         };
@@ -1172,6 +1201,12 @@ int run_tray(Node::Config config) {
     // The HowlDrop window, opened from the icon.
     {
         HowlWindow::Hooks hooks;
+        hooks.control_send = [](const std::string& id, bool retry) {
+            if (g_app && g_app->radio) {
+                const auto result = g_app->radio->control_send(id, retry);
+                if (!result.ok) MessageBoxW(g_app->window, wide(result.message).c_str(), L"HowlDrop", MB_OK | MB_ICONWARNING);
+            }
+        };
         hooks.settings = []() { return g_app ? window_settings(*g_app) : WindowSettings{}; };
         hooks.apply = [](const WindowSettings& s) {
             if (g_app) apply_window_settings(*g_app, s);
@@ -1222,6 +1257,7 @@ int run_tray(Node::Config config) {
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (app.howl_window && app.howl_window->handle_message(msg)) continue;
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }

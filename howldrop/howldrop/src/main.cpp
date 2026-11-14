@@ -342,21 +342,20 @@ int cmd_iphone(const std::vector<std::string>& args) {
         }
     }
     if (args.size() <= first) problems.push_back("give one or more files to send");
+    std::string request = "iphone-selection " + to;
     for (std::size_t i = first; i < args.size(); ++i) {
         std::error_code ec;
         const auto absolute = std::filesystem::absolute(howldrop::path_from_utf8(args[i]), ec);
         const std::string path = ec ? args[i] : howldrop::path_to_utf8(absolute);
-        if (path.find('\n') != std::string::npos || path.find('\r') != std::string::npos) {
+        if (path.find_first_of("\t\r\n") != std::string::npos || ec) {
             problems.push_back(args[i] + ": that path cannot be sent");
-            continue;
-        }
-        const Reply reply = control_request("iphone " + (to.empty() ? std::string() : to + "\t") + path);
-        if (reply.ok) {
-            std::cout << "sent " << path << " to Home Assistant for the iPhone\n";
-        } else {
-            problems.push_back(howldrop::path_to_utf8(absolute.filename()) + ": " + reply.detail);
-            if (reply.detail.rfind("HowlDrop is not running", 0) == 0) break;
-        }
+        } else request += "\t" + path;
+    }
+    if (args.size() - first > 256 || request.size() > 30 * 1024) problems.push_back("choose a smaller selection");
+    if (problems.empty()) {
+        const Reply reply = control_request(request);
+        if (reply.ok) std::cout << "queued selection for the iPhone\n";
+        else problems.push_back(reply.detail);
     }
     if (problems.empty()) return 0;
     std::string text;
@@ -550,6 +549,7 @@ int main(int argc, char** argv) {
         }
         if (cmd == "iphone") return cmd_iphone(args);
         if (cmd == "nearby") return cmd_nearby(args);
+        if ((cmd == "cancel" || cmd == "retry") && args.size() == 3) return cmd_simple(cmd + " " + args[2]);
 #ifdef _WIN32
         // The README's pictures of the window and the cards, made-up data.
         if (cmd == "screenshots") return howldrop::make_screenshots(howldrop::path_from_utf8(args.size() >= 3 ? args[2] : "."));

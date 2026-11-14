@@ -149,6 +149,8 @@ pub struct Stats {
     pub rx_action: u64,
     pub rx_data: u64,
     pub rx_malformed: u64,
+    /// Subframes skipped: not IPv6, or another node's unicast.
+    pub rx_not_ours: u64,
     pub tx_action: u64,
     pub tx_unicast: u64,
     pub tx_multicast: u64,
@@ -570,6 +572,7 @@ impl Node {
             // NET-3: IPv6 only. And never another node's unicast, which a
             // monitor hears too.
             if m.ethertype != 0x86dd || !(m.dst == self.cfg.addr || m.dst.is_multicast()) {
+                self.stats.rx_not_ours += 1;
                 continue;
             }
             let packet = Ipv6Packet {

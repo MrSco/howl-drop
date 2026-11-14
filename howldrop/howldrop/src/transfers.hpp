@@ -28,6 +28,7 @@ public:
         Done,
         Declined,  // in: declined or unanswered; out: declined on the phone
         Failed,
+        Cancelled,
     };
 
     struct Transfer {
@@ -44,6 +45,7 @@ public:
         std::vector<std::filesystem::path> saved;  // in: where the files landed
         std::string kind;                  // in, done: image, video, text, link, file
         bool home_assistant = false;       // arrived through the add-on
+        bool controllable = false;        // atomic send job: Cancel or Retry
         Clock::time_point started{};
         Clock::time_point updated{};
         Clock::time_point deadline{};      // asking: when no answer means Decline
@@ -51,7 +53,7 @@ public:
         // Accept to sent. Zero when unknown.
         Clock::duration took{};
 
-        bool finished() const { return stage == Stage::Done || stage == Stage::Declined || stage == Stage::Failed; }
+        bool finished() const { return stage == Stage::Done || stage == Stage::Declined || stage == Stage::Failed || stage == Stage::Cancelled; }
         // 0..1, or -1 when the size isn't known (an indeterminate bar)
         double fraction() const;
     };

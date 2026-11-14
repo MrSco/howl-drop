@@ -664,7 +664,7 @@ std::string Radio::run_agent() {
                                L"--deliver", config_.inbox.wstring(), L"--identity", (data / L"identity").wstring(),
                                L"--receive", wide(config_.receive), L"--senders", wide(config_.senders), L"--ask-dir",
                                asks_.wstring(), L"--outbox", outbox_.wstring(), L"--discard", L"--scan-request",
-                               scan_request_.wstring(), L"--events"},
+                               scan_request_.wstring(), L"--events", L"--local-jobs", L"--tx-rate", wide(config_.tx_rate)},
                               error)) {
         log("howldrop-agent: " + error);
         return error;
@@ -716,6 +716,12 @@ void Radio::handle_line(const std::string& line) {
         if (config_.on_sent) {
             config_.on_sent(field(1), field(2) == "sent" ? Status::success(field(3)) : Status::failure(field(3)));
         }
+    } else if (what.rfind("outgoing", 0) == 0) {
+        if (what == "outgoing-done") {
+            { std::lock_guard<std::mutex> hold(wake_mu_); if (sends_pending_ > 0) --sends_pending_; }
+            done_waking();
+        }
+        if (config_.on_event) config_.on_event(f);
     } else if (what == "ask" || what == "asked" || what == "incoming" || what == "receiving" || what == "stored" ||
                what == "failed" || what == "sending") {
         if (config_.on_event) config_.on_event(f);
@@ -743,33 +749,74 @@ void Radio::decide(const std::string& id, bool accept) {
 // --- sending to the iPhone (Node::LocalIphone) ----------------------------------------
 
 Status Radio::queue(const fs::path& path, const std::string& to) {
+    return queue_selection({path}, to);
+}
+
+Status Radio::queue_selection(const std::vector<fs::path>& paths, const std::string& to) {
     if (!up_.load()) return Status::failure("AirDrop on this PC isn't on yet");
+    if (paths.empty() || paths.size() > 256) return Status::failure("choose 1 to 256 files or folders");
+    if (to.find_first_of("\t\r\n") != std::string::npos) return Status::failure("invalid recipient");
+    const std::string id = new_pair_key();
+    if (id.empty()) return Status::failure("could not create a send job");
+    std::string text = "HowlDrop job 1\n" + to + "\n";
+    std::vector<std::string> fields = {"outgoing", id, to, std::to_string(paths.size()), "0"};
     std::error_code ec;
-    if (!fs::is_regular_file(path, ec)) return Status::failure("that path is not a file");
+    for (const auto& input : paths) {
+        const auto path = fs::absolute(input, ec);
+        if (ec || (!fs::is_regular_file(path, ec) && !fs::is_directory(path, ec)))
+            return Status::failure("choose existing files or folders");
+        const auto utf8 = path_to_utf8(path);
+        if (utf8.find_first_of("\t\r\n") != std::string::npos) return Status::failure("invalid file path");
+        text += utf8 + "\n";
+        fields.push_back(filename_utf8(path));
+    }
+    if (text.size() > (1u << 20)) return Status::failure("selection is too large");
     fs::create_directories(outbox_, ec);
-    // The agent takes a file (send.rs) once it stops growing, and skips *.partial; the
-    // device it is for goes beside it first (NAME.howldrop-to).
-    const fs::path name = path.filename();
-    fs::path dest = outbox_ / name;
-    for (int n = 1; fs::exists(dest, ec) || fs::exists(dest.wstring() + L".partial", ec); ++n) {
-        dest = outbox_ / (name.stem().wstring() + L"-" + std::to_wstring(n) + name.extension().wstring());
-    }
-    if (!to.empty()) {
-        std::ofstream(fs::path(dest.wstring() + L".howldrop-to"), std::ios::binary) << to << '\n';
-    }
-    const fs::path partial = dest.wstring() + L".partial";
-    if (!fs::copy_file(path, partial, fs::copy_options::overwrite_existing, ec)) {
-        fs::remove(dest.wstring() + L".howldrop-to", ec);
-        return Status::failure("couldn't copy it for sending: " + ec.message());
+    const auto dest = outbox_ / (id + ".howldrop-job");
+    const auto partial = outbox_ / (id + ".partial");
+    {
+        std::ofstream out(partial, std::ios::binary);
+        out << text;
+        out.close();
+        if (!out) { fs::remove(partial, ec); return Status::failure("could not queue the selection"); }
     }
     fs::rename(partial, dest, ec);
-    if (ec) return Status::failure("couldn't hand it over: " + ec.message());
-    {
-        std::lock_guard<std::mutex> hold(wake_mu_);
-        ++sends_pending_;
-    }
+    if (ec) { fs::remove(partial, ec); return Status::failure("could not queue the selection"); }
+    { std::lock_guard<std::mutex> hold(wake_mu_); ++sends_pending_; }
+    if (config_.on_event) config_.on_event(fields);
     hold_wake(200);
-    return Status::success("handed to AirDrop on this PC");
+    return Status::success("queued");
+}
+
+Status Radio::control_send(const std::string& id, bool retry) {
+    if (id.size() != 32 || id.find_first_not_of("0123456789abcdef") != std::string::npos)
+        return Status::failure("invalid transfer");
+    std::error_code ec;
+    const auto job = outbox_ / (id + ".howldrop-job");
+    const auto cancel = outbox_ / (id + ".howldrop-cancel");
+    if (retry) {
+        if (!up_.load()) return Status::failure("turn on AirDrop on this PC first");
+        fs::remove(cancel, ec);
+        fs::rename(outbox_ / "failed" / job.filename(), job, ec);
+        if (ec) return Status::failure("this selection is no longer available for Retry");
+        std::ifstream input(job, std::ios::binary);
+        std::string header, to, path;
+        std::getline(input, header);
+        std::getline(input, to);
+        std::vector<std::string> fields = {"outgoing", id, to, "0", "0"};
+        while (std::getline(input, path)) fields.push_back(filename_utf8(path_from_utf8(path)));
+        fields[3] = std::to_string(fields.size() - 5);
+        if (config_.on_event) config_.on_event(fields);
+        { std::lock_guard<std::mutex> hold(wake_mu_); ++sends_pending_; }
+        hold_wake(200);
+    } else {
+        if (!fs::exists(job, ec)) return Status::failure("this transfer has already finished");
+        std::ofstream out(cancel, std::ios::binary);
+        out << '\n';
+        if (!out) return Status::failure("could not cancel this transfer");
+        if (config_.on_event) config_.on_event({"outgoing-stage", id, "cancelling"});
+    }
+    return Status::success(retry ? "queued again" : "cancelling");
 }
 
 Node::Nearby Radio::nearby() const {

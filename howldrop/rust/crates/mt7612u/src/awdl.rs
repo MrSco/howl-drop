@@ -10,9 +10,19 @@ use nusb::transfer::Buffer;
 use owly_awdl::driver::{Air, Netif, Received};
 use owly_awdl::{Frame, Ipv6Packet, TxRate};
 
-use crate::{Mt7612u, RX_BUF, SendError, rx, tx};
+use crate::rate::AutoRate;
+use crate::{Mt7612u, RX_BUF, SendError, regs, rx, tx};
 
 const STATS_EVERY: Duration = Duration::from_secs(10);
+
+/// Unicast data frames the chip may hold at once. The node sends one only
+/// while its peer is on our channel (AWDL-16), but a frame waiting in the
+/// chip's queue goes on air later: 128 frames at 12 Mbit/s are some 150 ms,
+/// past the end of an iPhone's few slots on the channel, and those frames
+/// were lost once the chip's retries ran out. Kept to a few milliseconds of
+/// air, the rest wait in the driver, which checks the slot again before
+/// each. Action and multicast frames still have the chip's whole queue.
+const DATA_QUEUE: usize = 4;
 
 /// A started stick ([`Mt7612u::start_rx`] done) as owly-awdl's [`Air`],
 /// counting what goes through it.
@@ -20,6 +30,11 @@ pub struct Radio {
     stick: Mt7612u,
     stats: Stats,
     logged: Instant,
+    /// The rate for unicast data when it's chosen here ([`Radio::auto_rate`]).
+    auto: Option<AutoRate>,
+    /// Unicast data frames sent since `counted`.
+    data_sent: u64,
+    counted: Instant,
 }
 
 #[derive(Debug, Default)]
@@ -39,10 +54,55 @@ impl Radio {
             stick,
             stats: Stats::default(),
             logged: Instant::now(),
+            auto: None,
+            data_sent: 0,
+            counted: Instant::now(),
+        }
+    }
+
+    /// Unicast data at a rate chosen from the chip's retry counts
+    /// ([`crate::rate`]), 12 to 54 Mbit/s, instead of the node's.
+    pub fn auto_rate(mut self) -> Self {
+        let now = Instant::now();
+        self.auto = Some(AutoRate::new(now));
+        self.counted = now;
+        // TX_STA_CNT0 and 1 count from their last read.
+        let _ = self.stick.read(crate::Space::Mac, regs::TX_STA_CNT0);
+        let _ = self.stick.read(crate::Space::Mac, regs::TX_STA_CNT1);
+        self
+    }
+
+    /// Once a second, the rate for what the chip's counters say.
+    fn adapt_rate(&mut self) {
+        if self.auto.is_none() || self.counted.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        let now = Instant::now();
+        self.counted = now;
+        let frames = std::mem::take(&mut self.data_sent);
+        let (Ok(cnt0), Ok(cnt1)) = (
+            self.stick.read(crate::Space::Mac, regs::TX_STA_CNT0),
+            self.stick.read(crate::Space::Mac, regs::TX_STA_CNT1),
+        ) else {
+            return;
+        };
+        let failed = u64::from(cnt0 & 0xffff);
+        let retries = u64::from(cnt1 >> 16);
+        let auto = self.auto.as_mut().expect("checked above");
+        if let Some(rate) = auto.step(now, frames, failed, retries) {
+            tracing::info!(
+                target: "owly_awdl",
+                "unicast at {} Mbit/s ({retries} retries, {failed} given up, {frames} frames in a second)",
+                rate / 2
+            );
         }
     }
 
     fn maybe_log(&mut self) {
+        if let Err(e) = self.stick.calibrate() {
+            tracing::warn!("calibration: {e}");
+        }
+        self.adapt_rate();
         if self.logged.elapsed() >= STATS_EVERY {
             self.logged = Instant::now();
             tracing::info!(
@@ -90,9 +150,11 @@ impl Air for Radio {
             rate,
             no_ack,
         } = frame;
-        let chip_rate = match rate {
-            TxRate::Legacy(r) => tx::Rate::Legacy(r),
-            TxRate::Ht { mcs, sgi } => tx::Rate::Ht { mcs, sgi },
+        let data = is_unicast_data(&bytes);
+        let chip_rate = match (rate, &self.auto) {
+            (_, Some(auto)) if data => tx::Rate::Legacy(auto.rate()),
+            (TxRate::Legacy(r), _) => tx::Rate::Legacy(r),
+            (TxRate::Ht { mcs, sgi }, _) => tx::Rate::Ht { mcs, sgi },
         };
         self.maybe_log();
         // The node accepting a peer's Block Ack session (AWDL-15): the chip
@@ -102,9 +164,22 @@ impl Air for Radio {
             Some(BlockAck::Delba { tid }) => self.block_ack(to.0, tid, false),
             None => {}
         }
+        if data {
+            self.stick.reap_tx();
+            if self.stick.tx_pending() >= DATA_QUEUE {
+                self.stats.tx_full += 1;
+                return Err(Frame {
+                    bytes,
+                    to,
+                    rate,
+                    no_ack,
+                });
+            }
+        }
         match self.stick.send(bytes, chip_rate, no_ack) {
             Ok(()) => {
                 self.stats.tx += 1;
+                self.data_sent += u64::from(data);
                 Ok(())
             }
             Err(SendError::Full(bytes)) => {
@@ -148,6 +223,12 @@ impl Radio {
     }
 }
 
+/// A data frame (type 2) to one station: group addresses have the low bit
+/// of their first octet set.
+fn is_unicast_data(frame: &[u8]) -> bool {
+    frame.first().is_some_and(|fc| fc & 0x0c == 0x08) && frame.get(4).is_some_and(|a| a & 1 == 0)
+}
+
 /// A Block Ack session starting or ending, as the frames that do it say.
 #[derive(Debug, PartialEq, Eq)]
 enum BlockAck {
@@ -189,6 +270,26 @@ mod tests {
         f.extend_from_slice(&[0, 0]);
         f.extend_from_slice(body);
         f
+    }
+
+    #[test]
+    fn only_unicast_data_is_kept_to_the_short_queue() {
+        let mut data = vec![0x08, 0, 0, 0];
+        data.extend_from_slice(&[0x16, 0x51, 0xaf, 0x82, 0x26, 0xec]);
+        data.extend_from_slice(&[0; 14]);
+        assert!(is_unicast_data(&data));
+        // QoS data too.
+        data[0] = 0x88;
+        assert!(is_unicast_data(&data));
+        // Multicast data.
+        data[4] = 0x33;
+        assert!(!is_unicast_data(&data));
+        // An action frame to one station.
+        let mut action = data.clone();
+        action[0] = 0xd0;
+        action[4] = 0x16;
+        assert!(!is_unicast_data(&action));
+        assert!(!is_unicast_data(&[]));
     }
 
     #[test]

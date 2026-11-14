@@ -51,8 +51,14 @@ if(WIN32)
     target_sources(howldrop PRIVATE src/tray_win.cpp src/radio_win.cpp src/ble_wake_win.cpp src/ui_win.cpp
                    src/cards_win.cpp src/window_win.cpp src/screenshots_win.cpp res/howldrop.rc)
     set_target_properties(howldrop PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_link_libraries(howldrop PRIVATE shell32 user32 advapi32 comdlg32 ole32 uuid winhttp runtimeobject
+    target_link_libraries(howldrop PRIVATE shell32 user32 advapi32 comdlg32 comctl32 ole32 uuid winhttp runtimeobject
                           d2d1 dwrite dwmapi windowscodecs)
+    add_executable(howldrop-ui-test tests/windows_ui_test.cpp src/window_win.cpp src/cards_win.cpp src/ui_win.cpp)
+    target_link_libraries(howldrop-ui-test PRIVATE howldrop-core shell32 user32 comdlg32 comctl32 ole32 oleaut32 oleacc uuid
+                          d2d1 dwrite dwmapi windowscodecs)
+    if(MINGW)
+        target_link_options(howldrop-ui-test PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
     # AirDrop on this PC downloads the agent this exe goes with:
     # howldrop-agent.exe and the stick's firmware
     # (a release sets these; empty in a local build, which uses the agent

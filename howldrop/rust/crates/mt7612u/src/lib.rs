@@ -11,6 +11,7 @@
 pub mod awdl;
 pub mod channel;
 pub mod mcu;
+mod rate;
 pub mod regs;
 pub mod rx;
 pub mod tx;
@@ -211,6 +212,18 @@ pub struct Mt7612u {
     wcid_next: usize,
     /// The last MCU command's sequence number, 1 to 15.
     seq: u8,
+    /// The TSSI compensation and DPD still to run ([`Mt7612u::calibrate`]).
+    tssi: Option<Tssi>,
+}
+
+struct Tssi {
+    primary: u8,
+    ext_pa: bool,
+    slope: [u8; 2],
+    offset: [u8; 2],
+    triggered: bool,
+    tries: u8,
+    next: Instant,
 }
 
 /// Bulk IN transfers kept in flight for received frames, and each one's size:
@@ -268,6 +281,7 @@ impl Mt7612u {
             wcids: Vec::new(),
             wcid_next: 0,
             seq: 0,
+            tssi: None,
         })
     }
 
@@ -562,8 +576,7 @@ impl Mt7612u {
     }
 
     /// mt76x2u_phy_set_channel, with the MAC stopped. Not yet: the EEPROM's
-    /// receive gain corrections (the MCU's gain is left at 0), and transmit
-    /// power per rate (every rate gets each chain's target power).
+    /// receive gain corrections (the MCU's gain is left at 0).
     pub fn set_channel(&mut self, eeprom: &[u8], ch: channel::Channel) -> Result<(), Error> {
         use Space::Mac;
         let t = ch.tuning();
@@ -669,7 +682,100 @@ impl Mt7612u {
         self.set(Mac, regs::TX_LINK_CFG, 1 << 12)?;
         self.clear(Mac, regs::TXOP_CTRL_CFG, 1 << 20)?;
         self.write(Mac, regs::bbp(regs::BBP_AGC, 2), 0x0000_7070)?;
-        self.set(Mac, regs::TXOP_HLDR_ET, 1 << 1)
+        self.set(Mac, regs::TXOP_HLDR_ET, 1 << 1)?;
+
+        // mt76x2u_phy_set_channel's TSSI calibration, with temperature
+        // compensation at its default. The compensation and DPD that follow
+        // need frames going out: see [`Mt7612u::calibrate`].
+        self.tssi = None;
+        if channel::tssi_enabled(eeprom) {
+            let ext_pa = ee16(eeprom, regs::ee::NIC_CONF_0) & regs::ee::NIC_CONF_0_PA_INT_5G == 0;
+            for reg in [regs::TX_ALC_CFG_1, regs::TX_ALC_CFG_2] {
+                self.rmw_field(Mac, reg, regs::TX_ALC_CFG_TEMP_COMP, 0x38)?;
+            }
+            let flag = five | if ext_pa { 1 << 8 } else { 0 };
+            self.mcu_calibrate(mcu::cal::TSSI, flag)?;
+            let (slope, offset) = channel::tssi_slope_offset_5g(eeprom, ch.primary);
+            self.tssi = Some(Tssi {
+                primary: ch.primary,
+                ext_pa,
+                slope,
+                offset,
+                triggered: false,
+                tries: 0,
+                next: Instant::now() + Duration::from_secs(2),
+            });
+        }
+        Ok(())
+    }
+
+    /// What mt76x2u_phy_calibrate does after a channel is set
+    /// (mt76x2_phy_tssi_compensate), once: a TSSI measurement of frames
+    /// going out, applied once the baseband has it, and then, on a chip
+    /// with its own power amplifier, DPD, which predistorts what it sends
+    /// against the amplifier's distortion. Without them 54 Mbit/s and MCS 7
+    /// frames needed some two retries each at 1 m. Linux repeats the
+    /// compensation every second; once is what the rates need. The commands
+    /// go unanswered: waiting for the MCU while the radio is busy held up
+    /// the node, and the answer sometimes never came.
+    /// Call it often once frames are going out; it acts every second until
+    /// it's done.
+    pub fn calibrate(&mut self) -> Result<(), Error> {
+        use Space::Mac;
+        let Some(t) = self.tssi.as_mut() else {
+            return Ok(());
+        };
+        let now = Instant::now();
+        if now < t.next {
+            return Ok(());
+        }
+        t.next = now + Duration::from_secs(1);
+        if !t.triggered {
+            t.triggered = true;
+            return self.tssi_comp(0, 1, [0; 2], [0; 2]);
+        }
+        if self.read(Mac, regs::bbp(regs::BBP_CORE, 34))? & (1 << 4) != 0 {
+            let t = self.tssi.as_mut().expect("checked above");
+            t.tries += 1;
+            if t.tries >= 5 {
+                self.tssi = None;
+                tracing::info!(target: "owly_awdl", "TSSI not measured; no DPD");
+            }
+            return Ok(());
+        }
+        let t = self.tssi.take().expect("checked above");
+        self.tssi_comp(u8::from(t.ext_pa), 2, t.slope, t.offset)?;
+        if !t.ext_pa {
+            thread::sleep(ms(15));
+            let dpd = mcu::words(mcu::cal::DPD, u32::from(t.primary));
+            self.mcu_send(mcu::cmd::CALIBRATION_OP, &dpd, false)?;
+        }
+        tracing::info!(
+            target: "owly_awdl",
+            "TSSI compensated{} on ch {}",
+            if t.ext_pa { "" } else { " and DPD calibrated" },
+            t.primary
+        );
+        Ok(())
+    }
+
+    /// mt76x2_mcu_tssi_comp.
+    fn tssi_comp(
+        &mut self,
+        pa_mode: u8,
+        cal_mode: u8,
+        slope: [u8; 2],
+        offset: [u8; 2],
+    ) -> Result<(), Error> {
+        let mut msg = mcu::cal::TSSI_COMP.to_le_bytes().to_vec();
+        msg.extend_from_slice(&[
+            pa_mode, cal_mode, 0, 0, slope[0], slope[1], offset[0], offset[1],
+        ]);
+        // Unanswered: the baseband says when the measurement is in, and an
+        // answer awaited while the radio is busy could hold up the node for
+        // 1.5 s, or not come.
+        self.mcu_send(mcu::cmd::CALIBRATION_OP, &msg, false)?;
+        Ok(())
     }
 
     /// mt76x02u_mac_start with a filter that keeps every frame but broken
@@ -720,12 +826,7 @@ impl Mt7612u {
     /// without waiting. Gives it back when the chip's queue is full, and
     /// fails for a rate the chip doesn't have.
     pub fn send(&mut self, frame: Vec<u8>, rate: tx::Rate, no_ack: bool) -> Result<(), SendError> {
-        while self.tx_out.pending() > 0 {
-            match self.tx_out.wait_next_complete(Duration::ZERO) {
-                Some(done) => self.tx_errors += u64::from(done.status.is_err()),
-                None => break,
-            }
-        }
+        self.reap_tx();
         if self.tx_out.pending() >= TX_QUEUE {
             return Err(SendError::Full(frame));
         }
@@ -738,6 +839,16 @@ impl Mt7612u {
     /// How many sent frames the USB transfer failed for.
     pub fn tx_errors(&self) -> u64 {
         self.tx_errors
+    }
+
+    /// Collects the USB transfers that have completed, without waiting.
+    pub fn reap_tx(&mut self) {
+        while self.tx_out.pending() > 0 {
+            match self.tx_out.wait_next_complete(Duration::ZERO) {
+                Some(done) => self.tx_errors += u64::from(done.status.is_err()),
+                None => break,
+            }
+        }
     }
 
     /// Frames handed to the chip whose USB transfer hasn't completed.
@@ -759,10 +870,10 @@ impl Mt7612u {
         self.tx_out.pending()
     }
 
-    /// Transmit power, simplified from mt76x2_phy_set_txpower: the PA and
-    /// delay registers for the band (mt76x2_phy_set_txpower_regs,
-    /// mt76x2_configure_tx_delay), and each chain at its target power for the
-    /// channel's calibration group in the EEPROM, every rate at that power.
+    /// Transmit power, as mt76x2_phy_set_txpower: the PA and delay registers
+    /// for the band (mt76x2_phy_set_txpower_regs, mt76x2_configure_tx_delay),
+    /// each chain's power for the channel's calibration group in the EEPROM,
+    /// and each rate's own power from it.
     fn set_txpower(&self, eeprom: &[u8], ch: channel::Channel) -> Result<(), Error> {
         use Space::Mac;
         if !ch.is_5ghz() {
@@ -808,15 +919,19 @@ impl Mt7612u {
             self.write(Mac, regs::TX_ALC_CFG_4, 0)?;
         }
 
-        // Each chain's target power and its channel delta (mt76x2_get_power_info_5g)
-        let [txp_0, txp_1] = channel::chain_power_5g(eeprom, ch.primary);
+        // Each chain's power, and each rate's offset from it
+        // (mt76x2_phy_set_txpower).
+        let power = channel::tx_power_5g(eeprom, ch.primary, bw40);
+        let [txp_0, txp_1] = power.chain;
         tracing::info!(
-            "transmit power {txp_0:#04x} and {txp_1:#04x}, {} PA",
+            target: "owly_awdl",
+            "transmit power {txp_0:#04x} and {txp_1:#04x}, rate offsets {:08x?}, {} PA",
+            power.rate_cfg,
             if ext_pa { "external" } else { "internal" }
         );
         self.rmw_field(Mac, regs::TX_ALC_CFG_0, regs::TX_ALC_CFG_0_CH_INIT_0, txp_0)?;
         self.rmw_field(Mac, regs::TX_ALC_CFG_0, regs::TX_ALC_CFG_0_CH_INIT_1, txp_1)?;
-        for reg in [
+        let rate_regs = [
             regs::TX_PWR_CFG_0,
             regs::TX_PWR_CFG_1,
             regs::TX_PWR_CFG_2,
@@ -825,8 +940,9 @@ impl Mt7612u {
             regs::TX_PWR_CFG_7,
             regs::TX_PWR_CFG_8,
             regs::TX_PWR_CFG_9,
-        ] {
-            self.write(Mac, reg, 0)?;
+        ];
+        for (reg, val) in rate_regs.into_iter().zip(power.rate_cfg) {
+            self.write(Mac, reg, val)?;
         }
         Ok(())
     }

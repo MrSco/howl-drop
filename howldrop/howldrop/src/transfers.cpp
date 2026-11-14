@@ -124,6 +124,48 @@ std::string Transfers::apply(const std::vector<std::string>& e, Clock::time_poin
     const std::string& id = e[1];
     const auto field = [&](std::size_t i) { return i < e.size() ? e[i] : std::string(); };
 
+    if (what == "outgoing") {
+        Transfer* t = get(id);
+        if (!t) t = &add(id, Direction::Out, now);
+        *t = Transfer{};
+        t->id = id;
+        t->direction = Direction::Out;
+        t->controllable = true;
+        t->peer = field(2);
+        t->count = static_cast<std::size_t>(number(field(3)));
+        t->names.assign(e.begin() + std::min<std::size_t>(5, e.size()), e.end());
+        t->started = t->updated = now;
+        t->detail = "queued";
+        return id;
+    }
+    if (what.rfind("outgoing-", 0) == 0) {
+        Transfer* t = get(id);
+        if (!t) return {};
+        t->updated = now;
+        if (what == "outgoing-peer") {
+            t->peer = field(2);
+        } else if (what == "outgoing-stage") {
+            t->detail = field(2);
+            if (t->detail.find("upload") != std::string::npos) {
+                if (t->stage != Stage::Moving) t->started = now;
+                t->stage = Stage::Moving;
+            } else if (t->detail.find("accept") != std::string::npos) t->stage = Stage::Accepting;
+            else t->stage = Stage::Waiting;
+        } else if (what == "outgoing-progress") {
+            if (t->stage != Stage::Moving) t->started = now;
+            t->stage = Stage::Moving;
+            t->bytes = number(field(2));
+            t->total = number(field(3));
+            const double elapsed = std::chrono::duration<double>(now - t->started).count();
+            if (elapsed > 0.2) t->rate = static_cast<double>(t->bytes) / elapsed;
+        } else if (what == "outgoing-done") {
+            if (t->stage == Stage::Moving) t->took = now - t->started;
+            t->stage = field(2) == "sent" ? Stage::Done : field(2) == "cancelled" ? Stage::Cancelled :
+                       field(3).find("declined") != std::string::npos ? Stage::Declined : Stage::Failed;
+            t->detail = field(3);
+        } else if (what != "outgoing-heartbeat") return {};
+        return id;
+    }
     if (what == "ask" || what == "incoming") {
         Transfer* t = get(id);
         if (!t) t = &add(id, Direction::In, now);
@@ -284,6 +326,7 @@ std::vector<std::string> Transfers::expire(Clock::time_point now) {
     std::vector<std::string> changed;
     for (auto& t : list_) {
         if (t.finished()) continue;
+        if (t.controllable && t.stage == Stage::Waiting && t.detail == "queued") continue;
         if (t.stage == Stage::Asking) {
             if (now >= t.deadline) {
                 t.stage = Stage::Declined;
