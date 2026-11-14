@@ -13,6 +13,9 @@ pub enum Rate {
     Legacy(u8),
     /// An HT MCS on 20 MHz.
     Ht { mcs: u8, sgi: bool },
+    /// An HT MCS across the 40 MHz the stick is tuned to (its primary
+    /// channel and the one above).
+    Ht40 { mcs: u8, sgi: bool },
 }
 
 const PHY_CCK: u16 = 0;
@@ -35,11 +38,34 @@ impl Rate {
                 }
             }
             Rate::Ht { mcs, sgi } if mcs <= 15 => (PHY_HT, u16::from(mcs), sgi),
-            Rate::Ht { .. } => return None,
+            Rate::Ht40 { mcs, sgi } if mcs <= 15 => {
+                return Some(u16::from(mcs) | BW_40 | (u16::from(sgi) << 9) | (PHY_HT << 13));
+            }
+            Rate::Ht { .. } | Rate::Ht40 { .. } => return None,
         };
         Some(index | (u16::from(sgi) << 9) | (phy << 13))
     }
+
+    /// The rate in units of 100 kbit/s: what a frame's time on air goes by.
+    pub fn kbps100(self) -> u32 {
+        // HT MCS 0-7 on one stream, long GI: 20 MHz, then 40 MHz.
+        const HT20: [u32; 8] = [65, 130, 195, 260, 390, 520, 585, 650];
+        const HT40: [u32; 8] = [135, 270, 405, 540, 810, 1080, 1215, 1350];
+        let ht = |table: &[u32; 8], mcs: u8, sgi: bool| {
+            let streams = u32::from(mcs / 8) + 1;
+            let r = table[usize::from(mcs % 8)] * streams;
+            if sgi { r * 10 / 9 } else { r }
+        };
+        match self {
+            Rate::Legacy(r) => u32::from(r) * 5,
+            Rate::Ht { mcs, sgi } => ht(&HT20, mcs.min(15), sgi),
+            Rate::Ht40 { mcs, sgi } => ht(&HT40, mcs.min(15), sgi),
+        }
+    }
 }
+
+/// MT_RXWI_RATE_BW: 40 MHz.
+const BW_40: u16 = 1 << 7;
 
 /// The DMA port and queue frames go to (WLAN_PORT, MT_QSEL_EDCA).
 const WLAN_PORT: u32 = 0;
@@ -99,6 +125,17 @@ mod tests {
         assert_eq!(Rate::Legacy(72).value(), Some(0x2005));
         assert_eq!(Rate::Legacy(2).value(), Some(0x0000));
         assert_eq!(Rate::Ht { mcs: 7, sgi: true }.value(), Some(0x4207));
+        assert_eq!(Rate::Ht40 { mcs: 7, sgi: false }.value(), Some(0x4087));
+        assert_eq!(
+            Rate::Ht40 {
+                mcs: 15,
+                sgi: false
+            }
+            .kbps100(),
+            2700
+        );
+        assert_eq!(Rate::Legacy(108).kbps100(), 540);
+        assert_eq!(Rate::Ht { mcs: 7, sgi: true }.kbps100(), 722);
         assert_eq!(Rate::Legacy(13).value(), None);
     }
 

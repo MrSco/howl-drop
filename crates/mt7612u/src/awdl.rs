@@ -24,6 +24,21 @@ const STATS_EVERY: Duration = Duration::from_secs(10);
 /// each. Action and multicast frames still have the chip's whole queue.
 const DATA_QUEUE: usize = 4;
 
+/// With [`Radio::deep_queue`], as many unicast data frames as take about
+/// what [`DATA_QUEUE`]'s do at 12 Mbit/s (some 4 ms on air), at most this
+/// many: at 54 Mbit/s four frames went out in about 1.3 ms, and the chip
+/// then sat idle until the driver's next refill.
+const DATA_QUEUE_MAX: usize = 32;
+
+/// How many unicast data frames at `rate` the chip may hold.
+fn data_queue(rate: tx::Rate, deep: bool) -> usize {
+    if !deep {
+        return DATA_QUEUE;
+    }
+    let at_12 = tx::Rate::Legacy(24).kbps100() as usize;
+    (DATA_QUEUE * rate.kbps100() as usize / at_12).clamp(DATA_QUEUE, DATA_QUEUE_MAX)
+}
+
 /// A started stick ([`Mt7612u::start_rx`] done) as owly-awdl's [`Air`],
 /// counting what goes through it.
 pub struct Radio {
@@ -34,6 +49,8 @@ pub struct Radio {
     auto: Option<AutoRate>,
     /// Unicast data frames sent since `counted`.
     data_sent: u64,
+    /// The chip's room for unicast data follows the rate ([`data_queue`]).
+    deep_queue: bool,
     counted: Instant,
 }
 
@@ -56,15 +73,29 @@ impl Radio {
             logged: Instant::now(),
             auto: None,
             data_sent: 0,
+            deep_queue: false,
             counted: Instant::now(),
         }
     }
 
+    /// Lets the chip hold unicast data for about the same time on air at
+    /// any rate, not the same number of frames.
+    pub fn deep_queue(mut self) -> Self {
+        self.deep_queue = true;
+        self
+    }
+
     /// Unicast data at a rate chosen from the chip's retry counts
-    /// ([`crate::rate`]), 12 to 54 Mbit/s, instead of the node's.
-    pub fn auto_rate(mut self) -> Self {
+    /// ([`crate::rate`]) instead of the node's: 12 to 54 Mbit/s, or with
+    /// `ht40` on to HT MCS 15 across 40 MHz.
+    pub fn auto_rate(mut self, ht40: bool) -> Self {
         let now = Instant::now();
-        self.auto = Some(AutoRate::new(now));
+        let ladder = if ht40 {
+            crate::rate::WITH_HT40
+        } else {
+            crate::rate::LEGACY
+        };
+        self.auto = Some(AutoRate::new(now, ladder));
         self.counted = now;
         // TX_STA_CNT0 and 1 count from their last read.
         let _ = self.stick.read(crate::Space::Mac, regs::TX_STA_CNT0);
@@ -92,8 +123,9 @@ impl Radio {
         if let Some(rate) = auto.step(now, frames, failed, retries) {
             tracing::info!(
                 target: "owly_awdl",
-                "unicast at {} Mbit/s ({retries} retries, {failed} given up, {frames} frames in a second)",
-                rate / 2
+                "unicast at {rate:?}, {}.{} Mbit/s ({retries} retries, {failed} given up, {frames} frames in a second)",
+                rate.kbps100() / 10,
+                rate.kbps100() % 10
             );
         }
     }
@@ -152,7 +184,7 @@ impl Air for Radio {
         } = frame;
         let data = is_unicast_data(&bytes);
         let chip_rate = match (rate, &self.auto) {
-            (_, Some(auto)) if data => tx::Rate::Legacy(auto.rate()),
+            (_, Some(auto)) if data => auto.rate(),
             (TxRate::Legacy(r), _) => tx::Rate::Legacy(r),
             (TxRate::Ht { mcs, sgi }, _) => tx::Rate::Ht { mcs, sgi },
         };
@@ -166,7 +198,7 @@ impl Air for Radio {
         }
         if data {
             self.stick.reap_tx();
-            if self.stick.tx_pending() >= DATA_QUEUE {
+            if self.stick.tx_pending() >= data_queue(chip_rate, self.deep_queue) {
                 self.stats.tx_full += 1;
                 return Err(Frame {
                     bytes,
@@ -270,6 +302,15 @@ mod tests {
         f.extend_from_slice(&[0, 0]);
         f.extend_from_slice(body);
         f
+    }
+
+    #[test]
+    fn a_deep_queue_holds_about_4_ms_of_air_at_any_rate() {
+        use tx::Rate;
+        assert_eq!(data_queue(Rate::Legacy(108), false), DATA_QUEUE);
+        assert_eq!(data_queue(Rate::Legacy(24), true), 4);
+        assert_eq!(data_queue(Rate::Legacy(108), true), 18);
+        assert_eq!(data_queue(Rate::Ht40 { mcs: 7, sgi: false }, true), 32);
     }
 
     #[test]
