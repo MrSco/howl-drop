@@ -99,6 +99,7 @@ public:
     Status send_selection_to_iphone(const std::vector<std::filesystem::path>& paths, const std::string& to = {});
     // What the relay's latest scan heard, from its hello.
     struct Nearby {
+        bool trusted = false;  // a current imported identity is available for sending
         bool relay = false;     // the relay is on the network, or this PC's radio runs
         bool local = false;     // it is this PC's radio (LocalIphone), not Home Assistant
         bool scanning = false;  // it is scanning now

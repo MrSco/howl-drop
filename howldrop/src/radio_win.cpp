@@ -358,13 +358,24 @@ void Radio::wake_loop() {
     const HRESULT ro = RoInitialize(RO_INIT_MULTITHREADED);
     BleWake wake;
     std::string last_error;
+    std::array<unsigned char, 8> advertised{};
+    std::size_t hash_offset = 0;
+    auto rotated = std::chrono::steady_clock::now();
     std::unique_lock<std::mutex> lock(wake_mu_);
     while (!wake_quit_) {
         const bool want = std::chrono::steady_clock::now() < wake_until_;
+        const auto now = std::chrono::steady_clock::now();
+        if (sender_identity_.prefixes.size() > 4 && now - rotated >= std::chrono::seconds(2)) {
+            hash_offset += 4; rotated = now;
+        }
+        const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        const auto hashes = radio::advert_hashes(sender_identity_, hash_offset, static_cast<std::uint64_t>(seconds));
         lock.unlock();
+        if (wake.on() && hashes != advertised) wake.stop();
         if (want && !wake.on()) {
-            const std::string error = wake.start();
+            const std::string error = wake.start(hashes);
             if (error.empty()) {
+                advertised = hashes;
                 log("Bluetooth wake on");
                 last_error.clear();
             } else if (error != last_error) {
@@ -659,13 +670,19 @@ std::string Radio::run_agent() {
     const fs::path data = config_.home / L"native";
     auto agent = std::make_shared<ChildProcess>();
     std::string error;
-    if (!agent->start_on_pipe(agent_,
-                              {L"--name", wide(config_.name), L"--staging", (data / L"staging").wstring(),
-                               L"--deliver", config_.inbox.wstring(), L"--identity", (data / L"identity").wstring(),
-                               L"--receive", wide(config_.receive), L"--senders", wide(config_.senders), L"--ask-dir",
-                               asks_.wstring(), L"--outbox", outbox_.wstring(), L"--discard", L"--scan-request",
-                               scan_request_.wstring(), L"--events", L"--local-jobs", L"--tx-rate", wide(config_.tx_rate)},
-                              error)) {
+    std::vector<std::wstring> arguments = {
+        L"--name", wide(config_.name), L"--staging", (data / L"staging").wstring(),
+        L"--deliver", config_.inbox.wstring(), L"--identity", (data / L"identity").wstring(),
+        L"--receive", wide(config_.receive), L"--senders", wide(config_.senders), L"--ask-dir", asks_.wstring(),
+        L"--outbox", outbox_.wstring(), L"--discard", L"--scan-request", scan_request_.wstring(),
+        L"--events", L"--local-jobs", L"--tx-rate", wide(config_.tx_rate)};
+    const auto sending_identity = config_.home / L"sender-identity.bin";
+    if (fs::exists(sending_identity, ec)) {
+        arguments.push_back(L"--sender-identity"); arguments.push_back(sending_identity.wstring());
+    }
+    { std::lock_guard<std::mutex> hold(wake_mu_); sender_identity_ = {}; }
+    sender_identity_expires_.store(0);
+    if (!agent->start_on_pipe(agent_, arguments, error)) {
         log("howldrop-agent: " + error);
         return error;
     }
@@ -686,8 +703,8 @@ std::string Radio::run_agent() {
 }
 
 void Radio::handle_line(const std::string& line) {
-    log(line);
     const auto event = radio::event_fields(line);
+    if (!event || event->empty() || event->front() != "sender-identity") log(line);
     // The agent starts on a file: its window (180 s) is when the phone must hear the wake.
     if (line.rfind("Send: sending ", 0) == 0) hold_wake(200);
     if (!event) return;
@@ -695,7 +712,15 @@ void Radio::handle_line(const std::string& line) {
     if (f.empty()) return;
     const std::string& what = f[0];
     const auto field = [&](std::size_t i) { return i < f.size() ? f[i] : std::string(); };
-    if (what == "stick") {
+    if (what == "sender-identity") {
+        const auto identity = radio::sender_identity(f);
+        if (identity) {
+            { std::lock_guard<std::mutex> hold(wake_mu_); sender_identity_ = *identity; }
+            sender_identity_expires_.store(identity->expires);
+            wake_cv_.notify_all();
+            log("Trusted-contact sending identity loaded");
+        }
+    } else if (what == "stick") {
         if (field(1) == "needs-winusb") needs_setup_ = true;
     } else if (what == "stopped") {
         stop_reason_ = field(1);
@@ -822,6 +847,8 @@ Status Radio::control_send(const std::string& id, bool retry) {
 Node::Nearby Radio::nearby() const {
     std::lock_guard<std::mutex> hold(nearby_mu_);
     Node::Nearby out;
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    out.trusted = sender_identity_expires_.load() > static_cast<std::uint64_t>(now);
     out.relay = up_.load();
     out.local = true;
     out.scanning = scanning_;

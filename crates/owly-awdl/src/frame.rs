@@ -113,6 +113,14 @@ pub enum Received<'a> {
         params: u16,
         timeout: u16,
     },
+    /// The answer to our request for a Block Ack session, to send
+    /// aggregated: status 0 is success.
+    AddBaResponse {
+        header: Header,
+        token: u8,
+        status: u16,
+        params: u16,
+    },
     /// An AWDL data frame: one MSDU, or an A-MSDU.
     Data {
         header: Header,
@@ -190,6 +198,14 @@ fn action(header: Header, body: &[u8]) -> Result<Received<'_>, Error> {
             token: b.u8(2)?,
             params: b.le16(3)?,
             timeout: b.le16(5)?,
+        });
+    }
+    if b.u8(0)? == CATEGORY_BLOCK_ACK && b.u8(1)? == ADDBA_RESPONSE {
+        return Ok(Received::AddBaResponse {
+            header,
+            token: b.u8(2)?,
+            status: b.le16(3)?,
+            params: b.le16(5)?,
         });
     }
     if body.len() < ACTION_HEADER_LEN
@@ -312,6 +328,47 @@ pub fn data_frame(src: MacAddr, dst: MacAddr, seq: u16, awdl_seq: u16, packet: &
     let mut out = Vec::with_capacity(HEADER_LEN + DATA_HEADER_LEN + packet.len());
     put_header(&mut out, fc::DATA, dst, src, seq);
     put_msdu(&mut out, awdl_seq, packet);
+    out
+}
+
+/// A QoS data frame carrying one IPv6 packet on `tid`, normal ack policy:
+/// what goes inside an A-MPDU under a Block Ack session we started.
+pub fn qos_data_frame(
+    src: MacAddr,
+    dst: MacAddr,
+    seq: u16,
+    tid: u8,
+    awdl_seq: u16,
+    packet: &[u8],
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(HEADER_LEN + 2 + DATA_HEADER_LEN + packet.len());
+    put_header(&mut out, fc::QOS_DATA, dst, src, seq);
+    out.le16(u16::from(tid & 0xf));
+    put_msdu(&mut out, awdl_seq, packet);
+    out
+}
+
+/// An ADDBA request: a Block Ack session to `dst` on `tid`, immediate
+/// Block Ack, no A-MSDU inside A-MPDUs, a window of `window` frames
+/// starting at sequence number `ssn`, and no timeout.
+pub fn addba_request(
+    src: MacAddr,
+    dst: MacAddr,
+    seq: u16,
+    token: u8,
+    tid: u8,
+    window: u16,
+    ssn: u16,
+) -> Vec<u8> {
+    let params = 0x0002 | (u16::from(tid & 0xf) << 2) | ((window & 0x3ff) << 6);
+    let mut out = Vec::with_capacity(HEADER_LEN + 9);
+    put_header(&mut out, fc::ACTION, dst, src, seq);
+    out.u8(CATEGORY_BLOCK_ACK);
+    out.u8(ADDBA_REQUEST);
+    out.u8(token);
+    out.le16(params);
+    out.le16(0); // no timeout
+    out.le16((ssn & 0x0fff) << 4);
     out
 }
 
@@ -549,6 +606,45 @@ mod tests {
     }
 
     // spec: AWDL-15
+    #[test]
+    fn our_addba_request_reads_back_and_its_response_parses() {
+        let req = addba_request(A, B, 9, 7, 0, 64, 100);
+        let Ok(Received::AddBaRequest {
+            header,
+            token,
+            params,
+            timeout,
+        }) = parse(&req)
+        else {
+            panic!("not ADDBA");
+        };
+        assert_eq!((header.src, header.dst, token, timeout), (A, B, 7, 0));
+        assert_eq!((params >> 2) & 0xf, 0);
+        assert_eq!(params >> 6, 64);
+        assert_eq!(u16::from_le_bytes([req[31], req[32]]) >> 4, 100);
+        let resp = addba_response(B, A, 3, token, params, 0);
+        let Ok(Received::AddBaResponse {
+            status,
+            params,
+            token,
+            ..
+        }) = parse(&resp)
+        else {
+            panic!("not an ADDBA response");
+        };
+        assert_eq!((status, token, params >> 6), (0, 7, 64));
+    }
+
+    #[test]
+    fn a_qos_data_frame_carries_its_tid_and_packet() {
+        let f = qos_data_frame(A, B, 5, 0, 1, &[0x60, 1, 2]);
+        let Ok(Received::Data { amsdu, body, .. }) = parse(&f) else {
+            panic!("not data");
+        };
+        assert!(!amsdu);
+        assert!(body.ends_with(&[0x60, 1, 2]));
+    }
+
     #[test]
     fn addba_requests_are_answered_with_success() {
         let mut req = Vec::new();

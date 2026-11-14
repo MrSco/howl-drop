@@ -793,6 +793,36 @@ veth_test! {
 }
 
 // HowlDrop: the sender's client certificate comes with its request.
+// spec: ID-5, TLS-3
+veth_test! {
+    async fn identified_sender_keeps_its_record_and_certificate_on_a_custom_transport(veth: Veth) {
+        let record = vec![1, 2, 3, 4];
+        let mut config = config();
+        let expected = record.clone();
+        config.discover_gate = Some(owly_airdrop::proto::receiver::DiscoverGate(std::sync::Arc::new(
+            move |request: &owly_airdrop::proto::messages::DiscoverRequest| request.sender_record.as_ref() == Some(&expected),
+        )));
+        let mut receiver = receiver(&veth, config).await;
+        let identity = Identity::generate().unwrap();
+        let mut config = sender_proto::Config::new("Test", "0123456789ab");
+        config.sender_record = Some(record.clone());
+        assert!(Sender::new(config.clone()).is_err());
+        let sender = Sender::with_identity_and_connector(config, Some(&identity), owly_airdrop::driver::transport::Os).unwrap();
+        assert!(sender.discover(veth.to_b(PORT)).await.unwrap().is_some());
+        let send = async {
+            sender.send(veth.to_b(PORT), &Payload::Urls(vec!["https://example.com".into()]), RECEIVER_FLAGS, None).await.unwrap()
+        };
+        let accept = async {
+            let request = receiver.next_request().await;
+            assert_eq!(request.ask.sender_record, Some(record));
+            assert_eq!(request.peer_certificate.as_deref(), Some(identity.cert.as_ref()));
+            request.accept();
+        };
+        let (outcome, ()) = tokio::join!(send, accept);
+        assert_eq!(outcome, Outcome::Delivered);
+    }
+}
+
 veth_test! {
     async fn a_request_carries_the_client_certificate(veth: Veth) {
         let mut r = receiver(&veth, config()).await;

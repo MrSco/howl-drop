@@ -488,7 +488,8 @@ struct HowlWindow::Impl {
                 y += kDeviceRow;
             }
             if (around.devices.empty() && !around.scanning) {
-                g.text(L"Set the iPhone's AirDrop to Everyone for 10 Minutes, then Look for devices.",
+                g.text(around.trusted ? L"For Contacts Only, add your Apple email or phone to the iPhone's contacts."
+                                     : L"Set the iPhone's AirDrop to Everyone for 10 Minutes, then Look for devices.",
                        D2D1::RectF(kSide + 4, y - 2, right, y + 16), ui::Font::Small, ui::theme::dim);
                 y += 18;
             }
@@ -632,6 +633,7 @@ struct HowlWindow::Impl {
         const std::wstring speed = s.tx_rate == "12"   ? L"Standard (12 Mbps)"
                                    : s.tx_rate == "54"   ? L"Fixed (54 Mbps)"
                                    : s.tx_rate == "mcs7" ? L"Fixed (HT)"
+                                   : s.tx_rate == "auto-ht" ? L"Automatic, with 40 MHz HT (experimental)"
                                                          : L"Automatic (up to 54 Mbps)";
         g.text(L"Sending speed: " + speed, rate_button, ui::Font::Body, ui::theme::accent);
         area(rate_button, kTxRate);
