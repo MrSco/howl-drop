@@ -17,6 +17,8 @@ rustPlatform.buildRustPackage {
       ../Cargo.lock
       ../.cargo
       ../crates
+      # Patched crates.io dependencies ([patch.crates-io] in Cargo.toml).
+      ../vendor
       ../xtask
       ../packaging
       ../README.md

@@ -97,6 +97,9 @@ struct Args {
     /// AirDrop what's put here to the iPhone; no sending without it.
     #[arg(long)]
     outbox: Option<PathBuf>,
+    /// Read local send manifests. Only for a private outbox controlled by the UI.
+    #[arg(long, hide = true)]
+    local_jobs: bool,
     /// Delete each file once tried, instead of moving it to sent/ or failed/.
     #[arg(long)]
     discard: bool,
@@ -137,7 +140,8 @@ struct Args {
     /// The regulatory domain, two capitals; else US where none is set.
     #[arg(long)]
     country: Option<String>,
-    /// The data frame rate: 6–54 (Mbit/s), or mcs0–mcs15.
+    /// The data frame rate: 6–54 (Mbit/s), mcs0–mcs15, or `auto`: on the
+    /// MT7612U, 12 to 54 Mbit/s as the air allows (its default).
     #[arg(long)]
     tx_rate: Option<String>,
     /// Send to a phone as A-MSDUs, several packets a frame.
@@ -186,7 +190,7 @@ fn main() -> ExitCode {
     let filter = if args.verbose {
         "info,owly_radio=debug,owly_awdl=debug"
     } else {
-        "warn,owly_radio=info,owly_awdl=info"
+        "warn,owly_radio=info,owly_awdl=info,howldrop_agent::netstack=info"
     };
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -326,6 +330,7 @@ async fn run(args: Args) -> Result<(), String> {
                 },
                 send::Options {
                     outbox,
+                    local_jobs: args.local_jobs,
                     discard: args.discard,
                     name: args.name.clone(),
                     model: args.model.clone(),

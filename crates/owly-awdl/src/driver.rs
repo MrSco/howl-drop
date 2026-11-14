@@ -435,7 +435,7 @@ impl<A: Air, N: Netif> Driver<A, N> {
         let s = self.node.stats();
         let l = &self.lateness;
         tracing::info!(
-            "STATS tx_action {} tx_unicast {} tx_multicast {} tx_amsdu {} | radio full {} gave up {} | rx_action {} rx_data {} rx_malformed {} delivered {} | dropped no_peer {} queue {} expired {} | syn held {} released {} | no_overlap {} | timer late avg {} µs max {} µs",
+            "STATS tx_action {} tx_unicast {} tx_multicast {} tx_amsdu {} | radio full {} gave up {} | rx_action {} rx_data {} rx_malformed {} not_ours {} delivered {} | dropped no_peer {} queue {} expired {} | syn held {} released {} | no_overlap {} | timer late avg {} µs max {} µs",
             s.tx_action,
             s.tx_unicast,
             s.tx_multicast,
@@ -445,6 +445,7 @@ impl<A: Air, N: Netif> Driver<A, N> {
             s.rx_action,
             s.rx_data,
             s.rx_malformed,
+            s.rx_not_ours,
             s.delivered,
             s.dropped_no_peer,
             s.dropped_queue_full,
@@ -458,10 +459,11 @@ impl<A: Air, N: Netif> Driver<A, N> {
         if self.node.config().accept_addba {
             let r = self.node.reorder_stats();
             tracing::info!(
-                "REORDER held {} late {} | dropped old {} duplicate {} | released timeout {} bar {}",
+                "REORDER held {} late {} | passed old {} resynced {} | dropped duplicate {} | released timeout {} bar {}",
                 r.held,
                 r.delivered_late,
-                r.dropped_old,
+                r.passed_old,
+                r.resynced,
                 r.dropped_duplicate,
                 r.released_by_timeout,
                 r.released_by_bar,

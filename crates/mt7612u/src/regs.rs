@@ -189,6 +189,21 @@ pub mod ee {
     pub const TX_POWER_0_START_5G: usize = 0x062;
     pub const TX_POWER_1_START_5G: usize = 0x080;
     pub const NIC_CONF_1: usize = 0x036;
+    pub const NIC_CONF_1_TEMP_TX_ALC: u16 = 1 << 1;
+    pub const NIC_CONF_1_TX_ALC_EN: u16 = 1 << 13;
+    pub const TX_POWER_DELTA_BW40: usize = 0x050;
+    pub const TX_POWER_EXT_PA_5G: usize = 0x054;
+    /// Per-rate power, a byte for each pair of rates (mt76x2_get_rate_power).
+    pub const TX_POWER_CCK: usize = 0x0a0;
+    pub const TX_POWER_HT_MCS0: usize = 0x0a6;
+    pub const TX_POWER_HT_MCS4: usize = 0x0a8;
+    pub const TX_POWER_HT_MCS8: usize = 0x0aa;
+    pub const TX_POWER_HT_MCS12: usize = 0x0ac;
+    pub const TX_POWER_OFDM_5G_6M: usize = 0x0b2;
+    pub const TX_POWER_OFDM_5G_24M: usize = 0x0b4;
+    pub const TX_POWER_VHT_MCS8: usize = 0x0be;
+    /// Its low byte is the target power (mt76x2_get_power_info_5g).
+    pub const RF_2G_RX_HIGH_GAIN: usize = 0x0f8;
     pub const XTAL_TRIM_1: usize = 0x03a;
     pub const NIC_CONF_2: usize = 0x042;
     pub const NIC_CONF_2_XTAL_OPTION: u16 = 0x3 << 9;
@@ -210,6 +225,13 @@ pub const TX_ALC_CFG_3: u32 = 0x13ac;
 pub const TX_ALC_CFG_0: u32 = 0x13b0;
 pub const TX_ALC_CFG_0_CH_INIT_0: u32 = 0x3f;
 pub const TX_ALC_CFG_0_CH_INIT_1: u32 = 0x3f << 8;
+pub const TX_ALC_CFG_1: u32 = 0x13b4;
+/// Frames sent and given up since the last read (TX_STA_CNT0's low half),
+/// and those sent with their retries (TX_STA_CNT1: ok low, retries high).
+pub const TX_STA_CNT0: u32 = 0x170c;
+pub const TX_STA_CNT1: u32 = 0x1710;
+/// TX_ALC_CFG_1's and TX_ALC_CFG_2's temperature compensation.
+pub const TX_ALC_CFG_TEMP_COMP: u32 = 0x3f;
 
 /// The WCID table (MT_WCID_ADDR, MT_WCID_ATTR): a station's address, and
 /// its receive Block Ack bits, one per TID, in the 16 bits after it.

@@ -31,11 +31,14 @@ struct WindowSettings {
     bool start_with_windows = false;
     std::string receive = "ask";  // everyone, ask, contacts
     std::string senders;          // comma-separated
+    std::string download_dir;     // dedicated HowlDrop folder, used after restart
+    std::string tx_rate = "auto"; // auto, or a fixed rate: 12, 54, mcs7
 };
 
 class HowlWindow {
 public:
     struct Hooks {
+        std::function<void(const std::string& id, bool retry)> control_send;
         std::function<WindowSettings()> settings;
         std::function<void(const WindowSettings&)> apply;  // the settings page changed something
         std::function<Node::Nearby()> nearby;
@@ -63,6 +66,7 @@ public:
     void refresh();  // nearby devices, status or history may have changed
     bool open() const;
     bool showing() const;  // open, and not minimized
+    bool handle_message(MSG& message);  // native keyboard navigation and accessibility
     // Something arrives: an open window comes to the top, so its Accept
     // and progress are seen (Windows may keep the keyboard elsewhere).
     void raise();

@@ -36,12 +36,23 @@ Start `howldrop.exe` (double-click it). It runs by the clock:
   uploading, sent). Cards go by themselves a few seconds after the end,
   unless the pointer is on them.
 - Files land in `Downloads\HowlDrop`. Shared text goes on the clipboard.
+  Settings can choose another parent folder; HowlDrop uses a dedicated
+  `HowlDrop` subfolder there after the app restarts.
 - Click the icon to open the **HowlDrop window**: a drop zone (drag files on
   it, or click to choose), **Send to** (any nearby iPhone, or a device from
   **Look for devices**), and **Recent** (click to open, right-click to show in
   its folder). Its gear has the settings. While it is open it shows the
   transfers itself, and no cards or notifications pop up; an AirDrop coming
   in brings it to the top.
+- With **AirDrop on this PC**, a selection of files and folders is sent
+  together, with one acceptance on the iPhone. Use **Choose a folder** or
+  drop a folder on the window. Active outgoing transfers have **Cancel**;
+  unsuccessful or cancelled ones have **Retry**. Keep the originals
+  available until sending finishes; Retry sends their current contents.
+  The Home Assistant route continues to send individual files.
+- Tab and Shift+Tab move between the window's controls; Enter or Space
+  activates one. Escape returns from settings or hides the window. The
+  controls expose their names and current settings to Windows screen readers.
 - Right-click the icon for the menu:
 
 | Menu item | Default | |
@@ -118,6 +129,12 @@ AirDrop's channel. On the iPhone, open Control Center and tap the Wi-Fi icon
 once; AirDrop keeps working. `radio.log`'s `schedule` lines say how many of
 its 16 time slots each nearby Apple device gives HowlDrop's channel.
 
+Sending speed is Automatic by default: HowlDrop sends at up to 54 Mbit/s and
+steps down to 36, 24 or 12 when frames start needing retries, as at range.
+Settings can fix it instead at `12` Mbit/s, `54` Mbit/s, or `mcs7` (HT). Receive speed is also
+limited by the iPhone's schedule. The radio log includes network queue-drop
+counts to help diagnose a slow or interrupted transfer.
+
 ## Sending to your iPhone
 
 Set the iPhone's AirDrop to **Everyone for 10 Minutes**, send, and accept on
@@ -160,6 +177,8 @@ howldrop send NAME FILE  send FILE to the PC named NAME
 howldrop clip            send the current clipboard text
 howldrop stop            stop HowlDrop on this PC (the tray icon too)
 howldrop iphone [--to NAME] FILE...  AirDrop FILE (this PC's radio, or the add-on)
+howldrop cancel ID        cancel a local outgoing job (ID from radio.log)
+howldrop retry ID         retry a failed or cancelled local job
 howldrop nearby [--scan]  the devices it can send to
 howldrop key             show this PC's pairing key
 howldrop pair KEY        take another PC's key (then restart HowlDrop)

@@ -9,20 +9,23 @@
 #include "ui_win.hpp"
 
 #include <commdlg.h>
+#include <commctrl.h>
 #include <shellapi.h>
+#include <shobjidl.h>
 #include <windowsx.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
 #include <map>
+#include <set>
 
 namespace howldrop {
 namespace {
 
 const wchar_t* const kWindowClass = L"HowlDropWindow";
 constexpr float kWidth = 420.0f;
-constexpr float kHeight = 700.0f;
+constexpr float kHeight = 780.0f;
 constexpr float kSide = 20.0f;
 constexpr float kRecentRow = 52.0f;
 constexpr float kDeviceRow = 44.0f;
@@ -46,6 +49,11 @@ enum Hit {
     kNowAccept,   // index into now
     kNowDecline,
     kNowRow,
+    kNowCancel,
+    kNowRetry,
+    kDownloadFolder,
+    kTxRate,
+    kPickFolder,
 };
 
 constexpr UINT_PTR kAnimate = 7;  // the Now list's moving bars
@@ -111,6 +119,29 @@ std::vector<std::filesystem::path> pick_files(HWND owner) {
     return files;
 }
 
+std::filesystem::path pick_folder(HWND owner, const wchar_t* title) {
+    IFileOpenDialog* dialog = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) return {};
+    DWORD flags = 0;
+    dialog->GetOptions(&flags);
+    dialog->SetOptions(flags | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    dialog->SetTitle(title);
+    std::filesystem::path result;
+    if (SUCCEEDED(dialog->Show(owner))) {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dialog->GetResult(&item))) {
+            PWSTR path = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+                result = path;
+                CoTaskMemFree(path);
+            }
+            item->Release();
+        }
+    }
+    dialog->Release();
+    return result;
+}
+
 }  // namespace
 
 struct HowlWindow::Impl {
@@ -140,6 +171,9 @@ struct HowlWindow::Impl {
     HFONT edit_font = nullptr;
     HBRUSH edit_brush = nullptr;
     UINT edit_dpi = 0;
+    std::map<std::pair<int, int>, HWND> controls;
+    std::map<int, std::pair<int, int>> control_ids;
+    int next_control_id = 1000;
 
     ~Impl() {
         for (auto& [path, thumb] : thumbs) {
@@ -182,6 +216,106 @@ struct HowlWindow::Impl {
     }
 
     void area(D2D1_RECT_F r, int hit, int index = 0) { areas.push_back({r, hit, index}); }
+
+    std::wstring accessible_name(const Area& a) {
+        const auto s = hooks.settings ? hooks.settings() : WindowSettings{};
+        switch (a.hit) {
+            case kGear: return L"Settings";
+            case kBack: return L"Back";
+            case kDrop: return L"Choose files to send";
+            case kClear: return L"Clear selection";
+            case kScan: return L"Look for devices";
+            case kFolder: return L"Open received files folder";
+            case kDownloadFolder: return L"Choose where to save received files: " + wide(s.download_dir);
+            case kTxRate: return L"Transmit rate: " + wide(s.tx_rate);
+            case kPickFolder: return L"Choose a folder to send";
+            case kSave: return L"Save contacts";
+            case kNowAccept: return L"Accept incoming transfer";
+            case kNowDecline: return L"Decline incoming transfer";
+            case kNowCancel: return L"Cancel transfer";
+            case kNowRetry: return L"Retry transfer";
+            case kReceive: {
+                const wchar_t* labels[] = {L"Everyone, without asking", L"Everyone, but ask me", L"Contacts only"};
+                const char* keys[] = {"everyone", "ask", "contacts"};
+                return std::wstring(labels[a.index]) + (s.receive == keys[a.index] ? L", selected" : L"");
+            }
+            case kToggle: {
+                const wchar_t* labels[] = {L"AirDrop on this PC", L"Show finished transfers", L"Open links",
+                    L"Open photos and videos", L"Open PDFs and text files", L"Delete received files after 30 days", L"Start with Windows"};
+                const bool values[] = {s.radio, s.notify, s.open_links, s.open_media, s.open_documents, s.cleanup, s.start_with_windows};
+                return std::wstring(labels[a.index]) + (values[a.index] ? L", on" : L", off");
+            }
+            case kDevice: {
+                const auto nearby = hooks.nearby ? hooks.nearby() : Node::Nearby{};
+                return a.index < 0 ? L"Send to any nearby iPhone" :
+                    (static_cast<std::size_t>(a.index) < nearby.devices.size() ? L"Send to " + wide(nearby.devices[a.index]) : L"Send");
+            }
+            case kRecent:
+                return static_cast<std::size_t>(a.index) < recent.size() ? L"Open " + wide(recent[a.index].item) : L"Recent file";
+            case kNowRow:
+                if (static_cast<std::size_t>(a.index) < now.size()) {
+                    const auto text = card_text(now[a.index]);
+                    return text.title + L", " + text.line + L", " + card_status(now[a.index]);
+                }
+                return L"Transfer";
+            default: return L"HowlDrop";
+        }
+    }
+
+    // Native buttons provide tab order, keyboard activation and Windows'
+    // accessibility providers while the parent draws the visible interface.
+    void sync_controls() {
+        if (!window) return;
+        std::set<std::pair<int, int>> visible;
+        for (const auto& a : areas) {
+            const auto key = std::make_pair(a.hit, a.index);
+            visible.insert(key);
+            auto& button = controls[key];
+            const auto label = accessible_name(a);
+            if (!button) {
+                const int id = next_control_id++;
+                button = CreateWindowExW(0, L"BUTTON", label.c_str(),
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW | BS_NOTIFY,
+                    0, 0, 0, 0, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
+                control_ids[id] = key;
+                if (button) SetWindowSubclass(button, native_button_proc, 1, reinterpret_cast<DWORD_PTR>(this));
+            }
+            if (!button) continue;
+            wchar_t old[2048];
+            GetWindowTextW(button, old, 2048);
+            if (label != old) SetWindowTextW(button, label.c_str());
+            const float s = scale();
+            SetWindowPos(button, HWND_TOP, static_cast<int>(a.rect.left * s), static_cast<int>(a.rect.top * s),
+                static_cast<int>((a.rect.right - a.rect.left) * s), static_cast<int>((a.rect.bottom - a.rect.top) * s), SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            if (GetFocus() == button) canvas->outline(a.rect, 6, ui::theme::accent, 2);
+        }
+        for (const auto& [key, button] : controls) if (!visible.count(key)) ShowWindow(button, SW_HIDE);
+    }
+
+    static LRESULT CALLBACK native_button_proc(HWND button, UINT message, WPARAM wparam, LPARAM lparam,
+                                                UINT_PTR id, DWORD_PTR data) {
+        auto* self = reinterpret_cast<Impl*>(data);
+        if (message == WM_MOUSEMOVE) {
+            const auto it = self->control_ids.find(GetDlgCtrlID(button));
+            if (it != self->control_ids.end() && (self->hot != it->second.first || self->hot_index != it->second.second)) {
+                self->hot = it->second.first;
+                self->hot_index = it->second.second;
+                InvalidateRect(self->window, nullptr, FALSE);
+            }
+            TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, button, 0};
+            TrackMouseEvent(&track);
+        } else if (message == WM_MOUSELEAVE) {
+            self->hot = kNothing;
+            InvalidateRect(self->window, nullptr, FALSE);
+        } else if (message == WM_SETFOCUS || message == WM_KILLFOCUS) {
+            InvalidateRect(self->window, nullptr, FALSE);
+        } else if (message == WM_RBUTTONUP) {
+            POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            MapWindowPoints(button, self->window, &point, 1);
+            return SendMessageW(self->window, WM_RBUTTONUP, wparam, MAKELPARAM(point.x, point.y));
+        } else if (message == WM_NCDESTROY) RemoveWindowSubclass(button, native_button_proc, id);
+        return DefSubclassProc(button, message, wparam, lparam);
+    }
     bool is_hot(int hit, int index = 0) const { return hot == hit && hot_index == index; }
 
     // --- the main page ---------------------------------------------------------------
@@ -245,6 +379,12 @@ struct HowlWindow::Impl {
             } else {
                 area(row, kNowRow, index);
             }
+            if (t.controllable && t.stage != Transfers::Stage::Done) {
+                const auto button = D2D1::RectF(row.right - 88, row.top + 6, row.right - 8, row.top + 30);
+                g.fill(button, 6, ui::theme::raised);
+                g.text(t.finished() ? L"Retry" : L"Cancel", button, ui::Font::Small, ui::theme::text, DWRITE_TEXT_ALIGNMENT_CENTER);
+                area(button, t.finished() ? kNowRetry : kNowCancel, index);
+            }
             y = row.bottom + 8;
         }
         // The bars move between the tray's refreshes.
@@ -306,7 +446,10 @@ struct HowlWindow::Impl {
             g.text(ui::icon::kClose, clear, ui::Font::Icon, ui::theme::dim, DWRITE_TEXT_ALIGNMENT_CENTER);
             area(clear, kClear);
         }
-        y = zone.bottom + 22;
+        const auto choose_folder = D2D1::RectF(kSide, zone.bottom + 2, right, zone.bottom + 26);
+        g.text(L"Choose a folder…", choose_folder, ui::Font::Small, ui::theme::accent, DWRITE_TEXT_ALIGNMENT_TRAILING);
+        area(choose_folder, kPickFolder);
+        y = zone.bottom + 38;
 
         // Send to: any nearby iPhone, and what the last scan heard.
         const Node::Nearby around = hooks.nearby ? hooks.nearby() : Node::Nearby{};
@@ -481,6 +624,18 @@ struct HowlWindow::Impl {
         toggle(L"Open PDFs and text files", s.open_documents, kDocuments);
         y += 8;
         section(L"THIS PC");
+        const auto folder_button = D2D1::RectF(kSide, y, right, y + 32);
+        g.text(L"Save to: " + wide(s.download_dir) + L" (after restart)", folder_button, ui::Font::Body, ui::theme::accent);
+        area(folder_button, kDownloadFolder);
+        y += 32;
+        const auto rate_button = D2D1::RectF(kSide, y, right, y + 32);
+        const std::wstring speed = s.tx_rate == "12"   ? L"Standard (12 Mbps)"
+                                   : s.tx_rate == "54"   ? L"Fixed (54 Mbps)"
+                                   : s.tx_rate == "mcs7" ? L"Fixed (HT)"
+                                                         : L"Automatic (up to 54 Mbps)";
+        g.text(L"Sending speed: " + speed, rate_button, ui::Font::Body, ui::theme::accent);
+        area(rate_button, kTxRate);
+        y += 32;
         toggle(L"Delete received files after 30 days", s.cleanup, kCleanup);
         toggle(L"Start with Windows", s.start_with_windows, kStartup);
     }
@@ -555,6 +710,32 @@ struct HowlWindow::Impl {
 
     void act(int hit, int index) {
         switch (hit) {
+            case kPickFolder: {
+                const auto folder = pick_folder(window, L"Choose a folder to AirDrop");
+                if (!folder.empty()) pending.push_back(folder);
+                break;
+            }
+            case kDownloadFolder: {
+                auto folder = pick_folder(window, L"Choose where to save files (a HowlDrop subfolder will be used)");
+                if (!folder.empty()) {
+                    if (folder.filename() != L"HowlDrop") folder /= L"HowlDrop";
+                    auto s = hooks.settings();
+                    s.download_dir = path_to_utf8(folder);
+                    hooks.apply(s);
+                }
+                break;
+            }
+            case kTxRate: {
+                auto s = hooks.settings();
+                s.tx_rate = s.tx_rate == "auto" ? "12" : s.tx_rate == "12" ? "54" : s.tx_rate == "54" ? "mcs7" : "auto";
+                hooks.apply(s);
+                break;
+            }
+            case kNowCancel:
+            case kNowRetry:
+                if (index >= 0 && static_cast<std::size_t>(index) < now.size() && hooks.control_send)
+                    hooks.control_send(now[index].id, hit == kNowRetry);
+                break;
             case kGear:
                 settings_page = true;
                 scroll = 0;
@@ -660,6 +841,7 @@ struct HowlWindow::Impl {
                         if (edit) ShowWindow(edit, SW_HIDE);
                         paint_main(*canvas);
                     }
+                    sync_controls();
                     canvas->end();
                 }
                 EndPaint(window, &ps);
@@ -738,7 +920,7 @@ struct HowlWindow::Impl {
                     DragQueryFileW(drop, i, path.data(), len + 1);
                     path.resize(len);
                     std::error_code ec;
-                    if (std::filesystem::is_regular_file(path, ec)) files.emplace_back(path);
+                    if (std::filesystem::is_regular_file(path, ec) || std::filesystem::is_directory(path, ec)) files.emplace_back(path);
                 }
                 DragFinish(drop);
                 if (!files.empty()) {
@@ -758,12 +940,25 @@ struct HowlWindow::Impl {
                 DestroyWindow(window);
                 return 0;
             case WM_DESTROY:
+                controls.clear();
+                control_ids.clear();
                 edit = nullptr;  // destroyed with its parent
                 window = nullptr;
                 canvas.reset();
                 animating = false;
                 tell_visibility();
                 return 0;
+            case WM_DRAWITEM:
+                return TRUE;  // parent draws the accessible native buttons
+            case WM_COMMAND: {
+                const auto it = control_ids.find(LOWORD(wparam));
+                if (it != control_ids.end()) {
+                    if (HIWORD(wparam) == BN_CLICKED) act(it->second.first, it->second.second);
+                    InvalidateRect(window, nullptr, FALSE);
+                    return 0;
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -803,6 +998,40 @@ HowlWindow::~HowlWindow() = default;
 bool HowlWindow::open() const { return impl_->window != nullptr; }
 
 bool HowlWindow::showing() const { return impl_->showing(); }
+
+bool HowlWindow::handle_message(MSG& message) {
+    if (!impl_->window || (message.hwnd != impl_->window && !IsChild(impl_->window, message.hwnd))) return false;
+    if (message.message == WM_KEYDOWN && message.wParam == VK_TAB) {
+        std::vector<HWND> order;
+        for (const auto& area : impl_->areas) {
+            if (area.hit == kSave && impl_->edit && IsWindowVisible(impl_->edit)) order.push_back(impl_->edit);
+            const auto it = impl_->controls.find({area.hit, area.index});
+            if (it != impl_->controls.end() && IsWindowVisible(it->second)) order.push_back(it->second);
+        }
+        if (order.empty()) return false;
+        const auto it = std::find(order.begin(), order.end(), GetFocus());
+        const bool back = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        const auto count = static_cast<int>(order.size());
+        const int index = it == order.end() ? (back ? 0 : -1) : static_cast<int>(it - order.begin());
+        SetFocus(order[static_cast<std::size_t>((index + (back ? -1 : 1) + count) % count)]);
+        InvalidateRect(impl_->window, nullptr, FALSE);
+        return true;
+    }
+    if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
+        if (impl_->settings_page) impl_->act(kBack, 0);
+        else ShowWindow(impl_->window, SW_HIDE);
+        return true;
+    }
+    if (message.message == WM_KEYDOWN && (message.wParam == VK_RETURN || message.wParam == VK_SPACE)) {
+        for (const auto& [key, button] : impl_->controls) {
+            if (GetFocus() == button && IsWindowVisible(button)) {
+                SendMessageW(button, BM_CLICK, 0, 0);
+                return true;
+            }
+        }
+    }
+    return IsDialogMessageW(impl_->window, &message) != FALSE;
+}
 
 void HowlWindow::raise() {
     HWND w = impl_->window;

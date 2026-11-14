@@ -101,6 +101,15 @@ issues = [
 ]
 notes = "Intel Dual Band Wireless-AC 7265 (Zenbook UX305CA, 8086:095a, kernel 7.2.5)."
 
+[devices."8086:24fb"]
+status = "broken"
+mode = "exclusive"
+channels = [6]
+issues = [
+    "This Intel Wireless-AC 3168's firmware (3168-29) asserts on every ad-hoc start (https://github.com/t4t5/owly/issues/109).",
+]
+notes = "Intel Dual Band Wireless-AC 3168NGW (ASUS S2 Air Series PF4NU1F, 8086:24fb, kernel 6.18.55). The same assert as the 7265 (#16): ADVANCED_SYSASSERT 0x102C, data1 0x20A."
+
 [devices."8086:24f3"]
 status = "broken"
 mode = "exclusive"
@@ -126,6 +135,14 @@ issues = [
     "This card starts no ad-hoc cell on 5 GHz, so it runs on channel 6: a 6.4 MB photo from an iPhone took 110 s.",
 ]
 notes = "Realtek RTL8822BE (Crosshair VII Hero, 10ec:b822, kernel 7.2.9). Shared mode is untried. The ad-hoc interface sits beside the station. EINVAL on 44 and 149, neither \"No IR\". The kernel logs \"failed to get tx report from firmware\" through the session. The station is back about 6 s after teardown and stayed up for the five minutes watched, without a forced reconnect."
+
+[drivers.rtw88_8822bu]
+status = "tested"
+mode = "exclusive"
+issues = [
+    "In shared mode the phone never lists this computer, so nothing can be sent to it, though sending to the phone works and Wi-Fi stays up.",
+]
+notes = "Realtek RTL8812BU (USB, TP-Link Archer T3U Plus, 2357:0138, kernel 7.3.0), as a second card beside a connected built-in one. Exclusive mode on channel 44, where the ad-hoc cell starts on 5 GHz: both directions, and Wi-Fi back after teardown. Shared mode on channel 44, with the generic entry's reconnect: AWDL syncs, the phone answers pings over awdl0 and takes a send, but never opens a connection to this computer, after a phone restart too. The kernel logs \"failed to get tx report from firmware\" when the radio is given back."
 
 [drivers.rtw88_8821au]
 status = "broken"

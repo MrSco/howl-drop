@@ -61,6 +61,7 @@ int make_screenshots(const fs::path& dir) {
     sending.names = {"japan-trip.png"};
     sending.count = 1;
     sending.stage = Stage::Accepting;
+    sending.controllable = true;
     sending.detail = "asking: accept it on the iPhone";
     ok &= render_card(ask, inbox, dir / "card-ask.png", scale);
     ok &= render_card(moving, inbox, dir / "card-receiving.png", scale);
@@ -92,6 +93,7 @@ int make_screenshots(const fs::path& dir) {
         s.start_with_windows = true;
         s.receive = "ask";
         s.senders = "+1 555 123 4567,alex@example.com";
+        s.download_dir = "C:/Users/You/Downloads/HowlDrop";
         return s;
     };
     hooks.nearby = []() {

@@ -32,6 +32,7 @@ type Live = (
 pub struct UsbRadio {
     /// Holds mt7662_rom_patch.bin and mt7662.bin.
     firmware: PathBuf,
+    /// A fixed rate; `None` lets the radio choose (`auto`, the default).
     tx_rate: Option<TxRate>,
     /// Accept the phone's Block Ack sessions: the chip answers them
     /// (mt7612u's rx_block_ack). On unless --aggregation off.
@@ -46,6 +47,7 @@ impl UsbRadio {
         aggregation: Option<bool>,
     ) -> Result<UsbRadio, String> {
         let tx_rate = tx_rate
+            .filter(|r| *r != "auto")
             .map(|r| TxRate::parse(r).ok_or_else(|| format!("tx_rate {r:?} isn't a rate")))
             .transpose()?;
         Ok(UsbRadio {
@@ -145,8 +147,16 @@ impl UsbRadio {
             cfg.rate = rate;
         }
         cfg.accept_addba = self.aggregation;
+        // Unicast asks for an ACK, so the chip retries what the peer missed
+        // within the slot. Legacy's no-ACK (owl-05) guards against a radio
+        // whose retries run 75-140 ms past a peer's visit; this chip holds
+        // at most a few data frames (mt7612u DATA_QUEUE) and retries each
+        // in about a millisecond. Without ACKs every frame the peer missed
+        // cost a TCP retransmission, which is most of what limited sends.
+        cfg.no_ack = std::env::var_os("HOWLDROP_NO_ACK").is_some();
         let (peers_tx, peers) = watch::channel(Vec::new());
-        let (live, name, index, mut failed) = start_node(stick, cfg, peers_tx).await?;
+        let auto_rate = self.tx_rate.is_none();
+        let (live, name, index, mut failed) = start_node(stick, cfg, peers_tx, auto_rate).await?;
         #[cfg(windows)]
         let stack = live.1.clone();
 
@@ -205,17 +215,25 @@ async fn start_node(
     stick: Mt7612u,
     cfg: owly_awdl::Config,
     peers: watch::Sender<Vec<owly_awdl::PeerInfo>>,
+    auto_rate: bool,
 ) -> Result<(Live, String, u32, watch::Receiver<Option<String>>), String> {
     use owly_radio::injection::AWDL_IFACE;
     use owly_radio::native::Native;
     let native = tokio::task::spawn_blocking(move || {
-        Native::start_air(AWDL_IFACE, cfg, peers, move || Ok(UsbAir::new(stick)))
+        Native::start_air(AWDL_IFACE, cfg, peers, move || Ok(air(stick, auto_rate)))
     })
     .await
     .map_err(|e| e.to_string())?
     .map_err(|e| format!("AWDL on the stick: {e}"))?;
     let (index, failed) = (native.index, native.failed());
     Ok((native, AWDL_IFACE.into(), index, failed))
+}
+
+/// The stick as the node's radio, choosing the unicast rate itself unless
+/// one was set.
+fn air(stick: Mt7612u, auto_rate: bool) -> UsbAir {
+    let air = UsbAir::new(stick);
+    if auto_rate { air.auto_rate() } else { air }
 }
 
 #[cfg(target_os = "linux")]
@@ -230,10 +248,11 @@ async fn start_node(
     stick: Mt7612u,
     cfg: owly_awdl::Config,
     peers: watch::Sender<Vec<owly_awdl::PeerInfo>>,
+    auto_rate: bool,
 ) -> Result<(Live, String, u32, watch::Receiver<Option<String>>), String> {
     let (stack, netif) = crate::netstack::Stack::new(cfg.addr.link_local());
     let running = tokio::task::spawn_blocking(move || {
-        owly_awdl::driver::spawn(cfg, move || Ok((UsbAir::new(stick), netif)), peers)
+        owly_awdl::driver::spawn(cfg, move || Ok((air(stick, auto_rate), netif)), peers)
     })
     .await
     .map_err(|e| e.to_string())?
