@@ -52,6 +52,9 @@ impl Radio {
     }
 
     fn maybe_log(&mut self) {
+        if let Err(e) = self.stick.calibrate() {
+            tracing::warn!("calibration: {e}");
+        }
         if self.logged.elapsed() >= STATS_EVERY {
             self.logged = Instant::now();
             tracing::info!(

@@ -42,6 +42,9 @@ pub mod cal {
     pub const LC: u32 = 6;
     pub const TX_LOFT: u32 = 7;
     pub const TXIQ: u32 = 8;
+    pub const TSSI: u32 = 9;
+    pub const TSSI_COMP: u32 = 10;
+    pub const DPD: u32 = 11;
     pub const RXIQC_FI: u32 = 12;
     pub const TX_SHAPING: u32 = 15;
 }
