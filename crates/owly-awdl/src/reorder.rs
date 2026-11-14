@@ -7,8 +7,17 @@
 //! phone resends what we already have. Here, per peer and TID, from the
 //! ADDBA Request's starting sequence number, a frame's packets wait for the
 //! gap before them until it fills, the window moves past it, a Block Ack
-//! Request gives it up, or [`TIMEOUT_US`] pass. Old and duplicate frames
-//! are dropped, and DELBA ends the session.
+//! Request gives it up, or [`TIMEOUT_US`] pass. A duplicate of a frame held
+//! is dropped, and DELBA ends the session.
+//!
+//! A frame behind the window is passed up rather than dropped: it may be a
+//! retransmission of a gap given up while the phone was off our channel
+//! (longer than the timeout), and to IP a duplicate costs nothing while a
+//! lost segment costs a TCP retransmission. One further behind than the
+//! window can't be late: the peer's sequence numbers moved (it may count
+//! across TIDs), so the session follows them from there. Dropping such frames
+//! instead discarded every frame from the peer, its TCP ACKs among them, and
+//! stalled uploads to it.
 
 use alloc::vec::Vec;
 
@@ -29,7 +38,10 @@ const SN_HALF: u16 = 0x0800;
 pub struct Stats {
     pub held: u64,
     pub delivered_late: u64,
-    pub dropped_old: u64,
+    /// Frames behind the window, passed up at once.
+    pub passed_old: u64,
+    /// Frames so far behind that the session restarted from them.
+    pub resynced: u64,
     pub dropped_duplicate: u64,
     pub released_by_timeout: u64,
     pub released_by_bar: u64,
@@ -168,8 +180,18 @@ impl Reorder {
         let sn = sn & SN_MASK;
         let a = ahead(sn, s.head);
         if a >= SN_HALF {
-            // Behind the window: delivered already, or given up on.
-            stats.dropped_old += 1;
+            let behind = SN_MASK + 1 - a;
+            if behind > s.size {
+                // Not a late frame: the peer's numbering moved. What was
+                // held goes, and the session continues after this frame.
+                stats.resynced += 1;
+                s.flush(out);
+                s.head = (sn + 1) & SN_MASK;
+            } else {
+                // Late, behind what was delivered or given up on.
+                stats.passed_old += 1;
+            }
+            out.extend(packets);
             return;
         }
         if a >= s.size {
@@ -287,11 +309,53 @@ mod tests {
         r.rx(P, 0, 11, pkt(11), Time(1), &mut out);
         assert_eq!(got(&mut out), [11, 12, 13]);
         assert_eq!(r.deadline(), None);
-        // Again, and older: dropped.
+        // Again, and older: passed up, for IP to sort out.
         r.rx(P, 0, 12, pkt(12), Time(2), &mut out);
         r.rx(P, 0, 10, pkt(10), Time(2), &mut out);
+        assert_eq!(got(&mut out), [12, 10]);
+        assert_eq!(r.stats().passed_old, 2);
+        // The session carries on in order.
+        r.rx(P, 0, 15, pkt(15), Time(3), &mut out);
+        r.rx(P, 0, 14, pkt(14), Time(3), &mut out);
+        assert_eq!(got(&mut out), [14, 15]);
+    }
+
+    #[test]
+    fn a_late_retransmission_of_a_gap_given_up_is_delivered() {
+        let mut r = Reorder::default();
+        let mut out = Vec::new();
+        r.start(P, 0, 64, 0, &mut out);
+        r.rx(P, 0, 0, pkt(0), Time(0), &mut out);
+        r.rx(P, 0, 2, pkt(2), Time(0), &mut out);
+        r.expire(Time(TIMEOUT_US), &mut out);
+        assert_eq!(got(&mut out), [0, 2]);
+        // 1 comes again after the phone's next absence.
+        r.rx(P, 0, 1, pkt(1), Time(200_000), &mut out);
+        assert_eq!(got(&mut out), [1]);
+    }
+
+    #[test]
+    fn numbering_that_jumps_back_is_followed_not_dropped() {
+        let mut r = Reorder::default();
+        let mut out = Vec::new();
+        r.start(P, 1, 64, 0, &mut out);
+        // A frame far ahead moves the window up there, and waits...
+        r.rx(P, 1, 2000, pkt(200), Time(0), &mut out);
         assert!(out.is_empty());
-        assert_eq!(r.stats().dropped_old, 2);
+        // ...then the peer's frames carry on from where they really are,
+        // and what was held goes first.
+        for (i, sn) in (10..20).enumerate() {
+            r.rx(P, 1, sn, pkt(i as u8), Time(1), &mut out);
+        }
+        let mut want = vec![200];
+        want.extend(0..10);
+        assert_eq!(got(&mut out), want);
+        assert_eq!(r.stats().resynced, 1);
+        // And are held in order again from there.
+        r.rx(P, 1, 21, pkt(21), Time(2), &mut out);
+        assert!(out.is_empty());
+        r.rx(P, 1, 20, pkt(20), Time(2), &mut out);
+        assert_eq!(got(&mut out), [20, 21]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 [workspace]
 members = ["crates/*", "xtask"]
 # Built with nightly and cargo-fuzz, on its own.
-exclude = ["fuzz"]
+exclude = ["fuzz", "vendor"]
 resolver = "3"
 
 [workspace.package]
@@ -19,3 +19,8 @@ repository = "https://github.com/t4t5/owly"
 [workspace.lints.rust]
 # Code that needs unsafe allows it locally, with a SAFETY comment.
 unsafe_code = "deny"
+
+# Patched dependencies, each with the reason in vendor/README.md.
+[patch.crates-io]
+smoltcp = { path = "vendor/smoltcp" }
+tokio-smoltcp = { path = "vendor/tokio-smoltcp" }

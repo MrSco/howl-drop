@@ -14,6 +14,15 @@ use crate::{Mt7612u, RX_BUF, SendError, rx, tx};
 
 const STATS_EVERY: Duration = Duration::from_secs(10);
 
+/// Unicast data frames the chip may hold at once. The node sends one only
+/// while its peer is on our channel (AWDL-16), but a frame waiting in the
+/// chip's queue goes on air later: 128 frames at 12 Mbit/s are some 150 ms,
+/// past the end of an iPhone's few slots on the channel, and those frames
+/// were lost once the chip's retries ran out. Kept to a few milliseconds of
+/// air, the rest wait in the driver, which checks the slot again before
+/// each. Action and multicast frames still have the chip's whole queue.
+const DATA_QUEUE: usize = 4;
+
 /// A started stick ([`Mt7612u::start_rx`] done) as owly-awdl's [`Air`],
 /// counting what goes through it.
 pub struct Radio {
@@ -102,6 +111,18 @@ impl Air for Radio {
             Some(BlockAck::Delba { tid }) => self.block_ack(to.0, tid, false),
             None => {}
         }
+        if is_unicast_data(&bytes) {
+            self.stick.reap_tx();
+            if self.stick.tx_pending() >= DATA_QUEUE {
+                self.stats.tx_full += 1;
+                return Err(Frame {
+                    bytes,
+                    to,
+                    rate,
+                    no_ack,
+                });
+            }
+        }
         match self.stick.send(bytes, chip_rate, no_ack) {
             Ok(()) => {
                 self.stats.tx += 1;
@@ -148,6 +169,12 @@ impl Radio {
     }
 }
 
+/// A data frame (type 2) to one station: group addresses have the low bit
+/// of their first octet set.
+fn is_unicast_data(frame: &[u8]) -> bool {
+    frame.first().is_some_and(|fc| fc & 0x0c == 0x08) && frame.get(4).is_some_and(|a| a & 1 == 0)
+}
+
 /// A Block Ack session starting or ending, as the frames that do it say.
 #[derive(Debug, PartialEq, Eq)]
 enum BlockAck {
@@ -189,6 +216,26 @@ mod tests {
         f.extend_from_slice(&[0, 0]);
         f.extend_from_slice(body);
         f
+    }
+
+    #[test]
+    fn only_unicast_data_is_kept_to_the_short_queue() {
+        let mut data = vec![0x08, 0, 0, 0];
+        data.extend_from_slice(&[0x16, 0x51, 0xaf, 0x82, 0x26, 0xec]);
+        data.extend_from_slice(&[0; 14]);
+        assert!(is_unicast_data(&data));
+        // QoS data too.
+        data[0] = 0x88;
+        assert!(is_unicast_data(&data));
+        // Multicast data.
+        data[4] = 0x33;
+        assert!(!is_unicast_data(&data));
+        // An action frame to one station.
+        let mut action = data.clone();
+        action[0] = 0xd0;
+        action[4] = 0x16;
+        assert!(!is_unicast_data(&action));
+        assert!(!is_unicast_data(&[]));
     }
 
     #[test]

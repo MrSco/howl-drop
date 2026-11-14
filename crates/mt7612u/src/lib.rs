@@ -720,12 +720,7 @@ impl Mt7612u {
     /// without waiting. Gives it back when the chip's queue is full, and
     /// fails for a rate the chip doesn't have.
     pub fn send(&mut self, frame: Vec<u8>, rate: tx::Rate, no_ack: bool) -> Result<(), SendError> {
-        while self.tx_out.pending() > 0 {
-            match self.tx_out.wait_next_complete(Duration::ZERO) {
-                Some(done) => self.tx_errors += u64::from(done.status.is_err()),
-                None => break,
-            }
-        }
+        self.reap_tx();
         if self.tx_out.pending() >= TX_QUEUE {
             return Err(SendError::Full(frame));
         }
@@ -738,6 +733,16 @@ impl Mt7612u {
     /// How many sent frames the USB transfer failed for.
     pub fn tx_errors(&self) -> u64 {
         self.tx_errors
+    }
+
+    /// Collects the USB transfers that have completed, without waiting.
+    pub fn reap_tx(&mut self) {
+        while self.tx_out.pending() > 0 {
+            match self.tx_out.wait_next_complete(Duration::ZERO) {
+                Some(done) => self.tx_errors += u64::from(done.status.is_err()),
+                None => break,
+            }
+        }
     }
 
     /// Frames handed to the chip whose USB transfer hasn't completed.

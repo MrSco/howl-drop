@@ -145,6 +145,13 @@ impl UsbRadio {
             cfg.rate = rate;
         }
         cfg.accept_addba = self.aggregation;
+        // Unicast asks for an ACK, so the chip retries what the peer missed
+        // within the slot. Legacy's no-ACK (owl-05) guards against a radio
+        // whose retries run 75-140 ms past a peer's visit; this chip holds
+        // at most a few data frames (mt7612u DATA_QUEUE) and retries each
+        // in about a millisecond. Without ACKs every frame the peer missed
+        // cost a TCP retransmission, which is most of what limited sends.
+        cfg.no_ack = std::env::var_os("HOWLDROP_NO_ACK").is_some();
         let (peers_tx, peers) = watch::channel(Vec::new());
         let (live, name, index, mut failed) = start_node(stick, cfg, peers_tx).await?;
         #[cfg(windows)]

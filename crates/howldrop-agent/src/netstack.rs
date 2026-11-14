@@ -26,9 +26,15 @@ use tokio_util::sync::PollSender;
 
 /// As awdl0's (owly-radio's TAP_MTU).
 const MTU: usize = 1450;
-/// A TCP connection's buffers each way: enough window for an iPhone's
+/// A TCP connection's receive buffer: enough window for an iPhone's
 /// upload at full speed.
-const TCP_BUFFER: usize = 1 << 20;
+const TCP_RX_BUFFER: usize = 1 << 20;
+/// A TCP connection's send buffer, which bounds the data in flight. smoltcp
+/// has no SACK and recovers a lost segment by resending everything after it,
+/// while the iPhone listens on our channel only in some AWDL slots. A
+/// megabyte in flight turned each loss into a megabyte resent behind the
+/// hole and stalled uploads; a classic 64 KiB window keeps recovery cheap.
+const TCP_TX_BUFFER: usize = 64 << 10;
 const MDNS_PORT: u16 = 5353;
 const UDP: u8 = 17;
 /// Packets queued between the node and the stack, each way.
@@ -62,8 +68,8 @@ impl Stack {
         iface.random_seed = u64::from_le_bytes(seed);
         let mut config = NetConfig::new(iface, IpCidr::new(addr.into(), 64), Vec::new());
         config.buffer_size = BufferSize {
-            tcp_rx_size: TCP_BUFFER,
-            tcp_tx_size: TCP_BUFFER,
+            tcp_rx_size: TCP_RX_BUFFER,
+            tcp_tx_size: tcp_tx_buffer(),
             ..BufferSize::default()
         };
         let net = Net::new(device, config);
@@ -77,6 +83,11 @@ impl Stack {
             from_stack,
             mdns_in,
             addr,
+            packets: 0,
+            bytes: 0,
+            dropped: 0,
+            mdns_dropped: 0,
+            logged: std::time::Instant::now(),
         };
         (Arc::new(Stack { net, addr, mdns }), netif)
     }
@@ -172,8 +183,12 @@ impl AsyncWrite for Tcp {
         self.inner().poll_write(cx, buf)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.inner().poll_flush(cx)
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        // Like an OS TCP socket: writes already notify the reactor. Waiting
+        // for every ACK here makes each TLS record a stop-and-wait exchange
+        // across the phone's intermittent AWDL slots. Shutdown below still
+        // drains the queue before the connection is released.
+        Poll::Ready(Ok(()))
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -262,6 +277,7 @@ impl Sink<Vec<u8>> for Device {
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Vec<u8>) -> io::Result<()> {
+        trace_tcp("out", &item);
         self.tx.send_item(item).map_err(io::Error::other)
     }
 
@@ -287,6 +303,11 @@ pub struct StackNetif {
     from_stack: mpsc::Receiver<Vec<u8>>,
     mdns_in: mpsc::Sender<(Vec<u8>, SocketAddrV6)>,
     addr: Ipv6Addr,
+    packets: u64,
+    bytes: u64,
+    dropped: u64,
+    mdns_dropped: u64,
+    logged: std::time::Instant,
 }
 
 impl Netif for StackNetif {
@@ -305,13 +326,63 @@ impl Netif for StackNetif {
     }
 
     fn deliver(&mut self, packet: Ipv6Packet) {
+        trace_tcp("in", &packet.data);
+        self.packets += 1;
+        self.bytes += packet.data.len() as u64;
+        if self.logged.elapsed() >= std::time::Duration::from_secs(10) {
+            self.logged = std::time::Instant::now();
+            tracing::info!(
+                packets = self.packets,
+                bytes = self.bytes,
+                queue_drops = self.dropped,
+                mdns_queue_drops = self.mdns_dropped,
+                queued = QUEUE - self.to_stack.capacity(),
+                "network stack receive totals"
+            );
+        }
         if let Some((from, payload)) = mdns_payload(&packet.data, self.addr) {
-            let _ = self.mdns_in.try_send((payload.to_vec(), from));
+            if self.mdns_in.try_send((payload.to_vec(), from)).is_err() {
+                self.mdns_dropped += 1;
+            }
             return;
         }
         // A full queue drops it, as a full ring would.
-        let _ = self.to_stack.try_send(packet.data);
+        if self.to_stack.try_send(packet.data).is_err() {
+            self.dropped += 1;
+        }
     }
+}
+
+// Header-only diagnostics: never log TLS payload or shared content.
+fn trace_tcp(direction: &str, packet: &[u8]) {
+    if !tracing::enabled!(tracing::Level::TRACE) || packet.len() < 60 || packet[6] != 6 {
+        return;
+    }
+    let tcp = &packet[40..];
+    let header = usize::from(tcp[12] >> 4) * 4;
+    if header < 20 || header > tcp.len() {
+        return;
+    }
+    tracing::trace!(
+        direction,
+        source = u16::from_be_bytes([tcp[0], tcp[1]]),
+        destination = u16::from_be_bytes([tcp[2], tcp[3]]),
+        seq = u32::from_be_bytes(tcp[4..8].try_into().unwrap()),
+        ack = u32::from_be_bytes(tcp[8..12].try_into().unwrap()),
+        flags = tcp[13],
+        window = u16::from_be_bytes([tcp[14], tcp[15]]),
+        payload = tcp.len() - header,
+        "TCP"
+    );
+}
+
+/// The send buffer, overridable with `HOWLDROP_TCP_TX_KB` for radio benchmarks.
+fn tcp_tx_buffer() -> usize {
+    std::env::var("HOWLDROP_TCP_TX_KB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|kb| (16..=4096).contains(kb))
+        .map_or(TCP_TX_BUFFER, |kb| kb << 10)
 }
 
 /// An mDNS datagram in `packet` (UDP to port 5353, not from `ours`): who
@@ -379,6 +450,81 @@ fn checksum(src: Ipv6Addr, dst: Ipv6Addr, udp: &[u8]) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn socket_flush_does_not_wait_for_acks_and_large_writes_are_delivered() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let addr_a = owly_awdl::MacAddr([2, 0, 0, 0, 0, 1]).link_local();
+        let addr_b = owly_awdl::MacAddr([2, 0, 0, 0, 0, 2]).link_local();
+        let (a, mut link_a) = Stack::new(addr_a);
+        let (b, mut link_b) = Stack::new(addr_b);
+        let hold = Arc::new(AtomicBool::new(false));
+        let filter = hold.clone();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let loss = dropped.clone();
+        let bridge = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                p = link_a.recv() => {
+                    let p = p.unwrap();
+                    if p.data.len() <= 1000 || loss.swap(true, Ordering::Relaxed) { link_b.deliver(p); }
+                },
+                    p = link_b.recv() => { if !filter.load(Ordering::Relaxed) { link_a.deliver(p.unwrap()); } }
+                }
+            }
+        });
+        let exercise = async {
+            let mut listener = b.listen(8771).await.unwrap();
+            let connector = Connector(a);
+            let (client, accepted) = tokio::join!(
+                connector.connect(SocketAddrV6::new(addr_b, 8771, 0, 0)),
+                listener.accept()
+            );
+            let mut client = client.unwrap();
+            let (mut server, _) = accepted.unwrap();
+            hold.store(true, Ordering::Relaxed);
+            client.write_all(b"ping").await.unwrap();
+            tokio::time::timeout(Duration::from_millis(100), client.flush())
+                .await
+                .expect("flush waited for ACKs")
+                .unwrap();
+            let mut ping = [0; 4];
+            server.read_exact(&mut ping).await.unwrap();
+            assert_eq!(&ping, b"ping");
+            hold.store(false, Ordering::Relaxed);
+            // More than either TCP buffer, exercising wakeups and backpressure.
+            let data = vec![0x5a; 3 << 20];
+            let send = async {
+                client.write_all(&data).await.unwrap();
+                client.flush().await.unwrap();
+            };
+            let receive = async {
+                let mut received = vec![0; data.len()];
+                server.read_exact(&mut received).await.unwrap();
+                assert_eq!(received, data);
+            };
+            tokio::join!(send, receive);
+        };
+        let result = tokio::time::timeout(Duration::from_secs(10), exercise).await;
+        bridge.abort();
+        result.unwrap();
+        assert!(
+            dropped.load(Ordering::Relaxed),
+            "the test must exercise packet loss"
+        );
+    }
+
+    #[test]
+    fn tcp_has_congestion_control_for_the_radio() {
+        use smoltcp::socket::tcp;
+        let socket = tcp::Socket::new(
+            tcp::SocketBuffer::new(vec![0; 4096]),
+            tcp::SocketBuffer::new(vec![0; 4096]),
+        );
+        assert_eq!(socket.congestion_control(), tcp::CongestionControl::Reno);
+    }
 
     #[test]
     fn mdns_goes_out_and_comes_back() {

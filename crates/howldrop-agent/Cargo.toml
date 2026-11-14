@@ -48,7 +48,9 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc",
 # The preview of a picture sent (send.rs file_icon), where there's no Pillow.
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 openjpeg-sys = "1"
-smoltcp = { version = "0.13", default-features = false, features = ["std", "medium-ip", "proto-ipv6", "socket-tcp", "socket-udp", "async"] }
+# Pace TCP against the intermittent radio link. With neither Reno nor Cubic
+# enabled smoltcp uses no congestion control and floods a missing segment.
+smoltcp = { version = "0.13", default-features = false, features = ["std", "medium-ip", "proto-ipv6", "socket-tcp", "socket-tcp-reno", "socket-udp", "async"] }
 # Its code wants IPv4 compiled in too, though only IPv6 is used.
 tokio-smoltcp = "0.6"
 tokio-util = "0.7"
