@@ -34,6 +34,9 @@ const DISCOVER_TIMEOUT: Duration = Duration::from_secs(10);
 /// A write the receiver doesn't take in this long fails the transfer, so a
 /// receiver that stops reading can't hold the sender forever (SEC-10).
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long closing a connection may take: a receiver that has gone never
+/// answers the close, and a send waiting for it never ended.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// What to send.
 #[derive(Debug, Clone)]
@@ -111,7 +114,7 @@ impl Sender {
         })
         .await
         .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
-        let _ = tls.shutdown().await;
+        let _ = timeout(CLOSE_TIMEOUT, tls.shutdown()).await;
         Ok(sender::parse_discover_response(&response))
     }
 
@@ -223,7 +226,7 @@ impl Sender {
                         }
                     }
                     Action::Done(outcome) => {
-                        let _ = tls.shutdown().await;
+                        let _ = timeout(CLOSE_TIMEOUT, tls.shutdown()).await;
                         return Ok(outcome);
                     }
                 }

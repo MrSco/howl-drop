@@ -38,3 +38,10 @@ sending, polling the interface) was not sent until another packet arrived or
 the reactor's 60 s idle timer fired. Uploads to an iPhone stalled for up to a
 minute whenever the phone had acknowledged everything and had nothing to
 send. `notify_one` stores a permit for the next wait instead.
+
+`TcpStream::poll_shutdown` (`src/socket.rs`) returned only once the socket
+was Closed: after the peer's FIN and the 10 s TIME-WAIT, and never if the
+peer had gone, since the FIN was resent forever. An AirDrop send whose
+iPhone left during the Accept prompt hung there. It now returns once the
+peer has our FIN (FIN-WAIT-2 or TIME-WAIT), as a kernel's shutdown does;
+the AirDrop driver also bounds the close.

@@ -237,7 +237,13 @@ impl AsyncWrite for TcpStream {
             socket.close();
             self.reactor.notify();
         }
-        if socket.state() == tcp::State::Closed {
+        // HowlDrop: done once the peer has our FIN, as a kernel's shutdown
+        // is, not after TIME-WAIT (10 s) as well. Closed alone also waited
+        // forever on a peer that had gone, resending the FIN.
+        if matches!(
+            socket.state(),
+            tcp::State::Closed | tcp::State::FinWait2 | tcp::State::TimeWait
+        ) {
             return Poll::Ready(Ok(()));
         }
 

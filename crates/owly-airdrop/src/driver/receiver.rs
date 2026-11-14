@@ -24,6 +24,9 @@ use crate::proto::messages::{AskRequest, DiscoverRequest, Offer};
 use crate::proto::receiver::{Answer, Config, Connection, Event};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long closing a connection may take: a sender that has gone never
+/// answers the close.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
 /// Most connections from one address at a time.
 const MAX_PER_PEER: usize = 4;
 /// How often a receiving upload reports its progress, when asked to.
@@ -459,7 +462,7 @@ impl Task {
                         let _ = self.events.send(ReceiverEvent::Failed { id, reason }).await;
                     }
                     Event::Close => {
-                        let _ = tls.shutdown().await;
+                        let _ = timeout(CLOSE_TIMEOUT, tls.shutdown()).await;
                         return Ok(());
                     }
                 }
@@ -544,8 +547,11 @@ impl Task {
                 b"",
             ))
             .await;
-        let _ = tls.flush().await;
-        let _ = tls.shutdown().await;
+        let _ = timeout(CLOSE_TIMEOUT, async {
+            let _ = tls.flush().await;
+            tls.shutdown().await
+        })
+        .await;
         let _ = self
             .events
             .send(ReceiverEvent::Failed {
