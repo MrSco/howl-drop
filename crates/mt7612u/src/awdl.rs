@@ -53,6 +53,7 @@ pub struct Radio {
     deep_queue: bool,
     /// Peers that accepted our Block Ack session: their WCID and window.
     tx_ba: Vec<([u8; 6], tx::Ampdu)>,
+    tx_ba_pending: Vec<TxBaRequest>,
     counted: Instant,
 }
 
@@ -77,6 +78,7 @@ impl Radio {
             data_sent: 0,
             deep_queue: false,
             tx_ba: Vec::new(),
+            tx_ba_pending: Vec::new(),
             counted: Instant::now(),
         }
     }
@@ -217,8 +219,16 @@ impl Air for Radio {
         let ampdu = (data && bytes.first() == Some(&0x88))
             .then(|| self.tx_ba.iter().find(|(p, _)| *p == to.0).map(|(_, a)| *a))
             .flatten();
+        let request = TxBaRequest::parse(&bytes);
         match self.stick.send_with(bytes, chip_rate, no_ack, ampdu) {
             Ok(()) => {
+                if let Some(request) = request {
+                    self.tx_ba_pending.retain(|p| p.peer != request.peer);
+                    if self.tx_ba_pending.len() >= 64 {
+                        self.tx_ba_pending.remove(0);
+                    }
+                    self.tx_ba_pending.push(request);
+                }
                 self.stats.tx += 1;
                 self.data_sent += u64::from(data);
                 Ok(())
@@ -269,6 +279,10 @@ impl Radio {
         match frame[25] {
             // ADDBA response: token, status, parameters.
             1 if le16(27) == Some(0) => {
+                let Some(pending) = self.tx_ba_pending.iter().position(|p| p.matches(frame)) else {
+                    return;
+                };
+                self.tx_ba_pending.remove(pending);
                 let window = le16(29).map_or(64, |p| (p >> 6) & 0x3ff);
                 match self.stick.tx_wcid(peer) {
                     Ok(wcid) => {
@@ -297,6 +311,41 @@ impl Radio {
             Ok(()) => tracing::info!("Block Ack in hardware stopped for {who}, TID {tid}"),
             Err(e) => tracing::warn!("Block Ack for {who}, TID {tid}: {e}"),
         }
+    }
+}
+
+/// Only a response to a request we actually transmitted may enable chip
+/// aggregation. Unsolicited replies, wrong peers, TIDs and old tokens are
+/// ignored, including when the experiment is off.
+struct TxBaRequest {
+    peer: [u8; 6],
+    local: [u8; 6],
+    token: u8,
+    tid: u8,
+}
+
+impl TxBaRequest {
+    fn parse(frame: &[u8]) -> Option<Self> {
+        if frame.len() < 33 || frame[0] != 0xd0 || frame[24..26] != [3, 0] {
+            return None;
+        }
+        Some(Self {
+            peer: frame[4..10].try_into().ok()?,
+            local: frame[10..16].try_into().ok()?,
+            token: frame[26],
+            tid: ((u16::from_le_bytes([frame[27], frame[28]]) >> 2) & 0xf) as u8,
+        })
+    }
+
+    fn matches(&self, frame: &[u8]) -> bool {
+        frame.len() >= 33
+            && frame[0] == 0xd0
+            && frame[24..26] == [3, 1]
+            && frame[27..29] == [0, 0]
+            && frame[4..10] == self.local
+            && frame[10..16] == self.peer
+            && frame[26] == self.token
+            && ((u16::from_le_bytes([frame[29], frame[30]]) >> 2) & 0xf) as u8 == self.tid
     }
 }
 
@@ -338,6 +387,24 @@ fn block_ack(frame: &[u8]) -> Option<BlockAck> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outgoing_block_ack_acceptance_matches_the_request_we_sent() {
+        use owly_awdl::{MacAddr, frame};
+        let local = MacAddr([2, 0, 0, 0, 0, 1]);
+        let peer = MacAddr([2, 0, 0, 0, 0, 2]);
+        let request = frame::addba_request(local, peer, 1, 7, 0, 64, 100);
+        let pending = TxBaRequest::parse(&request).unwrap();
+        let response = frame::addba_response(peer, local, 2, 7, 2 | (64 << 6), 0);
+        assert!(pending.matches(&response));
+        for index in [4, 10, 26, 27, 29] {
+            let mut wrong = response.clone();
+            wrong[index] ^= if index == 29 { 4 } else { 1 };
+            assert!(!pending.matches(&wrong), "accepted wrong field at {index}");
+        }
+        assert!(!pending.matches(&response[..30]));
+        assert!(TxBaRequest::parse(&response).is_none());
+    }
 
     fn action(body: &[u8]) -> Vec<u8> {
         let mut f = vec![0xd0, 0, 0, 0];

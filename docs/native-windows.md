@@ -256,6 +256,38 @@ Pi and protocol-tuning PRs are not enabled by this Windows change.
 
 ## Trying it
 
+### Optional send-speed experiments
+
+Three experiments are available for hardware comparisons, all off by
+default. They have not yet been measured on an iPhone:
+
+- `HOWLDROP_DEEP_QUEUE=1` sizes the chip's data queue for about 4 ms of
+  airtime rather than always four frames, capped at 32 frames.
+- Sending speed `auto-ht` extends the automatic ladder to 40 MHz HT,
+  through MCS 15. The rates are PHY rates, not measured file throughput.
+- `HOWLDROP_AMPDU=1` negotiates an outgoing Block Ack session and enables
+  A-MPDU transmission. It is best tried with the deeper queue. A dropped
+  frame can leave a gap that the phone must time out: outgoing BAR recovery
+  is not implemented yet.
+
+Build the Windows app and agent first, with firmware beside the agent as
+below. Then compare the same files with the phone in the same place:
+
+```powershell
+tools/test-send-speed.ps1 -Mode baseline -Files C:\Temp\photo.png
+tools/test-send-speed.ps1 -Mode deep -Files C:\Temp\photo.png
+tools/test-send-speed.ps1 -Mode ht -Files C:\Temp\photo.png
+tools/test-send-speed.ps1 -Mode ampdu -Files C:\Temp\photo.png
+tools/test-send-speed.ps1 -Mode all -Files C:\Temp\photo.png
+```
+
+The script restores the previous setting, experiment flags and running app
+when it finishes, and keeps a radio log under `build/send-speed/`. Its timing
+starts when the upload is observed, after Accept; it does not include the
+time spent finding the phone or waiting for approval.
+
+### Radio examples
+
 With the stick attached to WSL (`usbipd attach --wsl`) and HowlDrop's AirDrop
 on this PC off, as root, with linux-firmware's `mt7662_rom_patch.bin` and
 `mt7662.bin` in `FW`:
