@@ -33,6 +33,7 @@ accepted), which change it for everyone.
 | owly-airdrop | `driver/transport.rs`: `Receiver::with_listener`, `Sender::with_connector`, `Mdns::with_datagrams` | On Windows the agent's own TCP/IP stack is the link, not one of the host's interfaces, so nothing needs an administrator. |
 | owly-awdl | `driver.rs`: a `schedule` log line whenever a peer's slots or its network's channel change (`tlv.rs`, `peer.rs`: `infra_channel`) | Why AirDrop is slow when it is: an iPhone busy on its own network gives the stick's channel few slots. |
 | owly-awdl | `reorder.rs`: a Block Ack session's frames put back in order | Out-of-order segments make TCP resend. (It was not what made uploads slow: the next one was.) |
+| owly-awdl | `Config.tx_ampdu`: an ADDBA request to each HT peer sent to, then QoS data on TID 0 numbered from the session's start (`frame.rs`: `addba_request`, `qos_data_frame`, `Received::AddBaResponse`; a recipient's DELBA ends it) | Experimental: lets the MT7612U send A-MPDUs to an iPhone. Off unless asked for. |
 | owly-radio | `set_freq` tunes HT40+ on 5 GHz, else HT20 | The node announces 40 MHz and the iPhone sends at HT40: tuned HT20, the MT7612U heard a fraction of an upload. |
 | owly-radio | `Native::start_air`: AWDL and `awdl0` on any `Air` (`start` is its monitor case) | `howldrop-agent --usb-radio`: the user-space MT7612U driver as the radio (docs/native-windows.md). |
 

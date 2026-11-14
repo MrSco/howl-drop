@@ -454,6 +454,30 @@ impl Mt7612u {
     /// Takes the frames a peer aggregates on `tid` with a Block Ack from the
     /// chip, or stops (mt76x02_ampdu_action, RX_START and RX_STOP): the
     /// peer's entry in the WCID table, its bit for `tid` set or cleared.
+    /// `peer`'s WCID entry, made if it has none, for frames sent to it
+    /// under a Block Ack session: the chip matches the peer's Block Acks to
+    /// it. The index the TXWI takes.
+    pub fn tx_wcid(&mut self, peer: [u8; 6]) -> Result<u8, Error> {
+        let idx = match self.wcids.iter().position(|(mac, _)| *mac == peer) {
+            Some(i) => return Ok(i as u8 + 1),
+            None if self.wcids.len() < MAX_WCIDS => {
+                self.wcids.push((peer, 0));
+                self.wcids.len() - 1
+            }
+            None => {
+                let i = self.wcid_next % MAX_WCIDS;
+                self.wcid_next += 1;
+                self.wcids[i] = (peer, 0);
+                i
+            }
+        };
+        let [w0, w1] = regs::wcid_words(peer, 0);
+        let at = regs::wcid_addr(idx as u32 + 1);
+        self.write(Space::Mac, at, w0)?;
+        self.write(Space::Mac, at + 4, w1)?;
+        Ok(idx as u8 + 1)
+    }
+
     pub fn rx_block_ack(&mut self, peer: [u8; 6], tid: u8, on: bool) -> Result<(), Error> {
         let bit = 1u16 << (tid & 0xf);
         let idx = match self.wcids.iter().position(|(mac, _)| *mac == peer) {
@@ -826,13 +850,24 @@ impl Mt7612u {
     /// without waiting. Gives it back when the chip's queue is full, and
     /// fails for a rate the chip doesn't have.
     pub fn send(&mut self, frame: Vec<u8>, rate: tx::Rate, no_ack: bool) -> Result<(), SendError> {
+        self.send_with(frame, rate, no_ack, None)
+    }
+
+    /// As [`Mt7612u::send`], marked for an A-MPDU when `ampdu` is given.
+    pub fn send_with(
+        &mut self,
+        frame: Vec<u8>,
+        rate: tx::Rate,
+        no_ack: bool,
+        ampdu: Option<tx::Ampdu>,
+    ) -> Result<(), SendError> {
         self.reap_tx();
         if self.tx_out.pending() >= TX_QUEUE {
             return Err(SendError::Full(frame));
         }
         let rate = rate.value().ok_or(SendError::Rate(rate))?;
         self.tx_out
-            .submit(Buffer::from(tx::packet(&frame, rate, no_ack)));
+            .submit(Buffer::from(tx::packet_with(&frame, rate, no_ack, ampdu)));
         Ok(())
     }
 

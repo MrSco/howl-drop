@@ -51,6 +51,8 @@ pub struct Radio {
     data_sent: u64,
     /// The chip's room for unicast data follows the rate ([`data_queue`]).
     deep_queue: bool,
+    /// Peers that accepted our Block Ack session: their WCID and window.
+    tx_ba: Vec<([u8; 6], tx::Ampdu)>,
     counted: Instant,
 }
 
@@ -74,6 +76,7 @@ impl Radio {
             auto: None,
             data_sent: 0,
             deep_queue: false,
+            tx_ba: Vec::new(),
             counted: Instant::now(),
         }
     }
@@ -165,6 +168,7 @@ impl Air for Radio {
                         let peer = f.frame[10..16].try_into().unwrap();
                         self.block_ack(peer, tid, false);
                     }
+                    self.notice_tx_ba(&f.frame);
                     return Ok(Received {
                         bytes: f.frame,
                         rssi: Some(f.rssi[0] as i8),
@@ -208,7 +212,12 @@ impl Air for Radio {
                 });
             }
         }
-        match self.stick.send(bytes, chip_rate, no_ack) {
+        // QoS data to a peer that took our Block Ack session: the chip may
+        // put it in an A-MPDU with what follows it.
+        let ampdu = (data && bytes.first() == Some(&0x88))
+            .then(|| self.tx_ba.iter().find(|(p, _)| *p == to.0).map(|(_, a)| *a))
+            .flatten();
+        match self.stick.send_with(bytes, chip_rate, no_ack, ampdu) {
             Ok(()) => {
                 self.stats.tx += 1;
                 self.data_sent += u64::from(data);
@@ -245,6 +254,42 @@ impl Netif for NoNetif {
 }
 
 impl Radio {
+    /// An ADDBA response accepting our session (the node asked for it,
+    /// [`owly_awdl::Config::tx_ampdu`]), or the peer's DELBA ending it.
+    fn notice_tx_ba(&mut self, frame: &[u8]) {
+        if frame.len() < 26 || frame[0] != 0xd0 || frame[24] != 3 {
+            return;
+        }
+        let peer: [u8; 6] = frame[10..16].try_into().unwrap();
+        let le16 = |i: usize| {
+            frame
+                .get(i..i + 2)
+                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        };
+        match frame[25] {
+            // ADDBA response: token, status, parameters.
+            1 if le16(27) == Some(0) => {
+                let window = le16(29).map_or(64, |p| (p >> 6) & 0x3ff);
+                match self.stick.tx_wcid(peer) {
+                    Ok(wcid) => {
+                        self.tx_ba.retain(|(p, _)| *p != peer);
+                        self.tx_ba.push((peer, tx::Ampdu { wcid, window }));
+                        tracing::info!(
+                            "A-MPDU to {}: window {window}, WCID {wcid}",
+                            crate::format_mac(&peer)
+                        );
+                    }
+                    Err(e) => tracing::warn!("A-MPDU to {}: {e}", crate::format_mac(&peer)),
+                }
+            }
+            // DELBA from the recipient (initiator bit clear): ours ends.
+            2 if le16(26).is_some_and(|p| p & 0x0800 == 0) => {
+                self.tx_ba.retain(|(p, _)| *p != peer);
+            }
+            _ => {}
+        }
+    }
+
     fn block_ack(&mut self, peer: [u8; 6], tid: u8, on: bool) {
         let who = crate::format_mac(&peer);
         match self.stick.rx_block_ack(peer, tid, on) {

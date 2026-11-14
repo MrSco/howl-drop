@@ -152,6 +152,9 @@ impl UsbRadio {
             cfg.rate = rate;
         }
         cfg.accept_addba = self.aggregation;
+        // Experimental: Block Ack sessions to the phone, so the chip can
+        // send A-MPDUs (owly-awdl Config::tx_ampdu, mt7612u tx::Ampdu).
+        cfg.tx_ampdu = std::env::var_os("HOWLDROP_AMPDU").is_some();
         // Unicast asks for an ACK, so the chip retries what the peer missed
         // within the slot. Legacy's no-ACK (owl-05) guards against a radio
         // whose retries run 75-140 ms past a peer's visit; this chip holds

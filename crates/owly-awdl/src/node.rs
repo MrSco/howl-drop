@@ -112,6 +112,9 @@ pub struct Config {
     pub accept_addba: bool,
     /// Send unicast packets to one peer as A-MSDUs, up to the peer's limit.
     pub amsdu: bool,
+    /// Ask each HT peer we send to for a Block Ack session, and send it QoS
+    /// data under it, which a radio can aggregate into A-MPDUs.
+    pub tx_ampdu: bool,
     /// The largest frame the radio takes, MAC header included.
     pub max_frame: usize,
     /// Peers heard more weakly than this, in dBm, aren't taken on; known
@@ -135,6 +138,7 @@ impl Config {
             no_ack,
             accept_addba: false,
             amsdu: false,
+            tx_ampdu: false,
             max_frame: 2304,
             rssi_threshold: Some(-65),
             neighbour_echo: true,
@@ -240,8 +244,38 @@ pub struct Node {
     no_overlap: Option<(MacAddr, u8)>,
     /// The Block Ack sessions accepted, their frames put back in order.
     reorder: Reorder,
+    /// The Block Ack sessions we started, or asked for, by peer.
+    tx_ba: BTreeMap<MacAddr, TxBa>,
+    /// QoS data's sequence numbers, by peer (TID 0 only).
+    qos_seq: BTreeMap<MacAddr, u16>,
+    ba_token: u8,
     stats: Stats,
 }
+
+/// A Block Ack session to a peer, for sending ([`Config::tx_ampdu`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TxBa {
+    /// Asked at this time, this many times.
+    Asked {
+        at: Time,
+        token: u8,
+        tries: u8,
+    },
+    Active,
+    /// Turned down, or never answered: not asked again before this.
+    Refused {
+        until: Time,
+    },
+}
+
+/// The TID data goes on, and the window asked for.
+const BA_TID: u8 = 0;
+const BA_WINDOW: u16 = 64;
+/// How long to wait for an ADDBA response, how often to ask, and how long
+/// a refusal stands.
+const BA_ANSWER_US: u64 = 1_000_000;
+const BA_TRIES: u8 = 3;
+const BA_REFUSED_US: u64 = 60_000_000;
 
 impl Node {
     pub fn new(cfg: Config, now: Time) -> Node {
@@ -265,6 +299,9 @@ impl Node {
             resume: None,
             no_overlap: None,
             reorder: Reorder::default(),
+            tx_ba: BTreeMap::new(),
+            qos_seq: BTreeMap::new(),
+            ba_token: 0,
             stats: Stats::default(),
         }
     }
@@ -415,12 +452,33 @@ impl Node {
                     self.deliver(ready, out);
                 }
             }
+            Received::AddBaResponse {
+                header,
+                token,
+                status,
+                params,
+            } if self.cfg.tx_ampdu && header.dst == self.cfg.addr => {
+                if let Some(TxBa::Asked { token: asked, .. }) = self.tx_ba.get(&header.src) {
+                    let ok =
+                        *asked == token && status == 0 && (params >> 2) & 0xf == u16::from(BA_TID);
+                    let state = if ok {
+                        TxBa::Active
+                    } else {
+                        TxBa::Refused {
+                            until: now.plus(BA_REFUSED_US),
+                        }
+                    };
+                    self.tx_ba.insert(header.src, state);
+                }
+            }
             Received::Data {
                 header,
                 amsdu,
                 body,
             } if header.src != self.cfg.addr => self.rx_data(now, &header, amsdu, body, raw, out),
-            Received::Other if self.cfg.accept_addba => self.rx_block_ack(raw, out),
+            Received::Other if self.cfg.accept_addba || self.cfg.tx_ampdu => {
+                self.rx_block_ack(raw, out)
+            }
             _ => {}
         }
     }
@@ -448,7 +506,13 @@ impl Node {
                 return;
             };
             if h.dst == self.cfg.addr && body.len() >= 4 && body[0] == 3 && body[1] == DELBA {
-                self.reorder.stop(h.src, body[3] >> 4, &mut ready);
+                // Bit 11 of the parameters: from the session's originator
+                // (theirs, which we receive), or from its recipient (ours).
+                if body[3] & 0x08 != 0 {
+                    self.reorder.stop(h.src, body[3] >> 4, &mut ready);
+                } else {
+                    self.tx_ba.remove(&h.src);
+                }
             }
         }
         self.deliver(ready, out);
@@ -707,6 +771,8 @@ impl Node {
         };
         let (mac, valid) = (stalest.mac, stalest.valid);
         self.peers.remove(&mac);
+        self.tx_ba.remove(&mac);
+        self.qos_seq.remove(&mac);
         self.stats.peers_evicted += 1;
         if valid {
             out.push(Action::PeerDown(mac));
@@ -722,6 +788,8 @@ impl Node {
             .collect();
         for (mac, valid) in gone {
             self.peers.remove(&mac);
+            self.tx_ba.remove(&mac);
+            self.qos_seq.remove(&mac);
             if valid {
                 out.push(Action::PeerDown(mac));
             }
@@ -882,6 +950,50 @@ impl Node {
         }
     }
 
+    /// With [`Config::tx_ampdu`], asks `dst` for a Block Ack session if none
+    /// is open or pending, starting at its next QoS sequence number.
+    fn ask_block_ack(&mut self, now: Time, dst: MacAddr, out: &mut Vec<Action>) {
+        let tries = match self.tx_ba.get(&dst) {
+            None => 0,
+            Some(TxBa::Active) => return,
+            Some(TxBa::Refused { until }) if now < *until => return,
+            Some(TxBa::Refused { .. }) => 0,
+            Some(TxBa::Asked { at, .. }) if now.since(*at) < BA_ANSWER_US => return,
+            Some(TxBa::Asked { tries, .. }) if *tries >= BA_TRIES => {
+                self.tx_ba.insert(
+                    dst,
+                    TxBa::Refused {
+                        until: now.plus(BA_REFUSED_US),
+                    },
+                );
+                return;
+            }
+            Some(TxBa::Asked { tries, .. }) => *tries,
+        };
+        self.ba_token = self.ba_token.wrapping_add(1).max(1);
+        let token = self.ba_token;
+        let ssn = self.qos_seq.get(&dst).copied().unwrap_or(0);
+        let seq = self.next_seq();
+        let bytes = frame::addba_request(self.cfg.addr, dst, seq, token, BA_TID, BA_WINDOW, ssn);
+        self.tx_ba.insert(
+            dst,
+            TxBa::Asked {
+                at: now,
+                token,
+                tries: tries + 1,
+            },
+        );
+        out.push(Action::Transmit {
+            at: now,
+            frame: Frame {
+                bytes,
+                to: dst,
+                rate: TxRate::BASIC,
+                no_ack: false,
+            },
+        });
+    }
+
     fn send_unicast(&mut self, now: Time, sent: &mut usize, out: &mut Vec<Action>) {
         if self.unicast.is_empty() {
             return;
@@ -925,10 +1037,30 @@ impl Node {
                 }
                 items = rest;
             }
-            let seq = self.next_seq();
+            let aggregate = self.cfg.tx_ampdu && self.peers[&dst].ht.is_some() && {
+                self.ask_block_ack(now, dst, out);
+                self.tx_ba.get(&dst) == Some(&TxBa::Active)
+            };
+            let seq = if aggregate {
+                let n = self.qos_seq.entry(dst).or_insert(0);
+                let s = *n;
+                *n = (s + 1) & 0x0fff;
+                s
+            } else {
+                self.next_seq()
+            };
             let awdl_seq = self.awdl_seq;
             self.awdl_seq = self.awdl_seq.wrapping_add(batch.len() as u16);
-            let bytes = if batch.len() == 1 {
+            let bytes = if batch.len() == 1 && aggregate {
+                frame::qos_data_frame(
+                    self.cfg.addr,
+                    dst,
+                    seq,
+                    BA_TID,
+                    awdl_seq,
+                    &batch[0].packet.data,
+                )
+            } else if batch.len() == 1 {
                 frame::data_frame(self.cfg.addr, dst, seq, awdl_seq, &batch[0].packet.data)
             } else {
                 let packets: Vec<&[u8]> = batch.iter().map(|q| q.packet.data.as_slice()).collect();
