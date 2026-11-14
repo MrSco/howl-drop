@@ -27,7 +27,7 @@ constexpr float kMargin = 12.0f; // from the screen's edge
 constexpr UINT_PTR kTimer = 1;
 constexpr std::size_t kMaxCards = 5;
 
-enum Action { kNone = -1, kAccept, kDecline, kOpen, kShow, kClose, kBody };
+enum Action { kNone = -1, kAccept, kDecline, kOpen, kShow, kClose, kBody, kCancel, kRetry };
 
 struct Button {
     D2D1_RECT_F rect;
@@ -102,6 +102,8 @@ CardText card_text(const Transfers::Transfer& t) {
         }
     }
     switch (t.stage) {
+        case Stage::Cancelled:
+            return {ui::icon::kClose, ui::theme::dim, L"Cancelled", L"To " + peer};
         case Stage::Done:
             return {ui::icon::kCheck, ui::theme::good, L"Sent", L"To " + peer};
         case Stage::Declined:
@@ -114,12 +116,12 @@ CardText card_text(const Transfers::Transfer& t) {
 }
 
 std::wstring card_status(const Transfers::Transfer& t) {
-    if (t.direction == Direction::In) {
-        if (t.stage == Stage::Moving && t.total) {
+    if (t.stage == Stage::Moving && t.total) {
             std::wstring status = ui::size_text(t.bytes) + L" of " + ui::size_text(t.total);
             if (t.rate > 0) status += L" · " + ui::size_text(static_cast<unsigned long long>(t.rate)) + L"/s";
             return status;
-        }
+    }
+    if (t.direction == Direction::In) {
         return t.stage == Stage::Saving ? L"Saving…" : L"Starting…";
     }
     std::wstring status = t.detail.empty() ? L"Starting…" : wide(t.detail);
@@ -129,7 +131,7 @@ std::wstring card_status(const Transfers::Transfer& t) {
 
 double card_fraction(const Transfers::Transfer& t) {
     if (t.stage == Stage::Saving) return 1.0;
-    return t.direction == Direction::In && t.stage == Stage::Moving ? t.fraction() : -1.0;
+    return t.stage == Stage::Moving ? t.fraction() : -1.0;
 }
 
 namespace {
@@ -240,6 +242,11 @@ float render(Cards::Card& c, ui::Canvas& g, const std::wstring& inbox_label, boo
             c.buttons.push_back({D2D1::RectF(kPad, y, kPad + half, y + 34), L"Show in folder", false, kShow});
             c.buttons.push_back({D2D1::RectF(w - kPad - half, y, w - kPad, y + 34), L"Open", true, kOpen});
         }
+        y += 34;
+    }
+    if (t.controllable && t.stage != Stage::Done) {
+        c.buttons.push_back({D2D1::RectF(kPad, y, w - kPad, y + 34),
+                            t.finished() ? L"Retry" : L"Cancel", false, t.finished() ? kRetry : kCancel});
         y += 34;
     }
     if (paint) {
@@ -473,6 +480,10 @@ void Cards::retire(Card* card) {
 void Cards::act(Card& card, int action) {
     const Transfers::Transfer& t = card.t;
     switch (action) {
+        case kCancel:
+        case kRetry:
+            if (actions_.control_send) actions_.control_send(t.id, action == kRetry);
+            return;
         case kAccept:
         case kDecline:
             if (actions_.decide) actions_.decide(t.id, action == kAccept);

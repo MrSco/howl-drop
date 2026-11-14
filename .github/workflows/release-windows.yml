@@ -82,7 +82,7 @@ jobs:
             -DHOWLDROP_NATIVE_SHA256="${{ needs.native-part.outputs.sha256 }}"
           cmake --build build/howldrop
       - name: Test
-        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-radio-test.exe && build/howldrop/howldrop-transfers-test.exe
+        run: build/howldrop/howldrop-open-test.exe && build/howldrop/howldrop-pairing-test.exe && build/howldrop/howldrop-radio-test.exe && build/howldrop/howldrop-transfers-test.exe && build/howldrop/howldrop-ui-test.exe
       - name: Publish
         shell: pwsh
         env:

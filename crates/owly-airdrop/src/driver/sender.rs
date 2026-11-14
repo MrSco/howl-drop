@@ -13,6 +13,7 @@ use std::time::{Duration, SystemTime};
 
 use flate2::Compression;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until, timeout};
@@ -138,15 +139,45 @@ impl Sender {
         events: Option<mpsc::UnboundedSender<Event>>,
         file_icon: Option<Vec<u8>>,
     ) -> io::Result<Outcome> {
+        self.send_with_icon_cancellable(
+            addr,
+            payload,
+            receiver_flags,
+            events,
+            file_icon,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+    }
+
+    /// As `send_with_icon`, with cooperative cancellation during archive preparation.
+    /// Dropping the returned future closes its connection; set `cancelled` first
+    /// to stop preparation on the blocking worker as well.
+    pub async fn send_with_icon_cancellable(
+        &self,
+        addr: SocketAddrV6,
+        payload: &Payload,
+        receiver_flags: u32,
+        events: Option<mpsc::UnboundedSender<Event>>,
+        file_icon: Option<Vec<u8>>,
+        cancelled: Arc<AtomicBool>,
+    ) -> io::Result<Outcome> {
         let compressor = compressor(receiver_flags);
         let (offer, archive) = match payload {
             Payload::Urls(urls) => (Offer::Urls(urls.clone()), None),
             Payload::Files(paths) => {
                 let paths = paths.clone();
-                let (offer, file, len) =
-                    tokio::task::spawn_blocking(move || prepare(&paths, compressor))
-                        .await
-                        .map_err(io::Error::other)??;
+                let (offer, file, len) = tokio::task::spawn_blocking(move || {
+                    prepare_cancellable(&paths, compressor, &|| {
+                        if cancelled.load(Ordering::Relaxed) {
+                            Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"))
+                        } else {
+                            Ok(())
+                        }
+                    })
+                })
+                .await
+                .map_err(io::Error::other)??;
                 (offer, Some((file, len)))
             }
         };
@@ -300,6 +331,17 @@ fn uuid_v4() -> io::Result<String> {
 /// Builds the `/Ask` offer for `paths` and compresses their archive into a
 /// temporary file, returning it rewound with its length.
 pub fn prepare(paths: &[PathBuf], compressor: Compressor) -> io::Result<(Offer, File, u64)> {
+    prepare_cancellable(paths, compressor, &|| Ok(()))
+}
+
+/// Builds an archive, checking for cancellation before opening inputs and
+/// between blocks and directory entries.
+pub fn prepare_cancellable(
+    paths: &[PathBuf],
+    compressor: Compressor,
+    check: &dyn Fn() -> io::Result<()>,
+) -> io::Result<(Offer, File, u64)> {
+    check()?;
     let mut items = Vec::new();
     for path in paths {
         let name = path
@@ -321,6 +363,7 @@ pub fn prepare(paths: &[PathBuf], compressor: Compressor) -> io::Result<(Offer, 
         encoder: Encoder::new(compressor, Compression::fast()),
         out: io::BufWriter::new(&mut spool),
         ino: 1,
+        check,
     };
     // UP-2a: the root entry first.
     writer.entry(
@@ -397,14 +440,16 @@ pub fn dir_entry(name: &str, mtime: u64) -> Entry {
     }
 }
 
-struct ArchiveWriter<W: Write> {
+struct ArchiveWriter<'a, W: Write> {
     encoder: Encoder,
     out: W,
     ino: u32,
+    check: &'a dyn Fn() -> io::Result<()>,
 }
 
-impl<W: Write> ArchiveWriter<W> {
+impl<W: Write> ArchiveWriter<'_, W> {
     fn entry(&mut self, entry: &Entry, data: Option<&mut dyn Read>) -> io::Result<()> {
+        (self.check)()?;
         let mut entry = entry.clone();
         entry.ino = self.ino;
         self.ino += 1;
@@ -414,6 +459,7 @@ impl<W: Write> ArchiveWriter<W> {
             let mut left = entry.size;
             let mut buf = vec![0; 64 << 10];
             while left > 0 {
+                (self.check)()?;
                 let n = data.read(&mut buf[..(left as usize).min(64 << 10)])?;
                 if n == 0 {
                     return Err(io::Error::new(
@@ -430,6 +476,7 @@ impl<W: Write> ArchiveWriter<W> {
     }
 
     fn file(&mut self, path: &Path, name: &str, meta: &std::fs::Metadata) -> io::Result<()> {
+        (self.check)()?;
         if meta.len() > cpio::ODC_MAX_SIZE {
             return Err(invalid(format!(
                 "{} is too large for an archive",
@@ -451,6 +498,7 @@ impl<W: Write> ArchiveWriter<W> {
         children.sort_by_key(|c| c.file_name());
         let mut total = 0;
         for child in children {
+            (self.check)()?;
             let Some(child_name) = child.file_name().to_str().map(String::from) else {
                 continue;
             };
@@ -480,6 +528,50 @@ impl<W: Write> ArchiveWriter<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelled_preparation_does_not_open_inputs_and_stops_between_blocks() {
+        use std::cell::Cell;
+        let cancelled = || Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+        assert_eq!(
+            prepare_cancellable(&["missing".into()], Compressor::Gzip, &cancelled)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Interrupted
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("large.bin");
+        std::fs::write(&file, vec![7; 1 << 20]).unwrap();
+        let checks = Cell::new(0);
+        let result = prepare_cancellable(std::slice::from_ref(&file), Compressor::DvZip, &|| {
+            checks.set(checks.get() + 1);
+            if checks.get() >= 6 {
+                cancelled()
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert_eq!(std::fs::metadata(file).unwrap().len(), 1 << 20);
+    }
+
+    #[test]
+    fn a_selection_is_one_offer_with_files_and_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let photo = dir.path().join("photo.jpg");
+        let folder = dir.path().join("Album");
+        std::fs::write(&photo, b"photo").unwrap();
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("clip.mov"), b"video").unwrap();
+        let (offer, _, len) = prepare(&[photo, folder], Compressor::DvZip).unwrap();
+        let Offer::Files(files) = offer else {
+            panic!("file offer expected")
+        };
+        assert_eq!(files.len(), 2);
+        assert!(files[1].is_directory);
+        assert_eq!(files[1].size, Some(5));
+        assert!(len > 0);
+    }
 
     // spec: SEC-10
     #[tokio::test(start_paused = true)]

@@ -45,6 +45,7 @@ struct RadioConfig {
     // numbers and emails (the agent's --receive, --senders).
     std::string receive = "ask";
     std::string senders;
+    std::string tx_rate = "12";
     // All called on the radio's own thread.
     std::function<void(const std::string& state, RadioLevel level)> on_state;  // a line for the menu
     std::function<void(bool up)> on_up;                      // on the share sheet, or not any more
@@ -73,6 +74,8 @@ public:
     void decide(const std::string& id, bool accept);
 
     Status queue(const std::filesystem::path& path, const std::string& to) override;
+    Status queue_selection(const std::vector<std::filesystem::path>& paths, const std::string& to) override;
+    Status control_send(const std::string& id, bool retry) override;
     Node::Nearby nearby() const override;
     Status scan() override;
 

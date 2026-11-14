@@ -208,6 +208,47 @@ power, 2.4 GHz transmit power, and the periodic recalibration. Startup in WSL
 takes 1 to 10 s, nearly all of it the EEPROM read over usbip; on Windows it's
 0.7 s.
 
+## Local send jobs and TCP
+
+The tray hands a whole selection to the agent in an atomic
+`ID.howldrop-job` manifest in its private outbox. The UTF-8 lines are
+`HowlDrop job 1`, the recipient (empty for automatic selection), then 1–256
+absolute input paths. The tray writes a `.partial` file and renames it only
+after closing it. Source files are read in place, and owly-airdrop prepares
+one compressed archive for one Ask. Folders use its existing recursive
+archive writer. Duplicate top-level names are refused by that writer.
+
+Manifest processing requires `--local-jobs`. The add-on's network-facing
+outbox does not enable it: a received file must never be interpreted as a
+request to read paths on the host. Ordinary file outboxes retain their
+settling and target-sidecar behavior.
+
+`ID.howldrop-cancel` cancels discovery, the acceptance wait or upload. The
+archive worker checks an atomic cancellation flag before opening files and
+between blocks and directory entries. Failed and cancelled manifests move
+to `failed/` for Retry; successful ones are deleted. Source files are never
+deleted by job cleanup. Retry reads the sources again. Structured outgoing
+events carry the job ID, item names, progress and terminal result; heartbeat
+events keep long preparation from appearing stalled.
+
+The Windows TCP stack enables smoltcp's Reno congestion controller. Without
+either Reno or Cubic compiled in, smoltcp defaults to no congestion control,
+which can overwhelm the radio with retransmissions after a loss. Socket
+flush queues data as an OS TCP socket does; connection shutdown still drains
+the pending send queue. An in-memory two-stack test holds acknowledgements,
+drops a data packet, and checks a transfer larger than the TCP buffers.
+
+Receive queue totals and drops are logged at the normal log level. Trace
+logging for `howldrop_agent::netstack` adds TCP header summaries (sequence,
+acknowledgement, flags and lengths), without TLS payload or shared contents.
+The tray's opt-in transmit rate is passed to the agent; the default stays
+12 Mbit/s pending broader hardware measurements.
+
+Hardware qualification still needed: sustained transfers at higher rates,
+different MT7612U adapter variants and distances, channel alternatives, and
+the unported calibration work above. The experimental Owly Intel, Raspberry
+Pi and protocol-tuning PRs are not enabled by this Windows change.
+
 ## Trying it
 
 With the stick attached to WSL (`usbipd attach --wsl`) and HowlDrop's AirDrop
