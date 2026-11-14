@@ -30,6 +30,18 @@ void touch(const std::filesystem::path& path) {
 }  // namespace
 
 int main() {
+    const auto identity = radio::sender_identity({"sender-identity", "ready", "2000", "1234", "5678", "9abc", "def0", "aabb"});
+    expect(identity.has_value(), "trusted BLE metadata parses");
+    if (identity) {
+        const auto first = radio::advert_hashes(*identity, 0, 1000);
+        expect(first[0] == 0x12 && first[7] == 0xf0, "four contact prefixes fill the BLE slots");
+        const auto next = radio::advert_hashes(*identity, 4, 1000);
+        expect(next[0] == 0xaa && next[1] == 0xbb && next[2] == 0x12, "additional contacts rotate through the slots");
+        expect(radio::advert_hashes(*identity, 0, 2000) == std::array<unsigned char,8>{}, "expired identities stop advertising contact hashes");
+    }
+    expect(!radio::sender_identity({"sender-identity", "ready", "18446744073709551616", "1234"}), "expiry overflow is refused");
+    expect(!radio::sender_identity({"sender-identity", "ready", "2000", "12xx"}), "invalid hashes are refused");
+    expect(!radio::sender_identity({"sender-identity", "ready", "2000"}), "missing hashes are refused");
     auto f = radio::event_fields("Deliver: @howldrop\treceived\ttext/a.txt\tRocco's iPhone\ttext");
     expect(f && f->size() == 4 && (*f)[0] == "received" && (*f)[1] == "text/a.txt" && (*f)[3] == "text",
            "an event after a prefix");

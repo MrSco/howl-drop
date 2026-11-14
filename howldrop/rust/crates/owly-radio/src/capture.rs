@@ -67,7 +67,7 @@ impl Filter {
                 blank_tlvs(&mut out);
                 Some(out)
             }
-            Received::AddBaRequest { header, .. }
+            Received::AddBaRequest { header, .. } | Received::AddBaResponse { header, .. }
                 if self.listed(header.src) || self.listed(header.dst) =>
             {
                 Some(out)
@@ -85,7 +85,7 @@ impl Filter {
                 Some(out)
             }
             Received::Other => {
-                // The rest of Block Ack's action frames: responses, DELBA.
+                // The rest of Block Ack's action frames: DELBA.
                 let h = frame::parse_header(bytes)?;
                 let body = bytes.get(frame::HEADER_LEN..)?;
                 let ba = h.fc & fc::TYPE_SUBTYPE == fc::ACTION && body.first() == Some(&3);

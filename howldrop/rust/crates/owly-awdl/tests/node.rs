@@ -604,3 +604,77 @@ fn a_block_ack_sessions_frames_are_put_back_in_order() {
     assert_eq!(delivered(&tick(&mut n, t.plus(110_000))), [105]);
     assert_eq!(n.reorder_stats().released_by_timeout, 1);
 }
+
+/// Sends `payload` to the phone and returns the frames sent until it goes.
+fn send_to_phone(n: &mut Node, t: &mut Time, i: u16, payload: &[u8]) -> Vec<frame::Frame> {
+    let p = Ipv6Packet::echo_request(US, PHONE, 1, i, payload);
+    let mut sent: Vec<frame::Frame> = n
+        .handle(Input::Outbound { now: *t, packet: p })
+        .filter_map(|a| match a {
+            Action::Transmit { frame, .. } => Some(frame),
+            _ => None,
+        })
+        .collect();
+    for _ in 0..(32 * SLOT_US / 256) {
+        if sent.iter().any(|f| f.bytes.ends_with(payload)) {
+            break;
+        }
+        *t = t.plus(256);
+        sent.extend(transmits(&tick(n, *t)).into_iter().cloned());
+    }
+    assert!(
+        sent.iter().any(|f| f.bytes.ends_with(payload)),
+        "packet {i} never sent"
+    );
+    sent
+}
+
+// Fork: with tx_ampdu, data to an HT peer goes as QoS data under a Block
+// Ack session the node asks for, numbered from the session's start.
+#[test]
+fn a_block_ack_session_is_asked_for_and_its_data_numbered_from_its_start() {
+    let mut cfg = node(149, Presence::Fixed).config().clone();
+    cfg.tx_ampdu = true;
+    let mut n = Node::new(cfg, START);
+    let mut t = meet(&mut n, &seq(PHONE_SEQ));
+    let is_addba_req = |f: &frame::Frame| f.to == PHONE && f.bytes[24] == 3 && f.bytes[25] == 0;
+    // Until the phone answers: plain data, and a request.
+    let sent = send_to_phone(&mut n, &mut t, 0, b"first");
+    let req = sent
+        .iter()
+        .find(|f| is_addba_req(f))
+        .expect("an ADDBA request");
+    let data = sent.iter().find(|f| f.bytes.ends_with(b"first")).unwrap();
+    assert_eq!(data.bytes[0], 0x08, "plain data before the session");
+    let (token, params) = (
+        req.bytes[26],
+        u16::from_le_bytes([req.bytes[27], req.bytes[28]]),
+    );
+    assert_eq!(
+        u16::from_le_bytes([req.bytes[31], req.bytes[32]]) >> 4,
+        0,
+        "SSN"
+    );
+    // The phone takes it: QoS data, sequence numbers 0, 1.
+    feed(
+        &mut n,
+        t,
+        &frame::addba_response(PHONE, US, 3, token, params, 0),
+    );
+    for (i, payload) in [(1u16, &b"second"[..]), (2, b"third")] {
+        let sent = send_to_phone(&mut n, &mut t, i, payload);
+        assert!(!sent.iter().any(&is_addba_req), "asked again");
+        let f = sent.iter().find(|f| f.bytes.ends_with(payload)).unwrap();
+        assert_eq!(f.bytes[0], 0x88, "QoS data");
+        assert_eq!(u16::from_le_bytes([f.bytes[22], f.bytes[23]]) >> 4, i - 1);
+        assert_eq!(f.bytes[24] & 0x0f, 0, "TID 0");
+    }
+    // The phone ends it (DELBA from the recipient): plain data again.
+    let mut delba = Vec::new();
+    frame::put_header(&mut delba, frame::fc::ACTION, US, PHONE, 4);
+    delba.extend_from_slice(&[3, 2, 0x00, 0x00, 0x26, 0x00]);
+    feed(&mut n, t, &delba);
+    let sent = send_to_phone(&mut n, &mut t, 3, b"fourth");
+    let f = sent.iter().find(|f| f.bytes.ends_with(b"fourth")).unwrap();
+    assert_eq!(f.bytes[0], 0x08);
+}

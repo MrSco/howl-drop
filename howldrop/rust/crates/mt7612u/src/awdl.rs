@@ -24,6 +24,21 @@ const STATS_EVERY: Duration = Duration::from_secs(10);
 /// each. Action and multicast frames still have the chip's whole queue.
 const DATA_QUEUE: usize = 4;
 
+/// With [`Radio::deep_queue`], as many unicast data frames as take about
+/// what [`DATA_QUEUE`]'s do at 12 Mbit/s (some 4 ms on air), at most this
+/// many: at 54 Mbit/s four frames went out in about 1.3 ms, and the chip
+/// then sat idle until the driver's next refill.
+const DATA_QUEUE_MAX: usize = 32;
+
+/// How many unicast data frames at `rate` the chip may hold.
+fn data_queue(rate: tx::Rate, deep: bool) -> usize {
+    if !deep {
+        return DATA_QUEUE;
+    }
+    let at_12 = tx::Rate::Legacy(24).kbps100() as usize;
+    (DATA_QUEUE * rate.kbps100() as usize / at_12).clamp(DATA_QUEUE, DATA_QUEUE_MAX)
+}
+
 /// A started stick ([`Mt7612u::start_rx`] done) as owly-awdl's [`Air`],
 /// counting what goes through it.
 pub struct Radio {
@@ -34,6 +49,11 @@ pub struct Radio {
     auto: Option<AutoRate>,
     /// Unicast data frames sent since `counted`.
     data_sent: u64,
+    /// The chip's room for unicast data follows the rate ([`data_queue`]).
+    deep_queue: bool,
+    /// Peers that accepted our Block Ack session: their WCID and window.
+    tx_ba: Vec<([u8; 6], tx::Ampdu)>,
+    tx_ba_pending: Vec<TxBaRequest>,
     counted: Instant,
 }
 
@@ -56,15 +76,31 @@ impl Radio {
             logged: Instant::now(),
             auto: None,
             data_sent: 0,
+            deep_queue: false,
+            tx_ba: Vec::new(),
+            tx_ba_pending: Vec::new(),
             counted: Instant::now(),
         }
     }
 
+    /// Lets the chip hold unicast data for about the same time on air at
+    /// any rate, not the same number of frames.
+    pub fn deep_queue(mut self) -> Self {
+        self.deep_queue = true;
+        self
+    }
+
     /// Unicast data at a rate chosen from the chip's retry counts
-    /// ([`crate::rate`]), 12 to 54 Mbit/s, instead of the node's.
-    pub fn auto_rate(mut self) -> Self {
+    /// ([`crate::rate`]) instead of the node's: 12 to 54 Mbit/s, or with
+    /// `ht40` on to HT MCS 15 across 40 MHz.
+    pub fn auto_rate(mut self, ht40: bool) -> Self {
         let now = Instant::now();
-        self.auto = Some(AutoRate::new(now));
+        let ladder = if ht40 {
+            crate::rate::WITH_HT40
+        } else {
+            crate::rate::LEGACY
+        };
+        self.auto = Some(AutoRate::new(now, ladder));
         self.counted = now;
         // TX_STA_CNT0 and 1 count from their last read.
         let _ = self.stick.read(crate::Space::Mac, regs::TX_STA_CNT0);
@@ -92,8 +128,9 @@ impl Radio {
         if let Some(rate) = auto.step(now, frames, failed, retries) {
             tracing::info!(
                 target: "owly_awdl",
-                "unicast at {} Mbit/s ({retries} retries, {failed} given up, {frames} frames in a second)",
-                rate / 2
+                "unicast at {rate:?}, {}.{} Mbit/s ({retries} retries, {failed} given up, {frames} frames in a second)",
+                rate.kbps100() / 10,
+                rate.kbps100() % 10
             );
         }
     }
@@ -133,6 +170,7 @@ impl Air for Radio {
                         let peer = f.frame[10..16].try_into().unwrap();
                         self.block_ack(peer, tid, false);
                     }
+                    self.notice_tx_ba(&f.frame);
                     return Ok(Received {
                         bytes: f.frame,
                         rssi: Some(f.rssi[0] as i8),
@@ -152,7 +190,7 @@ impl Air for Radio {
         } = frame;
         let data = is_unicast_data(&bytes);
         let chip_rate = match (rate, &self.auto) {
-            (_, Some(auto)) if data => tx::Rate::Legacy(auto.rate()),
+            (_, Some(auto)) if data => auto.rate(),
             (TxRate::Legacy(r), _) => tx::Rate::Legacy(r),
             (TxRate::Ht { mcs, sgi }, _) => tx::Rate::Ht { mcs, sgi },
         };
@@ -166,7 +204,7 @@ impl Air for Radio {
         }
         if data {
             self.stick.reap_tx();
-            if self.stick.tx_pending() >= DATA_QUEUE {
+            if self.stick.tx_pending() >= data_queue(chip_rate, self.deep_queue) {
                 self.stats.tx_full += 1;
                 return Err(Frame {
                     bytes,
@@ -176,8 +214,21 @@ impl Air for Radio {
                 });
             }
         }
-        match self.stick.send(bytes, chip_rate, no_ack) {
+        // QoS data to a peer that took our Block Ack session: the chip may
+        // put it in an A-MPDU with what follows it.
+        let ampdu = (data && bytes.first() == Some(&0x88))
+            .then(|| self.tx_ba.iter().find(|(p, _)| *p == to.0).map(|(_, a)| *a))
+            .flatten();
+        let request = TxBaRequest::parse(&bytes);
+        match self.stick.send_with(bytes, chip_rate, no_ack, ampdu) {
             Ok(()) => {
+                if let Some(request) = request {
+                    self.tx_ba_pending.retain(|p| p.peer != request.peer);
+                    if self.tx_ba_pending.len() >= 64 {
+                        self.tx_ba_pending.remove(0);
+                    }
+                    self.tx_ba_pending.push(request);
+                }
                 self.stats.tx += 1;
                 self.data_sent += u64::from(data);
                 Ok(())
@@ -213,6 +264,46 @@ impl Netif for NoNetif {
 }
 
 impl Radio {
+    /// An ADDBA response accepting our session (the node asked for it,
+    /// [`owly_awdl::Config::tx_ampdu`]), or the peer's DELBA ending it.
+    fn notice_tx_ba(&mut self, frame: &[u8]) {
+        if frame.len() < 26 || frame[0] != 0xd0 || frame[24] != 3 {
+            return;
+        }
+        let peer: [u8; 6] = frame[10..16].try_into().unwrap();
+        let le16 = |i: usize| {
+            frame
+                .get(i..i + 2)
+                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        };
+        match frame[25] {
+            // ADDBA response: token, status, parameters.
+            1 if le16(27) == Some(0) => {
+                let Some(pending) = self.tx_ba_pending.iter().position(|p| p.matches(frame)) else {
+                    return;
+                };
+                self.tx_ba_pending.remove(pending);
+                let window = le16(29).map_or(64, |p| (p >> 6) & 0x3ff);
+                match self.stick.tx_wcid(peer) {
+                    Ok(wcid) => {
+                        self.tx_ba.retain(|(p, _)| *p != peer);
+                        self.tx_ba.push((peer, tx::Ampdu { wcid, window }));
+                        tracing::info!(
+                            "A-MPDU to {}: window {window}, WCID {wcid}",
+                            crate::format_mac(&peer)
+                        );
+                    }
+                    Err(e) => tracing::warn!("A-MPDU to {}: {e}", crate::format_mac(&peer)),
+                }
+            }
+            // DELBA from the recipient (initiator bit clear): ours ends.
+            2 if le16(26).is_some_and(|p| p & 0x0800 == 0) => {
+                self.tx_ba.retain(|(p, _)| *p != peer);
+            }
+            _ => {}
+        }
+    }
+
     fn block_ack(&mut self, peer: [u8; 6], tid: u8, on: bool) {
         let who = crate::format_mac(&peer);
         match self.stick.rx_block_ack(peer, tid, on) {
@@ -220,6 +311,41 @@ impl Radio {
             Ok(()) => tracing::info!("Block Ack in hardware stopped for {who}, TID {tid}"),
             Err(e) => tracing::warn!("Block Ack for {who}, TID {tid}: {e}"),
         }
+    }
+}
+
+/// Only a response to a request we actually transmitted may enable chip
+/// aggregation. Unsolicited replies, wrong peers, TIDs and old tokens are
+/// ignored, including when the experiment is off.
+struct TxBaRequest {
+    peer: [u8; 6],
+    local: [u8; 6],
+    token: u8,
+    tid: u8,
+}
+
+impl TxBaRequest {
+    fn parse(frame: &[u8]) -> Option<Self> {
+        if frame.len() < 33 || frame[0] != 0xd0 || frame[24..26] != [3, 0] {
+            return None;
+        }
+        Some(Self {
+            peer: frame[4..10].try_into().ok()?,
+            local: frame[10..16].try_into().ok()?,
+            token: frame[26],
+            tid: ((u16::from_le_bytes([frame[27], frame[28]]) >> 2) & 0xf) as u8,
+        })
+    }
+
+    fn matches(&self, frame: &[u8]) -> bool {
+        frame.len() >= 33
+            && frame[0] == 0xd0
+            && frame[24..26] == [3, 1]
+            && frame[27..29] == [0, 0]
+            && frame[4..10] == self.local
+            && frame[10..16] == self.peer
+            && frame[26] == self.token
+            && ((u16::from_le_bytes([frame[29], frame[30]]) >> 2) & 0xf) as u8 == self.tid
     }
 }
 
@@ -262,6 +388,24 @@ fn block_ack(frame: &[u8]) -> Option<BlockAck> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn outgoing_block_ack_acceptance_matches_the_request_we_sent() {
+        use owly_awdl::{MacAddr, frame};
+        let local = MacAddr([2, 0, 0, 0, 0, 1]);
+        let peer = MacAddr([2, 0, 0, 0, 0, 2]);
+        let request = frame::addba_request(local, peer, 1, 7, 0, 64, 100);
+        let pending = TxBaRequest::parse(&request).unwrap();
+        let response = frame::addba_response(peer, local, 2, 7, 2 | (64 << 6), 0);
+        assert!(pending.matches(&response));
+        for index in [4, 10, 26, 27, 29] {
+            let mut wrong = response.clone();
+            wrong[index] ^= if index == 29 { 4 } else { 1 };
+            assert!(!pending.matches(&wrong), "accepted wrong field at {index}");
+        }
+        assert!(!pending.matches(&response[..30]));
+        assert!(TxBaRequest::parse(&response).is_none());
+    }
+
     fn action(body: &[u8]) -> Vec<u8> {
         let mut f = vec![0xd0, 0, 0, 0];
         f.extend_from_slice(&[0x4e, 0x4f, 0x7b, 0xa7, 0xf2, 0x70]);
@@ -270,6 +414,15 @@ mod tests {
         f.extend_from_slice(&[0, 0]);
         f.extend_from_slice(body);
         f
+    }
+
+    #[test]
+    fn a_deep_queue_holds_about_4_ms_of_air_at_any_rate() {
+        use tx::Rate;
+        assert_eq!(data_queue(Rate::Legacy(108), false), DATA_QUEUE);
+        assert_eq!(data_queue(Rate::Legacy(24), true), 4);
+        assert_eq!(data_queue(Rate::Legacy(108), true), 18);
+        assert_eq!(data_queue(Rate::Ht40 { mcs: 7, sgi: false }, true), 32);
     }
 
     #[test]

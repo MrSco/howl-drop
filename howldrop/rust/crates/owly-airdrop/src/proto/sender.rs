@@ -76,6 +76,8 @@ pub struct Config {
     /// Fork: the `/Ask`'s `FileIcon`, a preview the receiver shows while it
     /// asks and receives. None leaves it out.
     pub file_icon: Option<Vec<u8>>,
+    /// The signed record belonging to the TLS client identity (ID-5).
+    pub sender_record: Option<Vec<u8>>,
 }
 
 impl Config {
@@ -87,14 +89,27 @@ impl Config {
             bundle_id: "com.apple.finder".into(),
             ask_timeout: ASK_TIMEOUT,
             file_icon: None,
+            sender_record: None,
         }
     }
 }
 
-/// `POST /Discover` with an empty dictionary, which is what every sender
-/// known to work with iOS 18 sends (§6.3).
+/// Anonymous `POST /Discover` with an empty dictionary (§6.3).
 pub fn discover_request() -> Vec<u8> {
-    plist_request(Path::Discover, &DiscoverRequest::default().to_plist())
+    discover_request_with_record(None)
+}
+
+/// Discovery as an identified sender. The record must belong to the TLS
+/// client certificate presented on this connection (ID-5).
+pub fn discover_request_with_record(record: Option<&[u8]>) -> Vec<u8> {
+    plist_request(
+        Path::Discover,
+        &DiscoverRequest {
+            sender_record: record.map(Vec::from),
+            ..DiscoverRequest::default()
+        }
+        .to_plist(),
+    )
 }
 
 /// A receiver that answered `/Discover`.
@@ -128,7 +143,7 @@ pub fn ask_request(config: &Config, transfer_id: &str, offer: &Offer) -> Vec<u8>
         sender_model_name: config.model_name.clone(),
         sender_id: config.sender_id.clone(),
         bundle_id: config.bundle_id.clone(),
-        sender_record: None,
+        sender_record: config.sender_record.clone(),
         file_icon: config.file_icon.clone(),
         offer: offer.clone(),
         described: String::new(),
@@ -492,6 +507,33 @@ mod tests {
                 .unwrap();
             assert!(["/Discover", "/Ask", "/Upload"].contains(&head.target.as_str()));
         }
+    }
+
+    // spec: ID-5
+    #[test]
+    fn identified_requests_carry_the_same_record_and_anonymous_requests_omit_it() {
+        let record = vec![1, 2, 3, 4];
+        let discover = discover_request_with_record(Some(&record));
+        let (_, body) = http::parse_request(&discover, &http::Limits::default())
+            .unwrap()
+            .unwrap();
+        let value = plist::from_bytes(&discover[body..], &plist::Limits::default()).unwrap();
+        assert_eq!(
+            DiscoverRequest::from_plist(&value).unwrap().sender_record,
+            Some(record.clone())
+        );
+        let mut config = Config::new("Test", "0123456789ab");
+        config.sender_record = Some(record.clone());
+        let ask = ask_request(&config, "ID", &file_offer());
+        let (_, body) = http::parse_request(&ask, &http::Limits::default())
+            .unwrap()
+            .unwrap();
+        let value = plist::from_bytes(&ask[body..], &plist::Limits::default()).unwrap();
+        assert_eq!(
+            AskRequest::from_plist(&value).unwrap().sender_record,
+            Some(record)
+        );
+        assert_eq!(discover_request(), discover_request_with_record(None));
     }
 
     #[test]

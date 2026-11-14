@@ -123,6 +123,8 @@ private:
     std::chrono::steady_clock::time_point wake_until_{};
     int sends_pending_ = 0;  // under wake_mu_
     bool wake_quit_ = false;
+    radio::SenderIdentityAdvert sender_identity_;  // under wake_mu_; short BLE prefixes only
+    std::atomic<std::uint64_t> sender_identity_expires_{0};
 };
 
 }  // namespace howldrop

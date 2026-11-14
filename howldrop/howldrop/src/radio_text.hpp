@@ -5,6 +5,8 @@
 // it again.
 
 #include <optional>
+#include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -13,6 +15,13 @@ namespace howldrop::radio {
 // An event in the agent's output: the fields after "@howldrop", which may
 // follow a prefix ("Deliver: @howldrop\treceived\t...").
 std::optional<std::vector<std::string>> event_fields(const std::string& line);
+
+struct SenderIdentityAdvert {
+    std::uint64_t expires = 0;
+    std::vector<std::array<unsigned char, 2>> prefixes;
+};
+std::optional<SenderIdentityAdvert> sender_identity(const std::vector<std::string>& event);
+std::array<unsigned char, 8> advert_hashes(const SenderIdentityAdvert& identity, std::size_t offset, std::uint64_t now);
 
 // After the radio stopped by itself, once it had been on the share sheet
 // (the PC slept, the stick went away): how long to wait before starting it

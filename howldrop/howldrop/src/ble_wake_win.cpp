@@ -139,11 +139,12 @@ std::string hex(HRESULT hr) {
 
 BleWake::~BleWake() { stop(); }
 
-std::string BleWake::start() {
+std::string BleWake::start(const std::array<unsigned char, 8>& contact_hashes) {
     if (publisher_) return {};
     // 05 12, then 18 bytes: 40, a 3-byte tag (random, as a Mac's rotates),
-    // 00000000, 03, four zero 2-byte contact hashes, 00.
+    // 00000000, 03, four 2-byte contact hashes (zero when anonymous), 00.
     unsigned char value[20] = {0x05, 0x12, 0x40, 0, 0, 0, 0, 0, 0, 0, 0x03};
+    for (std::size_t i = 0; i < contact_hashes.size(); ++i) value[11 + i] = contact_hashes[i];
     std::random_device random;
     for (int i = 3; i < 6; ++i) value[i] = static_cast<unsigned char>(random() & 0xff);
 

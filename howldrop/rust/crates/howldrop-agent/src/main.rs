@@ -35,6 +35,7 @@ mod preview;
 mod radio;
 mod receive;
 mod send;
+mod sender_identity;
 #[cfg(windows)]
 mod setup;
 #[cfg(windows)]
@@ -71,8 +72,21 @@ struct Args {
     #[arg(long, default_value = "MacBookPro18,3")]
     model: String,
     /// Where received files go, for deliver.py.
+    #[arg(long, required_unless_present_any = ["import_sender_identity", "check_sender_identity"])]
+    staging: Option<PathBuf>,
+    /// Import certificate.pem, key.pem and validation_record.cms into --sender-identity.
+    #[arg(
+        long,
+        requires = "sender_identity",
+        conflicts_with = "check_sender_identity"
+    )]
+    import_sender_identity: Option<PathBuf>,
+    /// Check an exported identity directory or an installed identity bundle.
     #[arg(long)]
-    staging: PathBuf,
+    check_sender_identity: Option<PathBuf>,
+    /// Use an imported Apple-issued identity when sending (optional).
+    #[arg(long)]
+    sender_identity: Option<PathBuf>,
     /// Move each finished item from staging into this folder, as deliver.py
     /// would, and say so (`received`).
     #[arg(long)]
@@ -224,6 +238,61 @@ fn main() -> ExitCode {
 }
 
 async fn run(args: Args) -> Result<(), String> {
+    if let Some(source) = &args.import_sender_identity {
+        let destination = args
+            .sender_identity
+            .as_ref()
+            .ok_or("import needs --sender-identity FILE")?;
+        let identity = sender_identity::SenderIdentity::import(source, destination)
+            .map_err(|e| format!("identity import: {e}"))?;
+        say(format!(
+            "Trusted-contact identity imported; valid until Unix time {}. Restart HowlDrop to use it.",
+            identity.expiry()
+        ));
+        return Ok(());
+    }
+    if let Some(path) = &args.check_sender_identity {
+        let identity = if path.is_dir() {
+            sender_identity::SenderIdentity::check_export(path)
+        } else {
+            sender_identity::SenderIdentity::load(path)
+        }
+        .map_err(|e| format!("identity check: {e}"))?;
+        say(format!(
+            "Valid Apple sending identity: {} verified contact prefixes; valid until Unix time {}.",
+            identity.profile.prefixes.len(),
+            identity.expiry()
+        ));
+        return Ok(());
+    }
+    let staging = args
+        .staging
+        .as_ref()
+        .ok_or("receiving needs --staging DIR")?;
+    let sender_identity = args
+        .sender_identity
+        .as_ref()
+        .map(|path| sender_identity::SenderIdentity::load(path).map(Arc::new))
+        .transpose()
+        .map_err(|e| format!("trusted-contact identity: {e}"))?;
+    #[cfg(windows)]
+    if let Some(identity) = &sender_identity
+        && pipe::attached().is_some()
+    {
+        let mut fields = vec![
+            "sender-identity".to_string(),
+            "ready".into(),
+            identity.expiry().to_string(),
+        ];
+        fields.extend(
+            identity
+                .profile
+                .prefixes
+                .iter()
+                .map(|p| format!("{:02x}{:02x}", p[0], p[1])),
+        );
+        emit(&fields.iter().map(String::as_str).collect::<Vec<_>>());
+    }
     let radio_opts = radio::Options {
         station: args
             .interface
@@ -301,7 +370,7 @@ async fn run(args: Args) -> Result<(), String> {
             receive::Options {
                 name: args.name.clone(),
                 model: args.model.clone(),
-                staging: args.staging.clone(),
+                staging: staging.clone(),
                 identity: identity.clone(),
                 service_id: service_id.clone(),
                 policy,
@@ -330,6 +399,7 @@ async fn run(args: Args) -> Result<(), String> {
                 },
                 send::Options {
                     outbox,
+                    sender_identity: sender_identity.clone(),
                     local_jobs: args.local_jobs,
                     discard: args.discard,
                     name: args.name.clone(),
@@ -495,4 +565,48 @@ fn beside_us() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
         .and_then(|e| e.parent().map(|d| d.join("firmware")))
+}
+
+#[cfg(test)]
+mod identity_cli_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn identity_checks_and_imports_need_no_radio_or_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().to_str().unwrap();
+        let destination = dir.path().join("installed");
+        let destination = destination.to_str().unwrap();
+        let check = Args::try_parse_from(["agent", "--check-sender-identity", source]).unwrap();
+        assert!(run(check).await.unwrap_err().starts_with("identity check:"));
+        let import = Args::try_parse_from([
+            "agent",
+            "--import-sender-identity",
+            source,
+            "--sender-identity",
+            destination,
+        ])
+        .unwrap();
+        assert!(
+            run(import)
+                .await
+                .unwrap_err()
+                .starts_with("identity import:")
+        );
+        assert!(!PathBuf::from(destination).exists());
+        assert!(Args::try_parse_from(["agent", "--import-sender-identity", source]).is_err());
+        assert!(Args::try_parse_from(["agent"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "agent",
+                "--check-sender-identity",
+                source,
+                "--import-sender-identity",
+                source,
+                "--sender-identity",
+                destination,
+            ])
+            .is_err()
+        );
+    }
 }

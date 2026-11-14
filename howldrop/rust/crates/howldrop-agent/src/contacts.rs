@@ -75,6 +75,13 @@ struct Record {
     account: String,
     hashes: HashSet<String>,
     expired: bool,
+    valid_from: Option<SystemTime>,
+    valid_until: Option<SystemTime>,
+}
+
+pub struct SenderProfile {
+    pub prefixes: Vec<[u8; 2]>,
+    pub expires: SystemTime,
 }
 
 impl Contacts {
@@ -122,6 +129,58 @@ impl Contacts {
 
     pub fn len(&self) -> usize {
         self.hashes.len()
+    }
+
+    /// Validate a local sending identity before it is stored or presented.
+    /// The record and certificate must be current, Apple-issued and bound
+    /// to the same account. Only the short BLE prefixes leave this module.
+    pub fn sender_profile(&self, record: &[u8], certificate: &[u8]) -> io::Result<SenderProfile> {
+        let now = SystemTime::now();
+        let info = self.verify_record(record).map_err(io::Error::other)?;
+        let expires = info
+            .valid_until
+            .ok_or_else(|| io::Error::other("validation record has no valid expiry"))?;
+        if expires <= now || info.valid_from.is_none_or(|start| start > now) {
+            return Err(io::Error::other(
+                "validation record is expired or not yet valid",
+            ));
+        }
+        let account = self
+            .certificate_account(certificate)
+            .map_err(io::Error::other)?;
+        if info.account.is_empty() || account != info.account {
+            return Err(io::Error::other(
+                "validation record and certificate belong to different accounts",
+            ));
+        }
+        let leaf = Certificate::from_der(certificate).map_err(io::Error::other)?;
+        if leaf.tbs_certificate.validity.not_before.to_system_time() > now {
+            return Err(io::Error::other("the certificate is not yet valid"));
+        }
+        let mut hashes: Vec<_> = info.hashes.into_iter().collect();
+        hashes.sort();
+        let mut prefixes = Vec::new();
+        for hash in hashes {
+            if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(io::Error::other(
+                    "validation record contains an invalid contact hash",
+                ));
+            }
+            let a = u8::from_str_radix(&hash[..2], 16).map_err(io::Error::other)?;
+            let b = u8::from_str_radix(&hash[2..4], 16).map_err(io::Error::other)?;
+            if !prefixes.contains(&[a, b]) {
+                prefixes.push([a, b]);
+            }
+        }
+        if prefixes.is_empty() || prefixes.len() > 128 {
+            return Err(io::Error::other(
+                "validation record has no usable contact hashes",
+            ));
+        }
+        Ok(SenderProfile {
+            prefixes,
+            expires: expires.min(leaf.tbs_certificate.validity.not_after.to_system_time()),
+        })
     }
 
     /// Whether to take a transfer from this sender. Blocking.
@@ -264,10 +323,20 @@ fn parse_record(payload: &[u8], now: SystemTime) -> Option<Record> {
         }
         _ => false,
     };
+    let valid_from = valid_as.map(SystemTime::from);
+    let valid_until = valid_from.and_then(|start| {
+        let seconds = duration?;
+        if !seconds.is_finite() || seconds <= 0.0 {
+            return None;
+        }
+        start.checked_add(Duration::try_from_secs_f64(seconds).ok()?)
+    });
     Some(Record {
         account,
         hashes,
         expired,
+        valid_from,
+        valid_until,
     })
 }
 
@@ -549,6 +618,90 @@ mod tests {
         let mut out = Vec::new();
         plist::Value::Dictionary(d).to_writer_xml(&mut out).unwrap();
         out
+    }
+
+    // spec: ID-1, ID-5, BLE-2
+    #[test]
+    fn imported_sender_profiles_are_bound_current_and_have_valid_hashes() {
+        let pki = Pki::new();
+        let verifier = pki.contacts(&[]);
+        let cert = pki.leaf(
+            "profile",
+            &format!("{CN_PREFIX}001234.abcd"),
+            Some("issuer"),
+        );
+        let now = SystemTime::now() - Duration::from_secs(1);
+        let record = pki.record(&payload("001234.abcd", &["15551234567"], now, 86400));
+        let profile = verifier.sender_profile(&record, &cert).unwrap();
+        assert!(
+            Contacts::new(&[])
+                .unwrap()
+                .0
+                .sender_profile(&record, &cert)
+                .is_err()
+        );
+        let expected = hash("15551234567");
+        assert_eq!(
+            profile.prefixes,
+            vec![[
+                u8::from_str_radix(&expected[..2], 16).unwrap(),
+                u8::from_str_radix(&expected[2..4], 16).unwrap()
+            ]]
+        );
+        assert!(profile.expires > SystemTime::now());
+        let other = pki.leaf(
+            "different",
+            &format!("{CN_PREFIX}009999.ffff"),
+            Some("issuer"),
+        );
+        assert!(verifier.sender_profile(&record, &other).is_err());
+        let expired = pki.record(&payload(
+            "001234.abcd",
+            &["15551234567"],
+            now - Duration::from_secs(86400),
+            60,
+        ));
+        assert!(verifier.sender_profile(&expired, &cert).is_err());
+        let future = pki.record(&payload(
+            "001234.abcd",
+            &["15551234567"],
+            now + Duration::from_secs(3600),
+            86400,
+        ));
+        assert!(verifier.sender_profile(&future, &cert).is_err());
+        let mut undated = plist::Value::from_reader(io::Cursor::new(payload(
+            "001234.abcd",
+            &["15551234567"],
+            now,
+            86400,
+        )))
+        .unwrap();
+        undated
+            .as_dictionary_mut()
+            .unwrap()
+            .remove("SuggestValidDuration");
+        let mut xml = Vec::new();
+        undated.to_writer_xml(&mut xml).unwrap();
+        assert!(verifier.sender_profile(&pki.record(&xml), &cert).is_err());
+        let empty = pki.record(&payload("001234.abcd", &[], now, 86400));
+        assert!(verifier.sender_profile(&empty, &cert).is_err());
+        let mut unsigned = plist::Value::from_reader(io::Cursor::new(payload(
+            "001234.abcd",
+            &["15551234567"],
+            now,
+            86400,
+        )))
+        .unwrap();
+        unsigned.as_dictionary_mut().unwrap().insert(
+            "ValidatedPhoneHashes".into(),
+            plist::Value::Array(vec!["not-a-hash".into()]),
+        );
+        let mut xml = Vec::new();
+        unsigned.to_writer_xml(&mut xml).unwrap();
+        assert!(verifier.sender_profile(&pki.record(&xml), &cert).is_err());
+        let mut corrupt = record;
+        corrupt[20] ^= 1;
+        assert!(verifier.sender_profile(&corrupt, &cert).is_err());
     }
 
     #[test]
