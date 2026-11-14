@@ -11,6 +11,7 @@
 pub mod awdl;
 pub mod channel;
 pub mod mcu;
+mod rate;
 pub mod regs;
 pub mod rx;
 pub mod tx;

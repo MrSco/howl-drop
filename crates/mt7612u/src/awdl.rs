@@ -10,7 +10,8 @@ use nusb::transfer::Buffer;
 use owly_awdl::driver::{Air, Netif, Received};
 use owly_awdl::{Frame, Ipv6Packet, TxRate};
 
-use crate::{Mt7612u, RX_BUF, SendError, rx, tx};
+use crate::rate::AutoRate;
+use crate::{Mt7612u, RX_BUF, SendError, regs, rx, tx};
 
 const STATS_EVERY: Duration = Duration::from_secs(10);
 
@@ -29,6 +30,11 @@ pub struct Radio {
     stick: Mt7612u,
     stats: Stats,
     logged: Instant,
+    /// The rate for unicast data when it's chosen here ([`Radio::auto_rate`]).
+    auto: Option<AutoRate>,
+    /// Unicast data frames sent since `counted`.
+    data_sent: u64,
+    counted: Instant,
 }
 
 #[derive(Debug, Default)]
@@ -48,6 +54,47 @@ impl Radio {
             stick,
             stats: Stats::default(),
             logged: Instant::now(),
+            auto: None,
+            data_sent: 0,
+            counted: Instant::now(),
+        }
+    }
+
+    /// Unicast data at a rate chosen from the chip's retry counts
+    /// ([`crate::rate`]), 12 to 54 Mbit/s, instead of the node's.
+    pub fn auto_rate(mut self) -> Self {
+        let now = Instant::now();
+        self.auto = Some(AutoRate::new(now));
+        self.counted = now;
+        // TX_STA_CNT0 and 1 count from their last read.
+        let _ = self.stick.read(crate::Space::Mac, regs::TX_STA_CNT0);
+        let _ = self.stick.read(crate::Space::Mac, regs::TX_STA_CNT1);
+        self
+    }
+
+    /// Once a second, the rate for what the chip's counters say.
+    fn adapt_rate(&mut self) {
+        if self.auto.is_none() || self.counted.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        let now = Instant::now();
+        self.counted = now;
+        let frames = std::mem::take(&mut self.data_sent);
+        let (Ok(cnt0), Ok(cnt1)) = (
+            self.stick.read(crate::Space::Mac, regs::TX_STA_CNT0),
+            self.stick.read(crate::Space::Mac, regs::TX_STA_CNT1),
+        ) else {
+            return;
+        };
+        let failed = u64::from(cnt0 & 0xffff);
+        let retries = u64::from(cnt1 >> 16);
+        let auto = self.auto.as_mut().expect("checked above");
+        if let Some(rate) = auto.step(now, frames, failed, retries) {
+            tracing::info!(
+                target: "owly_awdl",
+                "unicast at {} Mbit/s ({retries} retries, {failed} given up, {frames} frames in a second)",
+                rate / 2
+            );
         }
     }
 
@@ -55,6 +102,7 @@ impl Radio {
         if let Err(e) = self.stick.calibrate() {
             tracing::warn!("calibration: {e}");
         }
+        self.adapt_rate();
         if self.logged.elapsed() >= STATS_EVERY {
             self.logged = Instant::now();
             tracing::info!(
@@ -102,9 +150,11 @@ impl Air for Radio {
             rate,
             no_ack,
         } = frame;
-        let chip_rate = match rate {
-            TxRate::Legacy(r) => tx::Rate::Legacy(r),
-            TxRate::Ht { mcs, sgi } => tx::Rate::Ht { mcs, sgi },
+        let data = is_unicast_data(&bytes);
+        let chip_rate = match (rate, &self.auto) {
+            (_, Some(auto)) if data => tx::Rate::Legacy(auto.rate()),
+            (TxRate::Legacy(r), _) => tx::Rate::Legacy(r),
+            (TxRate::Ht { mcs, sgi }, _) => tx::Rate::Ht { mcs, sgi },
         };
         self.maybe_log();
         // The node accepting a peer's Block Ack session (AWDL-15): the chip
@@ -114,7 +164,7 @@ impl Air for Radio {
             Some(BlockAck::Delba { tid }) => self.block_ack(to.0, tid, false),
             None => {}
         }
-        if is_unicast_data(&bytes) {
+        if data {
             self.stick.reap_tx();
             if self.stick.tx_pending() >= DATA_QUEUE {
                 self.stats.tx_full += 1;
@@ -129,6 +179,7 @@ impl Air for Radio {
         match self.stick.send(bytes, chip_rate, no_ack) {
             Ok(()) => {
                 self.stats.tx += 1;
+                self.data_sent += u64::from(data);
                 Ok(())
             }
             Err(SendError::Full(bytes)) => {

@@ -226,6 +226,10 @@ pub const TX_ALC_CFG_0: u32 = 0x13b0;
 pub const TX_ALC_CFG_0_CH_INIT_0: u32 = 0x3f;
 pub const TX_ALC_CFG_0_CH_INIT_1: u32 = 0x3f << 8;
 pub const TX_ALC_CFG_1: u32 = 0x13b4;
+/// Frames sent and given up since the last read (TX_STA_CNT0's low half),
+/// and those sent with their retries (TX_STA_CNT1: ok low, retries high).
+pub const TX_STA_CNT0: u32 = 0x170c;
+pub const TX_STA_CNT1: u32 = 0x1710;
 /// TX_ALC_CFG_1's and TX_ALC_CFG_2's temperature compensation.
 pub const TX_ALC_CFG_TEMP_COMP: u32 = 0x3f;
 

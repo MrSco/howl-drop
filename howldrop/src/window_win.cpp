@@ -629,7 +629,10 @@ struct HowlWindow::Impl {
         area(folder_button, kDownloadFolder);
         y += 32;
         const auto rate_button = D2D1::RectF(kSide, y, right, y + 32);
-        const std::wstring speed = s.tx_rate == "54" ? L"Faster (54 Mbps)" : s.tx_rate == "mcs7" ? L"Faster (HT)" : L"Standard (12 Mbps)";
+        const std::wstring speed = s.tx_rate == "12"   ? L"Standard (12 Mbps)"
+                                   : s.tx_rate == "54"   ? L"Fixed (54 Mbps)"
+                                   : s.tx_rate == "mcs7" ? L"Fixed (HT)"
+                                                         : L"Automatic (up to 54 Mbps)";
         g.text(L"Sending speed: " + speed, rate_button, ui::Font::Body, ui::theme::accent);
         area(rate_button, kTxRate);
         y += 32;
@@ -724,7 +727,7 @@ struct HowlWindow::Impl {
             }
             case kTxRate: {
                 auto s = hooks.settings();
-                s.tx_rate = s.tx_rate == "12" ? "54" : s.tx_rate == "54" ? "mcs7" : "12";
+                s.tx_rate = s.tx_rate == "auto" ? "12" : s.tx_rate == "12" ? "54" : s.tx_rate == "54" ? "mcs7" : "auto";
                 hooks.apply(s);
                 break;
             }

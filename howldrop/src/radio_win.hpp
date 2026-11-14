@@ -45,7 +45,7 @@ struct RadioConfig {
     // numbers and emails (the agent's --receive, --senders).
     std::string receive = "ask";
     std::string senders;
-    std::string tx_rate = "12";
+    std::string tx_rate = "auto";
     // All called on the radio's own thread.
     std::function<void(const std::string& state, RadioLevel level)> on_state;  // a line for the menu
     std::function<void(bool up)> on_up;                      // on the share sheet, or not any more

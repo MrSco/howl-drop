@@ -92,7 +92,7 @@ struct Settings {
     std::string receive = "ask";
     std::string senders;  // the contacts: phone numbers and emails, comma-separated
     std::string download_dir;
-    std::string tx_rate = "12";
+    std::string tx_rate = "auto";
 };
 
 // A send to the iPhone relay finished, posted from its worker thread.
@@ -190,7 +190,7 @@ void load_settings(App& app) {
         } else if (key == "download_dir") {
             const auto path = path_from_utf8(value);
             if (path.is_absolute() && path.filename() == L"HowlDrop") app.settings.download_dir = value;
-        } else if (key == "tx_rate" && (value == "12" || value == "54" || value == "mcs7")) {
+        } else if (key == "tx_rate" && (value == "auto" || value == "12" || value == "54" || value == "mcs7")) {
             app.settings.tx_rate = value;
         }
         if (key == "notify") app.settings.notify = on;

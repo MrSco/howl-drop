@@ -148,7 +148,8 @@ impl Kernel {
             country,
             channels: opts.channels.clone(),
             aggregation: opts.aggregation,
-            tx_rate: opts.tx_rate.clone(),
+            // The kernel radio has no rate chosen from the air: a fixed rate or its default.
+            tx_rate: opts.tx_rate.clone().filter(|r| r != "auto"),
             hostapd: None,
             tx_amsdu: opts.tx_amsdu,
         };

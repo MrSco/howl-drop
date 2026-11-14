@@ -203,8 +203,10 @@ Windows.
    from the iPhone in 5.1 s (3.8 s on Wintun); Accept on the PC; Look for
    devices found the iPhone, and a photo went to it.
 
-Not ported yet: the EEPROM's receive gain corrections and per-rate transmit
-power, 2.4 GHz transmit power, and the periodic recalibration. Startup in WSL
+Not ported yet: the EEPROM's receive gain corrections, 2.4 GHz transmit
+power, and the periodic recalibration (TSSI compensation and DPD run once,
+after the first frames go out: without DPD, 54 Mbit/s and MCS 7 frames needed
+about two retries each). Startup in WSL
 takes 1 to 10 s, nearly all of it the EEPROM read over usbip; on Windows it's
 0.7 s.
 
@@ -241,12 +243,15 @@ drops a data packet, and checks a transfer larger than the TCP buffers.
 Receive queue totals and drops are logged at the normal log level. Trace
 logging for `howldrop_agent::netstack` adds TCP header summaries (sequence,
 acknowledgement, flags and lengths), without TLS payload or shared contents.
-The tray's opt-in transmit rate is passed to the agent; the default stays
-12 Mbit/s pending broader hardware measurements.
+The tray's transmit rate is passed to the agent. Its default, `auto`, has
+the MT7612U radio choose the unicast data rate from 12, 24, 36 and 54 Mbit/s
+once a second, from the chip's retry and failure counters (TX_STA_CNT0/1);
+mt76x2u leaves this to mac80211's minstrel, which needs per-frame TX status.
+A 13.2 MB batch to an iPhone takes about 8 s at 54 Mbit/s.
 
 Hardware qualification still needed: sustained transfers at higher rates,
 different MT7612U adapter variants and distances, channel alternatives, and
-the unported calibration work above. The experimental Owly Intel, Raspberry
+the receive gain corrections above. The experimental Owly Intel, Raspberry
 Pi and protocol-tuning PRs are not enabled by this Windows change.
 
 ## Trying it

@@ -32,7 +32,7 @@ struct WindowSettings {
     std::string receive = "ask";  // everyone, ask, contacts
     std::string senders;          // comma-separated
     std::string download_dir;     // dedicated HowlDrop folder, used after restart
-    std::string tx_rate = "12";   // opt-in transmit rate
+    std::string tx_rate = "auto"; // auto, or a fixed rate: 12, 54, mcs7
 };
 
 class HowlWindow {

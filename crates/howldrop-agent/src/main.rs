@@ -140,7 +140,8 @@ struct Args {
     /// The regulatory domain, two capitals; else US where none is set.
     #[arg(long)]
     country: Option<String>,
-    /// The data frame rate: 6–54 (Mbit/s), or mcs0–mcs15.
+    /// The data frame rate: 6–54 (Mbit/s), mcs0–mcs15, or `auto`: on the
+    /// MT7612U, 12 to 54 Mbit/s as the air allows (its default).
     #[arg(long)]
     tx_rate: Option<String>,
     /// Send to a phone as A-MSDUs, several packets a frame.
