@@ -3,6 +3,15 @@
 - **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed, and nothing else to install. The first time, it downloads `howldrop-native.zip` below (the radio, about 3.5 MB; checked against the SHA-256 built into the exe) and runs it as you. Windows asks once, and only to put a new stick on its own WinUSB driver.
 - **Through Home Assistant**: the HowlDrop add-on forwards what arrives there.
 
+**New in 0.22.0**
+- **Sending to the iPhone is about 10× faster** with the USB stick: a 13 MB batch of photos goes in about 9 s instead of 90, and large sends no longer stall partway. The stick now waits for the iPhone to acknowledge each frame and resends what it missed, resends only what TCP actually lost, and calibrates its transmitter the way Linux does, so the fast rates come out clean.
+- **Sending speed is Automatic**: up to 54 Mbit/s, stepping down when the iPhone is far away. Settings can still fix it at 12, 54 or HT.
+- **Files you send together go as one AirDrop**, and the window has **Cancel** and **Retry** for sends.
+- A setting for **where received files go**.
+- Keyboard and screen-reader support in the window and the tray.
+- A send no longer waits forever when the iPhone leaves while you're deciding whether to accept.
+- If sending is still slow, the iPhone may be giving AirDrop only a little of its time: open Control Center and tap the Wi-Fi icon once; AirDrop keeps working.
+
 **New in 0.21.3**
 - The tray icon's tooltip keeps showing its text after a notification is clicked, dismissed or times out.
 
