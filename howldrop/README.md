@@ -135,9 +135,10 @@ AirDrop's channel. On the iPhone, open Control Center and tap the Wi-Fi icon
 once; AirDrop keeps working. `radio.log`'s `schedule` lines say how many of
 its 16 time slots each nearby Apple device gives HowlDrop's channel.
 
-Sending speed is Automatic by default: HowlDrop sends at up to 54 Mbit/s and
-steps down to 36, 24 or 12 when frames start needing retries, as at range.
-Settings can fix it instead at `12` Mbit/s, `54` Mbit/s, or `mcs7` (HT). Receive speed is also
+Sending speed is Automatic by default: HowlDrop climbs through 54 Mbit/s and
+on to 40 MHz HT (up to MCS 15, 270 Mbit/s) with an airtime-sized queue, and
+steps down to 36, 24 or 12 Mbit/s when frames start needing retries, as at range.
+Settings can cap Automatic at `54` Mbit/s (`auto-54`) or fix it at `12` Mbit/s, `54` Mbit/s, or `mcs7` (HT). Receive speed is also
 limited by the iPhone's schedule. The radio log includes network queue-drop
 counts to help diagnose a slow or interrupted transfer.
 

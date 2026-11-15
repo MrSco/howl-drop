@@ -47,9 +47,9 @@ function Set-Rate([string[]]$RateLines) {
 $job = $null
 try {
     if ($originalExe) { Stop-App $originalExe }
-    $rate = if ($Mode -in 'ht','all') { 'auto-ht' } else { 'auto' }
+    $rate = if ($Mode -in 'ht','all') { 'auto-ht' } else { 'auto-54' }
     Set-Rate @("tx_rate=$rate")
-    $env:HOWLDROP_DEEP_QUEUE = if ($Mode -ne 'baseline') { '1' } else { $null }
+    $env:HOWLDROP_DEEP_QUEUE = if ($Mode -eq 'baseline') { '0' } else { '1' }
     $env:HOWLDROP_AMPDU = if ($Mode -in 'ampdu','all') { '1' } else { $null }
     $started = [DateTime]::UtcNow
     Start-Process -FilePath $exe -WindowStyle Hidden

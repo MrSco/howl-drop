@@ -152,7 +152,7 @@ impl Kernel {
             tx_rate: opts
                 .tx_rate
                 .clone()
-                .filter(|r| r != "auto" && r != "auto-ht"),
+                .filter(|r| r != "auto" && r != "auto-ht" && r != "auto-54"),
             hostapd: None,
             tx_amsdu: opts.tx_amsdu,
         };

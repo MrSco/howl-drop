@@ -245,14 +245,16 @@ logging for `howldrop_agent::netstack` adds TCP header summaries (sequence,
 acknowledgement, flags and lengths), without TLS payload or shared contents.
 The tray's transmit rate is passed to the agent. Its default, `auto`, has
 the MT7612U radio choose the unicast data rate from 12, 24, 36 and 54 Mbit/s
-once a second, from the chip's retry and failure counters (TX_STA_CNT0/1);
-mt76x2u leaves this to mac80211's minstrel, which needs per-frame TX status.
-A 13.2 MB batch to an iPhone takes about 8 s at 54 Mbit/s.
+and on to 40 MHz HT through MCS 15 (270 Mbit/s) once a second, from the
+chip's retry and failure counters (TX_STA_CNT0/1), while sizing the chip's
+unicast queue for about 4 ms of airtime (up to 32 frames); `auto-54` caps
+the automatic ladder at 54 Mbit/s. A 13.2 MB batch to an iPhone takes 8.2 s
+(reaching 1,634 frames/s at 40 MHz HT MCS 13 and 1,090 frames/s at 54 Mbit/s).
 
-Hardware qualification still needed: sustained transfers at higher rates,
-different MT7612U adapter variants and distances, channel alternatives, and
-the receive gain corrections above. The experimental Owly Intel, Raspberry
-Pi and protocol-tuning PRs are not enabled by this Windows change.
+Hardware qualification still needed: different MT7612U adapter variants and
+distances, channel alternatives, and the receive gain corrections above. The
+experimental Owly Intel, Raspberry Pi and protocol-tuning PRs are not enabled
+by this Windows change.
 
 ## Trying it
 
@@ -267,19 +269,18 @@ matching client certificate and record. Anonymous sending remains the
 default. A current macOS export route and real-identity hardware validation
 are still outstanding.
 
-### Optional send-speed experiments
+### Send-speed benchmarks and optional experiments
 
-Three experiments are available for hardware comparisons, all off by
-default. They have not yet been measured on an iPhone:
+Hardware benchmarks on a 13.2 MB batch (`HowlDrop-benchmark.png` + two small
+PNGs) to an iPhone measured:
 
-- `HOWLDROP_DEEP_QUEUE=1` sizes the chip's data queue for about 4 ms of
-  airtime rather than always four frames, capped at 32 frames.
-- Sending speed `auto-ht` extends the automatic ladder to 40 MHz HT,
-  through MCS 15. The rates are PHY rates, not measured file throughput.
-- `HOWLDROP_AMPDU=1` negotiates an outgoing Block Ack session and enables
-  A-MPDU transmission. It is best tried with the deeper queue. A dropped
-  frame can leave a gap that the phone must time out: outgoing BAR recovery
-  is not implemented yet.
+- **`deep`** (airtime-sized queue, up to 54 Mbit/s): **8.2 s** (`1,090 frames/s` at 54 Mbit/s).
+- **`ht`** (airtime-sized queue, 40 MHz HT through MCS 15): **8.2 s** (climbed cleanly to `Ht40` MCS 15 at 270 Mbit/s, peaking at `1,634 frames/s` at MCS 13).
+- **`ampdu`** (`HOWLDROP_AMPDU=1`, outgoing Block Ack / A-MPDU): **9.2 s** (the iPhone did not accept an outgoing Block Ack session; remains off by default, and outgoing BAR recovery is not implemented yet).
+
+Both the airtime-sized queue and the 40 MHz HT automatic ladder are now
+enabled by default (`HOWLDROP_DEEP_QUEUE=0` returns to the 4-frame queue, and
+`tx_rate=auto-54` caps automatic rates at 54 Mbit/s).
 
 Build the Windows app and agent first, with firmware beside the agent as
 below. Then compare the same files with the phone in the same place:
