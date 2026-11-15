@@ -35,7 +35,7 @@ pub struct UsbRadio {
     /// A fixed rate; `None` lets the radio choose (`auto`, the default).
     tx_rate: Option<TxRate>,
     /// With no fixed rate, whether the radio may go past 54 Mbit/s to HT
-    /// across 40 MHz (`auto-ht`, experimental).
+    /// across 40 MHz (`auto` and `auto-ht`; `auto-54` caps at 54 Mbit/s).
     auto_ht40: bool,
     /// Accept the phone's Block Ack sessions: the chip answers them
     /// (mt7612u's rx_block_ack). On unless --aggregation off.
@@ -49,9 +49,9 @@ impl UsbRadio {
         tx_rate: Option<&str>,
         aggregation: Option<bool>,
     ) -> Result<UsbRadio, String> {
-        let auto_ht40 = tx_rate == Some("auto-ht");
+        let auto_ht40 = tx_rate != Some("auto-54");
         let tx_rate = tx_rate
-            .filter(|r| *r != "auto" && *r != "auto-ht")
+            .filter(|r| *r != "auto" && *r != "auto-ht" && *r != "auto-54")
             .map(|r| TxRate::parse(r).ok_or_else(|| format!("tx_rate {r:?} isn't a rate")))
             .transpose()?;
         Ok(UsbRadio {
@@ -238,14 +238,14 @@ async fn start_node(
 }
 
 /// The stick as the node's radio, choosing the unicast rate itself unless
-/// one was set (`Some(ht40)`). `HOWLDROP_DEEP_QUEUE` lets the chip hold
-/// unicast data by time on air (experimental).
+/// one was set (`Some(ht40)`), and sizing its data queue by time on air
+/// unless `HOWLDROP_DEEP_QUEUE=0`.
 fn air(stick: Mt7612u, auto_rate: Option<bool>) -> UsbAir {
     let mut air = UsbAir::new(stick);
     if let Some(ht40) = auto_rate {
         air = air.auto_rate(ht40);
     }
-    if std::env::var_os("HOWLDROP_DEEP_QUEUE").is_some() {
+    if std::env::var_os("HOWLDROP_DEEP_QUEUE").as_deref() != Some(std::ffi::OsStr::new("0")) {
         air = air.deep_queue();
     }
     air
@@ -293,5 +293,22 @@ fn host_name() -> String {
         "howldrop".into()
     } else {
         name.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_uses_ht40_by_default_and_auto_54_caps_at_legacy() {
+        for rate in [None, Some("auto"), Some("auto-ht")] {
+            let r = UsbRadio::new(PathBuf::from("fw"), rate, None).unwrap();
+            assert_eq!((r.tx_rate, r.auto_ht40), (None, true));
+        }
+        let legacy = UsbRadio::new(PathBuf::from("fw"), Some("auto-54"), None).unwrap();
+        assert_eq!((legacy.tx_rate, legacy.auto_ht40), (None, false));
+        let fixed = UsbRadio::new(PathBuf::from("fw"), Some("54"), None).unwrap();
+        assert_eq!(fixed.tx_rate, Some(TxRate::Legacy(108)));
     }
 }
