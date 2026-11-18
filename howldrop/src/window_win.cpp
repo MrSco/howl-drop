@@ -284,17 +284,42 @@ struct HowlWindow::Impl {
             wchar_t old[2048];
             GetWindowTextW(button, old, 2048);
             if (label != old) SetWindowTextW(button, label.c_str());
+            // Move or show a button only when that changes: SetWindowPos on
+            // every paint reorders and invalidates them, so the parent paints
+            // again and the page flickers.
             const float s = scale();
-            SetWindowPos(button, HWND_TOP, static_cast<int>(a.rect.left * s), static_cast<int>(a.rect.top * s),
-                static_cast<int>((a.rect.right - a.rect.left) * s), static_cast<int>((a.rect.bottom - a.rect.top) * s), SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            const RECT want{static_cast<LONG>(a.rect.left * s), static_cast<LONG>(a.rect.top * s),
+                            static_cast<LONG>(a.rect.right * s), static_cast<LONG>(a.rect.bottom * s)};
+            RECT have{};
+            GetWindowRect(button, &have);
+            MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&have), 2);
+            const bool hidden = !IsWindowVisible(button);
+            if (hidden || !EqualRect(&want, &have)) {
+                SetWindowPos(button, nullptr, want.left, want.top, want.right - want.left, want.bottom - want.top,
+                             SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW | SWP_NOCOPYBITS | (hidden ? SWP_SHOWWINDOW : 0));
+            }
             if (GetFocus() == button) canvas->outline(a.rect, 6, ui::theme::accent, 2);
         }
-        for (const auto& [key, button] : controls) if (!visible.count(key)) ShowWindow(button, SW_HIDE);
+        for (const auto& [key, button] : controls) {
+            if (!visible.count(key) && IsWindowVisible(button)) {
+                SetWindowPos(button, nullptr, 0, 0, 0, 0, SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                             SWP_NOACTIVATE | SWP_NOREDRAW);
+            }
+        }
     }
 
     static LRESULT CALLBACK native_button_proc(HWND button, UINT message, WPARAM wparam, LPARAM lparam,
                                                 UINT_PTR id, DWORD_PTR data) {
         auto* self = reinterpret_cast<Impl*>(data);
+        // The parent draws what the buttons look like; a button painting or
+        // erasing itself (the theme fills it with the parent's background)
+        // blanks that part of the page until the next frame.
+        if (message == WM_ERASEBKGND) return 1;
+        if (message == WM_PAINT) {
+            ValidateRect(button, nullptr);
+            return 0;
+        }
+        if (message == WM_PRINTCLIENT) return 0;
         if (message == WM_MOUSEMOVE) {
             const auto it = self->control_ids.find(GetDlgCtrlID(button));
             if (it != self->control_ids.end() && (self->hot != it->second.first || self->hot_index != it->second.second)) {
@@ -853,6 +878,8 @@ struct HowlWindow::Impl {
                 EndPaint(window, &ps);
                 return 0;
             }
+            case WM_ERASEBKGND:
+                return 1;  // Direct2D paints every pixel; erasing first flashes the background
             case WM_SIZE:
                 canvas->resize();
                 InvalidateRect(window, nullptr, FALSE);
