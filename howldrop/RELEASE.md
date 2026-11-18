@@ -3,6 +3,9 @@
 - **AirDrop on this PC**: plug in a USB **MT7612U** Wi-Fi stick (e.g. Alfa AWUS036ACM) and turn it on in the tray menu. No Home Assistant needed, and nothing else to install. The first time, it downloads `howldrop-native.zip` below (the radio, about 3.5 MB; checked against the SHA-256 built into the exe) and runs it as you. Windows asks once, and only to put a new stick on its own WinUSB driver.
 - **Through Home Assistant**: the HowlDrop add-on forwards what arrives there.
 
+**New in 0.22.2**
+- The window no longer flickers: parts of the page (the drop zone, the status line, Recent) blinked out and back while the mouse moved over it.
+
 **New in 0.22.1**
 - **Automatic sending speed now climbs to 40 MHz HT (up to MCS 15)** with an airtime-sized chip queue (up to 32 frames instead of 4), reaching over 1,600 frames/s when the iPhone is nearby and stepping back down when frames need retries. Settings can still cap Automatic at 54 Mbit/s or fix it at 12, 54 or HT.
 - **Validated Apple sender identity import** (`howldrop-agent --import-sender-identity` / `--check-sender-identity`, stored with Windows DPAPI) for Contacts Only sending when an exported Apple identity bundle is provided.
